@@ -5,12 +5,13 @@ from typing import Optional
 
 
 def _make_exchange(api_key: str, secret: str) -> ccxt.mexc:
-    return ccxt.mexc({
-        "apiKey": api_key,
-        "secret": secret,
-        "options": {"defaultType": "swap"},
-        "enableRateLimit": True,
-    })
+    config: dict = {"options": {"defaultType": "swap"}, "enableRateLimit": True}
+    # Only attach credentials when they look real — placeholder values cause MEXC
+    # to reject even public endpoints with "Api key info invalid".
+    if api_key and not api_key.startswith("your_"):
+        config["apiKey"] = api_key
+        config["secret"] = secret
+    return ccxt.mexc(config)
 
 
 def fetch_ohlcv_safe(
