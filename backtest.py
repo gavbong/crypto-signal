@@ -1,9 +1,14 @@
 """
 backtest.py — Historical signal replay for walk-forward validation.
 
-Fetches OHLCV history candle-by-candle, runs the same classify → select →
+Fetches OHLCV history candle-by-candle, runs the same classify -> select ->
 generate pipeline as the live engine, resolves outcomes immediately from
 future candles, and writes results to signals.db.
+
+P&L is tracked in R-multiples: each trade risks 1R (distance to stop).
+  tp_hit     = +rr_ratio R  (e.g. +2.0R)
+  stopped_out = -1.0R
+  win/loss    = actual move / risk (fractional R)
 
 Usage:
     python backtest.py                        # 180 days back, all configured pairs
@@ -46,7 +51,6 @@ def fetch_history(exchange, pair: str, since_dt: datetime, timeframe: str) -> li
         since_ms = batch[-1][0] + 1
         time.sleep(0.25)
 
-    # Deduplicate by timestamp in case of page-boundary overlap
     seen: set = set()
     unique: list = []
     for c in all_candles:
@@ -56,28 +60,51 @@ def fetch_history(exchange, pair: str, since_dt: datetime, timeframe: str) -> li
     return sorted(unique, key=lambda x: x[0])
 
 
-def resolve_outcome(signal: dict, future_candles: list, window_h: int) -> tuple[str, float] | None:
-    """Check the next window_h candles for stop hit, else use final close."""
+def resolve_outcome(signal: dict, future_candles: list, window_h: int) -> tuple[str, float, float] | None:
+    """
+    Check the next window_h candles for stop or TP hit, else use final close.
+    Returns (outcome, price, pnl_r) or None if no future data.
+
+    pnl_r is P&L in R-multiples (1R = distance from entry to stop).
+    """
     if not future_candles:
         return None
 
     entry = signal["entry_price"]
     stop = signal["suggested_stop_loss"]
+    take_profit = signal.get("suggested_take_profit")
     direction = signal["direction"]
+    risk = abs(entry - stop) if stop is not None else None
 
     for candle in future_candles[:window_h]:
         _, _o, h, l, _c, _v = candle
-        if direction == "long" and stop is not None and l <= stop:
-            return "stopped_out", stop
-        if direction == "short" and stop is not None and h >= stop:
-            return "stopped_out", stop
+        if direction == "long":
+            if stop is not None and l <= stop:
+                pnl_r = -1.0
+                return "stopped_out", stop, pnl_r
+            if take_profit is not None and h >= take_profit:
+                pnl_r = (take_profit - entry) / risk if risk else 0.0
+                return "tp_hit", take_profit, pnl_r
+        else:
+            if stop is not None and h >= stop:
+                pnl_r = -1.0
+                return "stopped_out", stop, pnl_r
+            if take_profit is not None and l <= take_profit:
+                pnl_r = (entry - take_profit) / risk if risk else 0.0
+                return "tp_hit", take_profit, pnl_r
 
     final_close = future_candles[min(window_h - 1, len(future_candles) - 1)][4]
-    outcome = "win" if (
-        (direction == "long" and final_close > entry) or
-        (direction == "short" and final_close < entry)
-    ) else "loss"
-    return outcome, final_close
+    if direction == "long":
+        outcome = "win" if final_close > entry else "loss"
+        pnl_r = (final_close - entry) / risk if risk else 0.0
+    else:
+        outcome = "win" if final_close < entry else "loss"
+        pnl_r = (entry - final_close) / risk if risk else 0.0
+    return outcome, final_close, pnl_r
+
+
+def _regime_stats() -> dict:
+    return {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
 
 
 def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool) -> dict:
@@ -87,17 +114,16 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool) -> dict:
     timeframe = c["timeframe"]
     outcome_window_h = c["walk_forward"]["outcome_window_hours"]
 
-    # (pair, direction, strategy, regime) → candle index of last fire
     dedup_state: dict[tuple, int] = {}
 
     stats = {
-        "fired": 0, "win": 0, "loss": 0, "stopped_out": 0,
+        "fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0,
         "skipped_dedup": 0, "skipped_unstable": 0, "unresolved": 0,
-        "by_regime": {},  # regime -> {fired, win, loss, stopped_out}
+        "pnl_r": 0.0,
+        "by_regime": {},
     }
 
     start_idx = limit
-    # Leave enough future candles for outcome resolution
     end_idx = len(candles) - outcome_window_h
 
     if end_idx <= start_idx:
@@ -143,27 +169,26 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool) -> dict:
             stats["fired"] += 1
 
             r = regime.label
-            rb = stats["by_regime"].setdefault(r, {"fired": 0, "win": 0, "loss": 0, "stopped_out": 0})
+            rb = stats["by_regime"].setdefault(r, _regime_stats())
             rb["fired"] += 1
 
             future = candles[i: i + outcome_window_h + 1]
             result = resolve_outcome(signal, future, outcome_window_h)
 
-            if not dry_run:
-                signal_id = log_signal(conn, signal)
-                if result:
-                    outcome, price = result
+            if result:
+                outcome, price, pnl_r = result
+                stats[outcome] = stats.get(outcome, 0) + 1
+                stats["pnl_r"] += pnl_r
+                rb[outcome] = rb.get(outcome, 0) + 1
+                rb["pnl_r"] += pnl_r
+
+                if not dry_run:
+                    signal_id = log_signal(conn, signal)
                     update_outcome(conn, signal_id, outcome, price)
-                    stats[outcome] += 1
-                    rb[outcome] += 1
-                else:
-                    stats["unresolved"] += 1
             else:
-                if result:
-                    stats[result[0]] += 1
-                    rb[result[0]] += 1
-                else:
-                    stats["unresolved"] += 1
+                stats["unresolved"] += 1
+                if not dry_run:
+                    log_signal(conn, signal)
 
     return stats
 
@@ -173,38 +198,47 @@ def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regi
     gate_total = c["walk_forward"]["promotion_gate_total"]
     gate_per = c["walk_forward"]["promotion_gate_per_regime"]
     gate_acc = c["walk_forward"]["promotion_accuracy"]
+    rr = c["signals"]["rr_ratio"]
 
-    total_resolved = totals["win"] + totals["loss"] + totals["stopped_out"]
-    overall_acc = totals["win"] / total_resolved if total_resolved > 0 else None
+    wins = totals["win"] + totals["tp_hit"]
+    total_resolved = wins + totals["loss"] + totals["stopped_out"]
+    overall_acc = wins / total_resolved if total_resolved > 0 else None
+    net_r = totals["pnl_r"]
+    avg_r = net_r / total_resolved if total_resolved > 0 else None
 
-    print("\n" + "=" * 62)
+    print("\n" + "=" * 66)
     print(f"  BACKTEST COMPLETE [{mode}]")
-    print(f"  Period : {since_dt.date()} to today")
-    print("=" * 62)
-    print(f"  Total signals fired : {totals['fired']}")
-    print(f"  Resolved outcomes   : {total_resolved}")
-    print(f"  Win / Loss / Stop   : {totals['win']} / {totals['loss']} / {totals['stopped_out']}")
+    print(f"  Period  : {since_dt.date()} to today   R:R = 1:{rr:.1f}")
+    print("=" * 66)
+    print(f"  Signals fired     : {totals['fired']}")
+    print(f"  Resolved          : {total_resolved}")
+    print(f"  TP Hit / Win / Loss / Stop : {totals['tp_hit']} / {totals['win']} / {totals['loss']} / {totals['stopped_out']}")
     if overall_acc is not None:
-        print(f"  Overall accuracy    : {overall_acc:.1%}  (target >={gate_acc:.0%})")
+        print(f"  Accuracy          : {overall_acc:.1%}  (target >={gate_acc:.0%})")
     else:
-        print("  Overall accuracy    : N/A")
+        print("  Accuracy          : N/A")
+    print(f"  Net P&L           : {net_r:+.2f}R  ({'PROFIT' if net_r > 0 else 'LOSS'})")
+    if avg_r is not None:
+        print(f"  Avg P&L per trade : {avg_r:+.3f}R")
 
     if regime_breakdown:
         print()
-        print(f"  {'REGIME':<22} {'FIRED':>6} {'WIN':>5} {'LOSS':>5} {'STOP':>5} {'ACC':>7}")
-        print(f"  {'-'*22} {'-'*6} {'-'*5} {'-'*5} {'-'*5} {'-'*7}")
+        print(f"  {'REGIME':<22} {'FIRED':>6} {'TP':>4} {'WIN':>5} {'LOSS':>5} {'STOP':>5} {'ACC':>7} {'NET R':>7}")
+        print(f"  {'-'*22} {'-'*6} {'-'*4} {'-'*5} {'-'*5} {'-'*5} {'-'*7} {'-'*7}")
         for regime, s in sorted(regime_breakdown.items()):
-            res = s["win"] + s["loss"] + s["stopped_out"]
-            acc = s["win"] / res if res > 0 else None
+            r_wins = s["win"] + s["tp_hit"]
+            res = r_wins + s["loss"] + s["stopped_out"]
+            acc = r_wins / res if res > 0 else None
             acc_str = f"{acc:.1%}" if acc is not None else "   N/A"
             per_ok = "[ok]" if res >= gate_per else "[x] "
-            print(f"  {regime:<22} {s['fired']:>6} {s['win']:>5} {s['loss']:>5} {s['stopped_out']:>5} {acc_str:>7}  {per_ok}")
+            net_r_str = f"{s['pnl_r']:+.2f}"
+            print(f"  {regime:<22} {s['fired']:>6} {s['tp_hit']:>4} {s['win']:>5} {s['loss']:>5} {s['stopped_out']:>5} {acc_str:>7} {net_r_str:>7}  {per_ok}")
 
     print()
     acc_ok = overall_acc is not None and overall_acc >= gate_acc
     total_ok = total_resolved >= gate_total
     per_regime_ok = all(
-        (s["win"] + s["loss"] + s["stopped_out"]) >= gate_per
+        (s["win"] + s["tp_hit"] + s["loss"] + s["stopped_out"]) >= gate_per
         for s in regime_breakdown.values()
     ) if regime_breakdown else False
 
@@ -215,12 +249,12 @@ def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regi
             print(f"    need {gate_total - total_resolved} more resolved signals")
         if not per_regime_ok:
             for regime, s in regime_breakdown.items():
-                res = s["win"] + s["loss"] + s["stopped_out"]
+                res = s["win"] + s["tp_hit"] + s["loss"] + s["stopped_out"]
                 if res < gate_per:
                     print(f"    {regime}: need {gate_per - res} more")
         if not acc_ok:
             print(f"    accuracy {'N/A' if overall_acc is None else f'{overall_acc:.1%}'} < {gate_acc:.0%}")
-    print("=" * 62)
+    print("=" * 66)
     if not dry_run:
         print("\n  Run `python status.py` for the live per-regime breakdown.")
 
@@ -255,8 +289,7 @@ def main() -> None:
     mode = "DRY RUN" if args.dry_run else "WRITE"
     logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={c['pairs']}")
 
-    totals = {"fired": 0, "win": 0, "loss": 0, "stopped_out": 0}
-    # regime_breakdown accumulated from DB after write (or computed in dry-run from stats)
+    totals = {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
     regime_breakdown: dict[str, dict] = {}
 
     for pair in c["pairs"]:
@@ -273,23 +306,26 @@ def main() -> None:
         with get_conn() as conn:
             stats = run_pair(pair, candles, conn, c, args.dry_run)
 
-        resolved = stats["win"] + stats["loss"] + stats["stopped_out"]
-        acc = stats["win"] / resolved if resolved > 0 else None
+        wins = stats["win"] + stats["tp_hit"]
+        resolved = wins + stats["loss"] + stats["stopped_out"]
+        acc = wins / resolved if resolved > 0 else None
         logger.info(
-            f"  {pair}: fired={stats['fired']} win={stats['win']} "
+            f"  {pair}: fired={stats['fired']} tp={stats['tp_hit']} win={stats['win']} "
             f"loss={stats['loss']} stop={stats['stopped_out']} "
             f"acc={f'{acc:.1%}' if acc else 'N/A'} "
-            f"(dedup_skip={stats['skipped_dedup']} unstable_skip={stats['skipped_unstable']})"
+            f"net={stats['pnl_r']:+.2f}R "
+            f"(dedup={stats['skipped_dedup']} unstable={stats['skipped_unstable']})"
         )
 
-        for k in ("fired", "win", "loss", "stopped_out"):
+        for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
             totals[k] += stats.get(k, 0)
+        totals["pnl_r"] += stats["pnl_r"]
 
-        # Merge per-pair regime breakdown (works in both dry-run and write mode)
         for regime, rb in stats["by_regime"].items():
-            dest = regime_breakdown.setdefault(regime, {"fired": 0, "win": 0, "loss": 0, "stopped_out": 0})
-            for k in ("fired", "win", "loss", "stopped_out"):
+            dest = regime_breakdown.setdefault(regime, _regime_stats())
+            for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
                 dest[k] += rb[k]
+            dest["pnl_r"] += rb["pnl_r"]
 
     print_summary(totals, c, since_dt, args.dry_run, regime_breakdown)
 
