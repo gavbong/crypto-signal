@@ -32,6 +32,12 @@ def _calc_stop_loss(df: pd.DataFrame, direction: str, regime_label: str = "") ->
     return round(entry - atr * mult, 8) if direction == "long" else round(entry + atr * mult, 8)
 
 
+def _calc_take_profit(entry: float, stop: float, direction: str) -> float:
+    risk = abs(entry - stop)
+    rr = cfg()["signals"]["rr_ratio"]
+    return round(entry + risk * rr, 8) if direction == "long" else round(entry - risk * rr, 8)
+
+
 def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
             df: pd.DataFrame, timeframe: str) -> Optional[dict]:
     entry = df["close"].iloc[-1]
@@ -39,6 +45,7 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
     if stop is None:
         logger.warning(f"ATR is NaN for {pair} — skipping stop-loss")
         return None
+    take_profit = _calc_take_profit(entry, stop, direction)
     return {
         "pair": pair,
         "direction": direction,
@@ -48,6 +55,7 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
         "regime_age_candles": regime.age_candles,
         "entry_price": round(entry, 8),
         "suggested_stop_loss": stop,
+        "suggested_take_profit": take_profit,
         "timeframe": timeframe,
         "fired_at": datetime.now(timezone.utc).isoformat(),
         "shadow_mode": True,
