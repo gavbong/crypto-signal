@@ -27,9 +27,10 @@ def _credentials() -> tuple[str, str] | None:
 
 
 def _format_message(signal: dict) -> str:
-    mode = "[SHADOW] " if signal.get("shadow_mode") else "[LIVE] "
     direction = signal["direction"].upper()
-    pair = signal["pair"]
+    colour = "🟢" if direction == "LONG" else "🔴"
+    mode = "SHADOW" if signal.get("shadow_mode") else "LIVE"
+    pair = signal["pair"].replace("/", "/")  # keep as-is, just explicit
     strategy = signal["strategy"]
     regime = signal["regime"]
     confidence = signal.get("regime_confidence", 0)
@@ -39,18 +40,17 @@ def _format_message(signal: dict) -> str:
     stop_pct = ""
     if stop is not None and entry:
         pct = abs(stop - entry) / entry * 100
-        stop_pct = f" (-{pct:.1f}%)" if direction == "LONG" else f" (+{pct:.1f}%)"
+        stop_pct = f"  <i>(-{pct:.1f}%)</i>" if direction == "LONG" else f"  <i>(+{pct:.1f}%)</i>"
 
     lines = [
-        f"{mode}SIGNAL",
-        f"{pair}  |  {direction}",
+        f"{colour} <b>{direction}</b>  {pair}  <code>[{mode}]</code>",
         f"",
-        f"Strategy : {strategy}",
-        f"Regime   : {regime} (conf {confidence:.0%})",
-        f"Entry    : {entry:,.4f}",
+        f"<b>Strategy</b>  {strategy}",
+        f"<b>Regime  </b>  {regime}  <i>(conf {confidence:.0%})</i>",
+        f"<b>Entry   </b>  <code>{entry:,.4f}</code>",
     ]
     if stop is not None:
-        lines.append(f"Stop     : {stop:,.4f}{stop_pct}")
+        lines.append(f"<b>Stop    </b>  <code>{stop:,.4f}</code>{stop_pct}")
 
     commentary = signal.get("llm_commentary")
     if commentary:
@@ -75,7 +75,7 @@ def send_signal_alert(signal: dict) -> bool:
     try:
         resp = requests.post(
             _SEND_URL.format(token=token),
-            json={"chat_id": chat_id, "text": text, "parse_mode": ""},
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
             timeout=_TIMEOUT,
         )
         if resp.ok:
