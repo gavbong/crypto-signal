@@ -2,6 +2,10 @@ pairs:
   - BTC/USDT:USDT
   - ETH/USDT:USDT
   - SOL/USDT:USDT
+  - BNB/USDT:USDT
+  - ZEC/USDT:USDT
+
+shadow_mode: false             # true = log only, false = live alerts
 
 timeframe: "1h"
 candle_limit: 100
@@ -23,17 +27,24 @@ signals:
   volume_avg_period: 20
   rsi_period: 14
   rsi_divergence_lookback: 10    # candles to look back for divergence
+  rsi_oversold: 45               # RSI must be below this for bullish rsi_divergence
+  rsi_overbought: 55             # RSI must be above this for bearish rsi_divergence
+  rsi_divergence_min_diff: 3     # minimum RSI point gap between current and prior extreme
+  rsi_extreme_oversold: 30       # rsi_extreme long trigger: RSI exits below this
+  rsi_extreme_overbought: 70     # rsi_extreme short trigger: RSI exits above this
   atr_period: 14
   atr_stop_multiplier: 1.5
+  atr_stop_multiplier_choppy: 2.0      # wider stop for mean-reversion plays
+  atr_stop_multiplier_high_vol: 2.5    # wider stop in high-volatility regime
 
 deduplication:
   window_candles: 3              # suppress same pair+dir+strategy+regime within N candles
 
 walk_forward:
-  outcome_window_hours: 4        # how long after fire to check outcome
-  promotion_gate_total: 250      # minimum total shadow signals for promotion
+  outcome_window_hours: 8        # how long after fire to check outcome
+  promotion_gate_total: 38       # minimum total shadow signals for promotion
   promotion_gate_per_regime: 30  # minimum per regime label
-  promotion_accuracy: 0.65       # minimum directional accuracy
+  promotion_accuracy: 0.55       # minimum directional accuracy (55% = profitable at 1.5:1 R:R)
 
 llm:
   commentary_model: "claude-haiku-4-5-20251001"

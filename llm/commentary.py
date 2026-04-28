@@ -5,6 +5,7 @@ import anthropic
 from loguru import logger
 
 from utils.config import env, get as cfg
+from utils.news import fetch_headlines
 
 
 _client: anthropic.Anthropic | None = None
@@ -25,7 +26,10 @@ deciding whether to act on this signal.
 Rules:
 - Name the regime and how long it has held. Be specific: "trending-up for 5 candles (5h)"
 - State why the signal fired in concrete terms (what crossed what, where RSI diverged, etc.)
-- Name ONE risk factor the trader should watch (resistance level, regime age, volume quality)
+- If recent news headlines are provided, assess in one phrase whether they support, oppose,
+  or are neutral to this signal. Start that phrase with "News:" e.g. "News: adverse — tariff
+  fears may extend the selloff" or "News: supportive — ETF inflow headlines align with long bias"
+- Name ONE technical risk factor the trader should watch
 - Do NOT add disclaimers, legal language, or generic advice
 - Do NOT recommend leverage or position size
 - Write as a signal analyst, not a financial advisor"""
@@ -40,6 +44,8 @@ def generate_commentary(signal: dict, regime_context: dict) -> Optional[str]:
     c = cfg()["llm"]
     client = _get_client()
 
+    headlines = fetch_headlines(limit=8)
+
     context_block = {
         "signal": {
             "pair": signal["pair"],
@@ -53,6 +59,7 @@ def generate_commentary(signal: dict, regime_context: dict) -> Optional[str]:
             "timeframe": signal["timeframe"],
         },
         "current_regimes": regime_context,
+        "recent_news_headlines": headlines,
     }
 
     try:

@@ -7,5 +7,9 @@ dist/
 build/
 signals.db
 *.db
+*.db-shm
+*.db-wal
+logs/
+notebooks/*_executed.ipynb
 .coverage
 htmlcov/

@@ -2,25 +2,29 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "trending-up": {
         "ema_crossover": "FIRE",
         "rsi_divergence": "SKIP",
+        "rsi_extreme":    "SKIP",
         "vol_breakout":   "SKIP",
         "volume_spike":   "GATE",
     },
     "trending-down": {
         "ema_crossover": "FIRE",
         "rsi_divergence": "SKIP",
+        "rsi_extreme":    "SKIP",
         "vol_breakout":   "SKIP",
         "volume_spike":   "GATE",
     },
     "choppy": {
         "ema_crossover": "SKIP",
         "rsi_divergence": "FIRE",
+        "rsi_extreme":    "FIRE",
         "vol_breakout":   "SKIP",
         "volume_spike":   "GATE",
     },
     "high-volatility": {
         "ema_crossover": "SKIP",
         "rsi_divergence": "SKIP",
-        "vol_breakout":   "FIRE",
+        "rsi_extreme":    "SKIP",
+        "vol_breakout":   "SKIP",
         "volume_spike":   "GATE",
     },
 }
