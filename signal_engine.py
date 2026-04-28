@@ -9,11 +9,13 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from utils.config import env, get as cfg
 from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe
-from db.schema import init_db, get_conn, log_signal, is_duplicate, update_commentary
+from db.schema import init_db, get_conn, log_signal, is_duplicate
 from regime.classifier import classify, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy
 from llm.commentary import generate_commentary
+from eval.outcomes import run_evaluation
+from alerts.telegram import send_signal_alert
 
 
 logger.remove()
@@ -42,7 +44,7 @@ def _build_regime_context(exchange, pairs: list, timeframe: str, limit: int) -> 
 
 
 def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
-             dedup_window: int, regime_context: dict) -> list[dict]:
+             dedup_window: int, regime_context: dict, shadow_mode: bool = True) -> list[dict]:
     """One signal engine cycle. Returns list of signals fired this run."""
     fired = []
 
@@ -89,29 +91,40 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
             signal["llm_commentary"] = commentary
             signal["commentary_status"] = "done" if commentary else "pending"
 
+            signal["shadow_mode"] = shadow_mode
             signal_id = log_signal(conn, signal)
             signal["id"] = signal_id
 
+            mode_str = "SHADOW" if shadow_mode else "LIVE"
             logger.info(
-                f"SIGNAL [{signal_id}] {pair} {signal['direction'].upper()} "
+                f"SIGNAL [{signal_id}] [{mode_str}] {pair} {signal['direction'].upper()} "
                 f"| strategy={strategy} regime={regime.label}({regime.confidence:.2f}) "
                 f"age={regime.age_candles}h | entry={signal['entry_price']} "
-                f"stop={signal['suggested_stop_loss']} | shadow_mode=True"
+                f"stop={signal['suggested_stop_loss']}"
             )
             if commentary:
                 logger.info(f"  Commentary: {commentary}")
 
+            send_signal_alert(signal)
             fired.append(signal)
 
     return fired
 
 
-def job(exchange, pairs: list, timeframe: str, limit: int, dedup_window: int) -> None:
+def signal_job(exchange, pairs: list, timeframe: str, limit: int,
+               dedup_window: int, shadow_mode: bool) -> None:
     with get_conn() as conn:
         regime_context = _build_regime_context(exchange, pairs, timeframe, limit)
-        fired = run_once(exchange, conn, pairs, timeframe, limit, dedup_window, regime_context)
+        fired = run_once(exchange, conn, pairs, timeframe, limit, dedup_window,
+                         regime_context, shadow_mode)
         if not fired:
             logger.debug(f"No signals this run at {datetime.now(timezone.utc).isoformat()}")
+
+
+def eval_job(exchange) -> None:
+    with get_conn() as conn:
+        result = run_evaluation(conn, exchange)
+        logger.info(f"Outcome evaluation complete | resolved={result['resolved']}")
 
 
 def main() -> None:
@@ -126,17 +139,30 @@ def main() -> None:
     timeframe = c["timeframe"]
     limit = c["candle_limit"]
     dedup_window = c["deduplication"]["window_candles"]
+    outcome_window_h = c["walk_forward"]["outcome_window_hours"]
+    shadow_mode = c.get("shadow_mode", True)
 
-    logger.info(f"Signal engine starting | pairs={pairs} timeframe={timeframe}")
-    logger.info("Shadow mode ON — signals logged but no alerts sent")
+    mode_label = "SHADOW" if shadow_mode else "LIVE"
+    logger.info(f"Signal engine starting | pairs={pairs} timeframe={timeframe} mode={mode_label}")
 
     scheduler = BlockingScheduler(timezone="UTC")
+
+    # Signal scan: every hour, aligned to the candle close
     scheduler.add_job(
-        job,
+        signal_job,
         "interval",
-        minutes=1,
-        args=[exchange, pairs, timeframe, limit, dedup_window],
-        next_run_time=datetime.now(timezone.utc),  # run immediately on start
+        hours=1,
+        args=[exchange, pairs, timeframe, limit, dedup_window, shadow_mode],
+        next_run_time=datetime.now(timezone.utc),
+    )
+
+    # Outcome evaluation: every outcome_window_hours (default 4h)
+    scheduler.add_job(
+        eval_job,
+        "interval",
+        hours=outcome_window_h,
+        args=[exchange],
+        next_run_time=datetime.now(timezone.utc),
     )
 
     try:
