@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MEXC Signal Engine — Design Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Outfit:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Design tokens ─────────────────────────────────────── */
+  :root {
+    --bg:           #0A0B0D;
+    --surface:      #111318;
+    --surface-up:   #1A1D26;
+    --border:       #1F2330;
+    --text:         #F0F2F7;
+    --muted:        #6B7280;
+    --accent:       #F0A500;
+    --accent-dim:   rgba(240,165,0,0.12);
+    --long:         #22C55E;
+    --long-dim:     rgba(34,197,94,0.12);
+    --short:        #EF4444;
+    --short-dim:    rgba(239,68,68,0.12);
+    --neutral:      #3B4258;
+    --radius-sm:    2px;
+    --radius:       4px;
+    --radius-lg:    6px;
+    --font-display: 'Instrument Sans', sans-serif;
+    --font-ui:      'Outfit', sans-serif;
+    --font-mono:    'JetBrains Mono', monospace;
+  }
+
+  /* ── Reset ─────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Layout ─────────────────────────────────────────────── */
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 52px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 0;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .sidebar-logo {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    color: #0A0B0D;
+    margin-bottom: 16px;
+  }
+  .sidebar-item {
+    width: 36px; height: 36px;
+    border-radius: var(--radius);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 16px;
+    transition: background 0.1s, color 0.1s;
+  }
+  .sidebar-item:hover { background: var(--surface-up); color: var(--text); }
+  .sidebar-item.active { background: var(--accent-dim); color: var(--accent); }
+  .sidebar-spacer { flex: 1; }
+
+  /* Main */
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* Header */
+  .header {
+    height: 52px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .header-title {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .header-spacer { flex: 1; }
+  .live-badge {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--long);
+    background: var(--long-dim);
+    padding: 3px 8px;
+    border-radius: var(--radius);
+  }
+  .live-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--long);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .header-pair {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--surface-up);
+    padding: 3px 8px;
+    border-radius: var(--radius);
+  }
+  .theme-toggle {
+    width: 28px; height: 28px;
+    border-radius: var(--radius);
+    background: var(--surface-up);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+  }
+
+  /* Content */
+  .content { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── Stat cards row ─────────────────────────────────────── */
+  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px 20px;
+  }
+  .stat-card.accent-card { border-color: rgba(240,165,0,0.3); }
+  .stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 500;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .stat-value.positive { color: var(--long); }
+  .stat-value.accent { color: var(--accent); }
+  .stat-value.neutral { color: var(--text); }
+  .stat-sub {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Dot matrix ─────────────────────────────────────────── */
+  .dot-matrix-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+  .dot.win { background: var(--long); }
+  .dot.loss { background: var(--short); }
+  .dot.stop { background: #F59E0B; }
+  .dot.empty { background: var(--surface-up); border: 1px solid var(--border); }
+
+  /* ── Two-col section ────────────────────────────────────── */
+  .two-col { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }
+
+  /* ── Panel ──────────────────────────────────────────────── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-title {
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .panel-badge {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--surface-up);
+    color: var(--muted);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Regime timeline ────────────────────────────────────── */
+  .regime-timeline { padding: 16px; }
+  .regime-track {
+    position: relative;
+    height: 28px;
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+  }
+  .regime-segment {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .regime-segment.choppy     { background: #2A3040; color: #7B8DB0; flex: 3; }
+  .regime-segment.trending-up   { background: rgba(34,197,94,0.2); color: var(--long); flex: 2; }
+  .regime-segment.trending-down { background: rgba(239,68,68,0.18); color: var(--short); flex: 1.5; }
+  .regime-segment.high-vol   { background: rgba(240,165,0,0.15); color: var(--accent); flex: 1; }
+
+  /* Signal dots on timeline */
+  .regime-signals { position: relative; height: 20px; margin-top: 8px; }
+  .signal-dot {
+    position: absolute;
+    top: 4px;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    border: 1.5px solid var(--bg);
+    transform: translateX(-50%);
+  }
+  .signal-dot.long-dot  { background: var(--long); }
+  .signal-dot.short-dot { background: var(--short); }
+
+  .regime-labels {
+    display: flex;
+    gap: 12px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .regime-label-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  .regime-label-dot {
+    width: 8px; height: 8px;
+    border-radius: 2px;
+  }
+
+  /* ── Signal history table ───────────────────────────────── */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  thead th {
+    padding: 8px 12px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th.num { text-align: right; }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+  tbody tr:hover { background: var(--surface-up); }
+  tbody tr:last-child { border-bottom: none; }
+  td {
+    padding: 10px 12px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  td.mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    text-align: right;
+  }
+  td.pair-cell { font-weight: 500; }
+  .dir-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+  .dir-badge.long  { background: var(--long-dim);  color: var(--long); }
+  .dir-badge.short { background: var(--short-dim); color: var(--short); }
+  .outcome-badge {
+    display: inline-flex;
+    padding: 2px 7px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .outcome-badge.win  { background: var(--long-dim); color: var(--long); }
+  .outcome-badge.loss { background: var(--short-dim); color: var(--short); }
+  .outcome-badge.stop { background: rgba(240,165,0,0.12); color: var(--accent); }
+  .outcome-badge.open { background: var(--surface-up); color: var(--muted); }
+  .pnl-pos { color: var(--long); font-family: var(--font-mono); font-size: 12px; }
+  .pnl-neg { color: var(--short); font-family: var(--font-mono); font-size: 12px; }
+  .muted-cell { color: var(--muted); }
+
+  /* ── Active signals panel (right col) ──────────────────── */
+  .active-signals { display: flex; flex-direction: column; }
+  .signal-card {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .signal-card:last-child { border-bottom: none; }
+  .signal-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .signal-pair {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .signal-strategy {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted);
+    background: var(--surface-up);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+  }
+  .signal-prices {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px;
+  }
+  .price-item { display: flex; flex-direction: column; gap: 2px; }
+  .price-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .price-value { font-family: var(--font-mono); font-size: 12px; }
+  .price-value.entry  { color: var(--text); }
+  .price-value.stop   { color: var(--short); }
+  .price-value.target { color: var(--accent); }
+  .signal-age {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 8px;
+    font-family: var(--font-mono);
+  }
+
+  /* ── Typography specimen section ───────────────────────── */
+  .section-divider {
+    margin: 32px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+  }
+  .type-row { display: grid; grid-template-columns: 140px 1fr; gap: 20px; align-items: start; margin-bottom: 20px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+  .type-meta { }
+  .type-name { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 2px; }
+  .type-role { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .type-sample-display { font-family: var(--font-display); font-size: 32px; font-weight: 600; line-height: 1.1; color: var(--text); }
+  .type-sample-ui { font-family: var(--font-ui); font-size: 15px; color: var(--text); }
+  .type-sample-mono { font-family: var(--font-mono); font-size: 20px; font-weight: 500; color: var(--accent); letter-spacing: -0.02em; }
+
+  /* ── Color palette section ──────────────────────────────── */
+  .swatch-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+  .swatch {
+    display: flex; flex-direction: column; gap: 6px;
+    width: 90px;
+  }
+  .swatch-chip {
+    width: 90px; height: 48px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .swatch-name { font-size: 10px; color: var(--muted); }
+  .swatch-hex { font-family: var(--font-mono); font-size: 11px; color: var(--text); }
+
+  /* ── Component samples ──────────────────────────────────── */
+  .component-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--radius);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    transition: opacity 0.1s;
+  }
+  .btn-primary { background: var(--accent); color: #0A0B0D; }
+  .btn-secondary { background: var(--surface-up); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-danger { background: var(--short-dim); color: var(--short); border: 1px solid rgba(239,68,68,0.2); }
+  .btn-long { background: var(--long-dim); color: var(--long); border: 1px solid rgba(34,197,94,0.2); }
+
+  .input-sample {
+    display: flex; flex-direction: column; gap: 4px;
+    width: 220px;
+  }
+  .input-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .input-field {
+    background: var(--surface-up);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 10px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text);
+    outline: none;
+  }
+  .input-field:focus { border-color: var(--accent); }
+  .input-field.error { border-color: var(--short); }
+
+  /* Theme toggle JS */
+  [data-theme="light"] {
+    --bg:         #F8F9FA;
+    --surface:    #FFFFFF;
+    --surface-up: #F0F2F5;
+    --border:     #E2E5EC;
+    --text:       #111318;
+    --muted:      #6B7280;
+  }
+</style>
+</head>
+<body>
+
+<div style="padding: 20px; background: var(--surface-up); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px;">
+  <span style="font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--accent);">MEXC SIGNAL ENGINE</span>
+  <span style="font-size: 11px; color: var(--muted);">Design System Preview — Precision Dark</span>
+  <span style="flex: 1;"></span>
+  <button class="theme-toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'" style="padding: 6px 12px; width: auto; font-family: var(--font-ui); font-size: 12px;">Toggle Light/Dark</button>
+</div>
+
+<!-- ── DASHBOARD MOCKUP ──────────────────────────────────── -->
+<div style="padding: 20px; border-bottom: 2px solid var(--border);">
+  <p style="font-family: var(--font-display); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 16px;">Dashboard mockup</p>
+
+  <div class="app" style="height: 640px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-logo">SG</div>
+      <div class="sidebar-item active">⚡</div>
+      <div class="sidebar-item">📊</div>
+      <div class="sidebar-item">🔁</div>
+      <div class="sidebar-item">⚙️</div>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-item">👤</div>
+    </div>
+
+    <!-- Main -->
+    <div class="main">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-title">Signal Dashboard</div>
+        <div class="live-badge"><div class="live-dot"></div> LIVE</div>
+        <div class="header-pair">BTC/USDT:USDT</div>
+        <div class="header-pair">ETH/USDT:USDT</div>
+        <div class="header-pair">SOL/USDT:USDT</div>
+        <div class="header-spacer"></div>
+        <div style="font-family: var(--font-mono); font-size: 11px; color: var(--muted);">04:28 UTC</div>
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+
+        <!-- Stat cards -->
+        <div class="stat-row">
+          <div class="stat-card">
+            <div class="stat-label">Accuracy (180d)</div>
+            <div class="stat-value positive">66.7%</div>
+            <div class="stat-sub">39 resolved · choppy regime</div>
+          </div>
+          <div class="stat-card accent-card">
+            <div class="stat-label">Net P&amp;L</div>
+            <div class="stat-value accent">+7.89R</div>
+            <div class="stat-sub">avg +0.202R / trade</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Win Distribution</div>
+            <div class="dot-matrix-row" id="dotMatrix"></div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Signals (180d)</div>
+            <div class="stat-value neutral">39</div>
+            <div class="stat-sub">1 TP · 25 win · 6 loss · 7 stop</div>
+          </div>
+        </div>
+
+        <!-- Two-col -->
+        <div class="two-col">
+
+          <!-- Regime timeline + signal table -->
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div class="panel">
+              <div class="panel-header">
+                <span class="panel-title">Regime Timeline</span>
+                <span class="panel-badge">Oct 2025 → Apr 2026</span>
+              </div>
+              <div class="regime-timeline">
+                <div class="regime-track">
+                  <div class="regime-segment choppy">Choppy</div>
+                  <div class="regime-segment trending-up">Trending ↑</div>
+                  <div class="regime-segment choppy">Choppy</div>
+                  <div class="regime-segment trending-down">↓</div>
+                  <div class="regime-segment choppy">Choppy</div>
+                  <div class="regime-segment high-vol">High Vol</div>
+                  <div class="regime-segment choppy">Choppy</div>
+                </div>
+                <!-- Signal dots -->
+                <div class="regime-signals" id="timelineDots"></div>
+                <div class="regime-labels">
+                  <div class="regime-label-item"><div class="regime-label-dot" style="background:#2A3040;"></div>Choppy (signals fire)</div>
+                  <div class="regime-label-item"><div class="regime-label-dot" style="background:rgba(34,197,94,0.3);"></div>Trending ↑ (ema only)</div>
+                  <div class="regime-label-item"><div class="regime-label-dot" style="background:rgba(239,68,68,0.25);"></div>Trending ↓</div>
+                  <div class="regime-label-item"><div class="regime-label-dot" style="background:rgba(240,165,0,0.2);"></div>High Vol (skip)</div>
+                  <div class="regime-label-item"><div class="regime-label-dot" style="background:var(--long); border-radius:50%;"></div>Long signal</div>
+                  <div class="regime-label-item"><div class="regime-label-dot" style="background:var(--short); border-radius:50%;"></div>Short signal</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-header">
+                <span class="panel-title">Signal History</span>
+                <span class="panel-badge">Last 10</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Pair</th>
+                      <th>Dir</th>
+                      <th>Strategy</th>
+                      <th class="num">Entry</th>
+                      <th class="num">Stop</th>
+                      <th class="num">Target</th>
+                      <th>Outcome</th>
+                      <th class="num">P&amp;L R</th>
+                      <th>Fired</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="pair-cell">BTC/USDT</td>
+                      <td><span class="dir-badge long">▲ LONG</span></td>
+                      <td class="muted-cell">rsi_extreme</td>
+                      <td class="mono">94,250</td><td class="mono" style="color:var(--short)">92,800</td><td class="mono" style="color:var(--accent)">97,150</td>
+                      <td><span class="outcome-badge open">Open</span></td>
+                      <td class="mono muted-cell">—</td>
+                      <td class="muted-cell">2h ago</td>
+                    </tr>
+                    <tr>
+                      <td class="pair-cell">ETH/USDT</td>
+                      <td><span class="dir-badge long">▲ LONG</span></td>
+                      <td class="muted-cell">rsi_extreme</td>
+                      <td class="mono">1,804</td><td class="mono" style="color:var(--short)">1,742</td><td class="mono" style="color:var(--accent)">1,928</td>
+                      <td><span class="outcome-badge win">Win</span></td>
+                      <td class="pnl-pos">+1.92R</td>
+                      <td class="muted-cell">1d ago</td>
+                    </tr>
+                    <tr>
+                      <td class="pair-cell">SOL/USDT</td>
+                      <td><span class="dir-badge short">▼ SHORT</span></td>
+                      <td class="muted-cell">rsi_divergence</td>
+                      <td class="mono">148.30</td><td class="mono" style="color:var(--short)">155.40</td><td class="mono" style="color:var(--accent)">134.10</td>
+                      <td><span class="outcome-badge win">Win</span></td>
+                      <td class="pnl-pos">+0.88R</td>
+                      <td class="muted-cell">2d ago</td>
+                    </tr>
+                    <tr>
+                      <td class="pair-cell">BNB/USDT</td>
+                      <td><span class="dir-badge long">▲ LONG</span></td>
+                      <td class="muted-cell">rsi_extreme</td>
+                      <td class="mono">588.40</td><td class="mono" style="color:var(--short)">571.20</td><td class="mono" style="color:var(--accent)">622.80</td>
+                      <td><span class="outcome-badge stop">Stopped</span></td>
+                      <td class="pnl-neg">−1.00R</td>
+                      <td class="muted-cell">3d ago</td>
+                    </tr>
+                    <tr>
+                      <td class="pair-cell">ZEC/USDT</td>
+                      <td><span class="dir-badge short">▼ SHORT</span></td>
+                      <td class="muted-cell">rsi_divergence</td>
+                      <td class="mono">48.25</td><td class="mono" style="color:var(--short)">51.10</td><td class="mono" style="color:var(--accent)">42.55</td>
+                      <td><span class="outcome-badge loss">Loss</span></td>
+                      <td class="pnl-neg">−0.43R</td>
+                      <td class="muted-cell">4d ago</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Active signals panel -->
+          <div class="panel active-signals">
+            <div class="panel-header">
+              <span class="panel-title">Active Signals</span>
+              <span class="panel-badge">1 open</span>
+            </div>
+            <div class="signal-card">
+              <div class="signal-card-head">
+                <span class="signal-pair" style="color:var(--long);">▲ BTC/USDT</span>
+                <span class="signal-strategy">rsi_extreme</span>
+              </div>
+              <div class="signal-prices">
+                <div class="price-item">
+                  <div class="price-label">Entry</div>
+                  <div class="price-value entry">94,250.00</div>
+                </div>
+                <div class="price-item">
+                  <div class="price-label">Stop</div>
+                  <div class="price-value stop">92,800.00</div>
+                </div>
+                <div class="price-item">
+                  <div class="price-label">Target</div>
+                  <div class="price-value target">97,150.00</div>
+                </div>
+              </div>
+              <div style="display:flex; gap:8px; margin-top:10px;">
+                <div style="flex:1; background:var(--surface-up); border-radius:var(--radius); padding:8px;">
+                  <div class="price-label">Regime</div>
+                  <div style="font-size:12px; margin-top:2px;">choppy <span style="color:var(--muted); font-family:var(--font-mono); font-size:10px;">71%</span></div>
+                </div>
+                <div style="flex:1; background:var(--surface-up); border-radius:var(--radius); padding:8px;">
+                  <div class="price-label">R:R</div>
+                  <div style="font-family:var(--font-mono); font-size:12px; margin-top:2px; color:var(--accent);">1 : 2.0</div>
+                </div>
+              </div>
+              <div class="signal-age">Fired 2h ago · LLM commentary ready</div>
+              <div style="margin-top:10px; font-size:11px; color:var(--muted); line-height:1.5; font-style:italic; padding:8px; background:var(--surface-up); border-radius:var(--radius); border-left:2px solid var(--accent);">
+                RSI crossed up through 30 after 3-candle oversold hold in choppy regime (age 8h). News: neutral — no macro catalysts. Watch 93,500 as intraday support.
+              </div>
+            </div>
+
+            <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px; border-top:1px solid var(--border);">
+              <div style="margin-bottom:8px;">Per-pair breakdown</div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-family:var(--font-mono); font-size:11px;">
+                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">ETH</span> <span style="color:var(--long); float:right">80%</span></div>
+                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">BTC</span> <span style="color:var(--long); float:right">70%</span></div>
+                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">SOL</span> <span style="color:var(--long); float:right">66.7%</span></div>
+                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">BNB</span> <span style="color:var(--long); float:right">60%</span></div>
+                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">ZEC</span> <span style="color:var(--muted); float:right">60%</span></div>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /two-col -->
+      </div><!-- /content -->
+    </div><!-- /main -->
+  </div><!-- /app -->
+</div>
+
+<!-- ── DESIGN TOKENS ─────────────────────────────────────── -->
+<div style="padding:32px 20px; max-width:1200px;">
+
+  <div class="section-divider">Typography</div>
+
+  <div class="type-row">
+    <div class="type-meta">
+      <div class="type-name">Instrument Sans</div>
+      <div class="type-role">Display / Headers</div>
+    </div>
+    <div>
+      <div class="type-sample-display">Signal Engine</div>
+      <div style="font-family:var(--font-display); font-size:15px; color:var(--muted); margin-top:6px;">Dashboard  ·  History  ·  Backtest  ·  Settings</div>
+    </div>
+  </div>
+
+  <div class="type-row">
+    <div class="type-meta">
+      <div class="type-name">Outfit</div>
+      <div class="type-role">UI Labels / Body</div>
+    </div>
+    <div>
+      <div class="type-sample-ui">Signal fired on BTC/USDT:USDT · RSI crossed up through 30 after 3-candle oversold hold in choppy regime. Confidence 71%.</div>
+    </div>
+  </div>
+
+  <div class="type-row">
+    <div class="type-meta">
+      <div class="type-name">JetBrains Mono</div>
+      <div class="type-role">Prices / Data</div>
+    </div>
+    <div>
+      <div class="type-sample-mono">94,250.0000  +7.89R  66.7%  2026-04-28</div>
+      <div style="font-family:var(--font-mono); font-size:13px; color:var(--muted); margin-top:6px;">entry: 94250.0000 · stop: 92800.0000 · target: 97150.0000</div>
+    </div>
+  </div>
+
+  <div class="section-divider">Color palette</div>
+  <div class="swatch-row">
+    <div class="swatch"><div class="swatch-chip" style="background:#0A0B0D;"></div><div class="swatch-name">Background</div><div class="swatch-hex">#0A0B0D</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#111318;"></div><div class="swatch-name">Surface</div><div class="swatch-hex">#111318</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#1A1D26;"></div><div class="swatch-name">Surface+</div><div class="swatch-hex">#1A1D26</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#1F2330;"></div><div class="swatch-name">Border</div><div class="swatch-hex">#1F2330</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#6B7280;"></div><div class="swatch-name">Muted</div><div class="swatch-hex">#6B7280</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#F0F2F7;"></div><div class="swatch-name">Text</div><div class="swatch-hex">#F0F2F7</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#F0A500;"></div><div class="swatch-name">Accent</div><div class="swatch-hex">#F0A500</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#22C55E;"></div><div class="swatch-name">Long/Win</div><div class="swatch-hex">#22C55E</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#EF4444;"></div><div class="swatch-name">Short/Loss</div><div class="swatch-hex">#EF4444</div></div>
+    <div class="swatch"><div class="swatch-chip" style="background:#F59E0B;"></div><div class="swatch-name">Warning</div><div class="swatch-hex">#F59E0B</div></div>
+  </div>
+
+  <div class="section-divider">Components</div>
+  <div class="component-row">
+    <button class="btn btn-primary">Run Backtest</button>
+    <button class="btn btn-long">▲ LONG Signal</button>
+    <button class="btn btn-danger">▼ SHORT Signal</button>
+    <button class="btn btn-secondary">View History</button>
+    <button class="btn btn-ghost">Settings</button>
+  </div>
+  <div class="component-row" style="margin-top:12px;">
+    <div class="input-sample">
+      <div class="input-label">RR Ratio</div>
+      <input class="input-field" value="2.0" type="text">
+    </div>
+    <div class="input-sample">
+      <div class="input-label">Pair</div>
+      <input class="input-field" value="BTC/USDT:USDT" type="text">
+    </div>
+    <div class="input-sample">
+      <div class="input-label">Since (error state)</div>
+      <input class="input-field error" value="invalid-date" type="text">
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Build dot matrix: 1 tp_hit, 25 win, 6 loss, 7 stopped, rest empty
+const matrix = document.getElementById('dotMatrix');
+if (matrix) {
+  const dots = [];
+  for (let i = 0; i < 1; i++)  dots.push('win');  // tp_hit treated as win
+  for (let i = 0; i < 25; i++) dots.push('win');
+  for (let i = 0; i < 6; i++)  dots.push('loss');
+  for (let i = 0; i < 7; i++)  dots.push('stop');
+  for (let i = dots.length; i < 39; i++) dots.push('empty');
+  // Shuffle for visual spread
+  for (let i = dots.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [dots[i], dots[j]] = [dots[j], dots[i]];
+  }
+  matrix.innerHTML = dots.map(c => `<div class="dot ${c}"></div>`).join('');
+}
+
+// Timeline signal dots
+const timelineEl = document.getElementById('timelineDots');
+if (timelineEl) {
+  const signals = [
+    {pct: 5, type: 'long-dot'}, {pct: 9, type: 'long-dot'}, {pct: 13, type: 'short-dot'},
+    {pct: 18, type: 'long-dot'}, {pct: 24, type: 'short-dot'},
+    {pct: 38, type: 'long-dot'}, {pct: 43, type: 'long-dot'},
+    {pct: 50, type: 'short-dot'}, {pct: 56, type: 'long-dot'},
+    {pct: 64, type: 'long-dot'}, {pct: 70, type: 'short-dot'},
+    {pct: 76, type: 'long-dot'}, {pct: 80, type: 'long-dot'},
+    {pct: 87, type: 'long-dot'}, {pct: 93, type: 'short-dot'},
+  ];
+  timelineEl.innerHTML = signals.map(s =>
+    `<div class="signal-dot ${s.type}" style="left:${s.pct}%"></div>`
+  ).join('');
+}
+</script>
+</body>
+</html>
