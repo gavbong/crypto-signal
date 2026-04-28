@@ -24,6 +24,7 @@ def init_db(path: Path | None = None) -> None:
                 regime_age_candles   INTEGER,
                 entry_price          REAL    NOT NULL,
                 suggested_stop_loss  REAL,
+                suggested_take_profit REAL,
                 timeframe            TEXT    NOT NULL,
                 fired_at             TIMESTAMP NOT NULL,
                 shadow_mode          INTEGER NOT NULL DEFAULT 1,
@@ -43,7 +44,15 @@ def init_db(path: Path | None = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_signals_commentary_pending
             ON signals (commentary_status, created_at);
+        """)
+        # Migration: add column if DB was created before take-profit was introduced
+        try:
+            conn.execute("ALTER TABLE signals ADD COLUMN suggested_take_profit REAL")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
 
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS regime_log (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 pair       TEXT      NOT NULL,
@@ -60,13 +69,14 @@ def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
     cur = conn.execute(
         """INSERT INTO signals
            (pair, direction, strategy, regime, regime_confidence, regime_age_candles,
-            entry_price, suggested_stop_loss, timeframe, fired_at, shadow_mode,
-            llm_commentary, commentary_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            entry_price, suggested_stop_loss, suggested_take_profit, timeframe,
+            fired_at, shadow_mode, llm_commentary, commentary_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             signal["pair"], signal["direction"], signal["strategy"],
             signal["regime"], signal["regime_confidence"], signal["regime_age_candles"],
             signal["entry_price"], signal["suggested_stop_loss"],
+            signal.get("suggested_take_profit"),
             signal["timeframe"], signal["fired_at"], signal["shadow_mode"],
             signal.get("llm_commentary"), signal.get("commentary_status", "pending"),
         ),
@@ -124,7 +134,7 @@ def get_accuracy_stats(conn: sqlite3.Connection) -> dict:
     rows = conn.execute(
         """SELECT regime,
                   COUNT(*) as total,
-                  SUM(CASE WHEN outcome IN ('win') THEN 1 ELSE 0 END) as wins,
+                  SUM(CASE WHEN outcome IN ('win', 'tp_hit') THEN 1 ELSE 0 END) as wins,
                   SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END) as resolved
            FROM signals
            WHERE shadow_mode=1

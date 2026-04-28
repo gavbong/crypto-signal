@@ -32,19 +32,28 @@ def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float] | None:
 
     entry = signal["entry_price"]
     stop = signal["suggested_stop_loss"]
+    take_profit = signal["suggested_take_profit"] if "suggested_take_profit" in signal.keys() else None
     direction = signal["direction"]
 
-    # Walk forward: check each candle for stop-loss hit
+    # Walk forward: check each candle for stop-loss or take-profit hit (in candle order)
     for candle in candles:
         ts_ms, o, h, l, c_close, vol = candle
-        if direction == "long" and stop is not None and l <= stop:
-            logger.debug(f"Signal {signal['id']} stopped out at {stop}")
-            return "stopped_out", stop
-        if direction == "short" and stop is not None and h >= stop:
-            logger.debug(f"Signal {signal['id']} stopped out at {stop}")
-            return "stopped_out", stop
+        if direction == "long":
+            if stop is not None and l <= stop:
+                logger.debug(f"Signal {signal['id']} stopped out at {stop}")
+                return "stopped_out", stop
+            if take_profit is not None and h >= take_profit:
+                logger.debug(f"Signal {signal['id']} take-profit hit at {take_profit}")
+                return "tp_hit", take_profit
+        else:
+            if stop is not None and h >= stop:
+                logger.debug(f"Signal {signal['id']} stopped out at {stop}")
+                return "stopped_out", stop
+            if take_profit is not None and l <= take_profit:
+                logger.debug(f"Signal {signal['id']} take-profit hit at {take_profit}")
+                return "tp_hit", take_profit
 
-    # No stop hit — use the last candle's close
+    # Neither stop nor TP hit — use the last candle's close
     final_close = candles[-1][4]
     if direction == "long":
         outcome = "win" if final_close > entry else "loss"

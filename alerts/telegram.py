@@ -36,11 +36,17 @@ def _format_message(signal: dict) -> str:
     confidence = signal.get("regime_confidence", 0)
     entry = signal["entry_price"]
     stop = signal.get("suggested_stop_loss")
+    take_profit = signal.get("suggested_take_profit")
 
     stop_pct = ""
     if stop is not None and entry:
         pct = abs(stop - entry) / entry * 100
         stop_pct = f"  <i>(-{pct:.1f}%)</i>" if direction == "LONG" else f"  <i>(+{pct:.1f}%)</i>"
+
+    tp_pct = ""
+    if take_profit is not None and entry:
+        pct = abs(take_profit - entry) / entry * 100
+        tp_pct = f"  <i>(+{pct:.1f}%)</i>" if direction == "LONG" else f"  <i>(-{pct:.1f}%)</i>"
 
     lines = [
         f"{colour} <b>{direction}</b>  {pair}  <code>[{mode}]</code>",
@@ -51,6 +57,8 @@ def _format_message(signal: dict) -> str:
     ]
     if stop is not None:
         lines.append(f"<b>Stop    </b>  <code>{stop:,.4f}</code>{stop_pct}")
+    if take_profit is not None:
+        lines.append(f"<b>Target  </b>  <code>{take_profit:,.4f}</code>{tp_pct}")
 
     commentary = signal.get("llm_commentary")
     if commentary:
