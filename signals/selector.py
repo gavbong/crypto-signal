@@ -24,7 +24,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "ema_crossover": "SKIP",
         "rsi_divergence": "SKIP",
         "rsi_extreme":    "SKIP",
-        "vol_breakout":   "SKIP",
+        "vol_breakout":   "FIRE",
         "volume_spike":   "GATE",
     },
 }
