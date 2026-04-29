@@ -8,7 +8,7 @@ from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from utils.config import env, get as cfg
-from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe
+from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe, fetch_ticker_safe
 from db.schema import init_db, get_conn, log_signal, is_duplicate
 from regime.classifier import classify, _to_df
 from signals.selector import active_strategies
@@ -75,10 +75,31 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
 
         df = _to_df(ohlcv)
 
+        # Fetch live price once per pair — candle close can be up to 59 min stale
+        live_price: float | None = None
+        ticker = fetch_ticker_safe(exchange, pair)
+        if ticker and ticker.get("last"):
+            live_price = float(ticker["last"])
+        else:
+            logger.warning(f"{pair}: ticker fetch failed, using candle close as entry price")
+
         for strategy in strategies:
             signal = run_strategy(strategy, pair, df, regime, timeframe)
             if signal is None:
                 continue
+
+            # Reanchor entry/stop/TP to live market price
+            if live_price is not None:
+                candle_entry = signal["entry_price"]
+                risk = abs(candle_entry - signal["suggested_stop_loss"])
+                rr = cfg()["signals"]["rr_ratio"]
+                signal["entry_price"] = round(live_price, 8)
+                if signal["direction"] == "long":
+                    signal["suggested_stop_loss"] = round(live_price - risk, 8)
+                    signal["suggested_take_profit"] = round(live_price + risk * rr, 8)
+                else:
+                    signal["suggested_stop_loss"] = round(live_price + risk, 8)
+                    signal["suggested_take_profit"] = round(live_price - risk * rr, 8)
 
             # Deduplication check
             if is_duplicate(conn, pair, signal["direction"], strategy,
