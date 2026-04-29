@@ -52,3 +52,8 @@ llm:
   analysis_model: "claude-sonnet-4-6"
   max_tokens: 256
   cache_ttl_seconds: 300
+
+dashboard:
+  host: "127.0.0.1"
+  port: 5000
+  debug: false

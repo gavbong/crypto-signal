@@ -1,0 +1,809 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MEXC Signal Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Outfit:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:          #0A0B0D;
+  --surface:     #111318;
+  --surface-up:  #1A1D26;
+  --border:      #1F2330;
+  --text:        #F0F2F7;
+  --muted:       #6B7280;
+  --accent:      #F0A500;
+  --accent-dim:  rgba(240,165,0,0.12);
+  --long:        #22C55E;
+  --long-dim:    rgba(34,197,94,0.12);
+  --short:       #EF4444;
+  --short-dim:   rgba(239,68,68,0.12);
+  --stopped:     #F59E0B;
+  --radius-sm:   2px;
+  --radius:      4px;
+  --radius-lg:   6px;
+  --font-display:'Instrument Sans', sans-serif;
+  --font-ui:     'Outfit', sans-serif;
+  --font-mono:   'JetBrains Mono', monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:var(--font-ui);font-size:14px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;min-height:100%;
+}
+
+/* ── SIDEBAR ─────────────────────────────────────────────────── */
+.sidebar{
+  position:fixed;left:0;top:0;bottom:0;width:52px;
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;
+  padding:12px 0;z-index:100;gap:2px;
+}
+.sb-logo{width:32px;height:32px;display:flex;align-items:center;justify-content:center;margin-bottom:10px}
+.nav-btn{
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  border-radius:var(--radius);border:none;background:transparent;
+  color:var(--muted);cursor:pointer;
+  transition:background 100ms ease-in-out,color 100ms ease-in-out;
+}
+.nav-btn:hover{background:var(--surface-up);color:var(--text)}
+.nav-btn.active{background:var(--accent-dim);color:var(--accent)}
+.nav-btn svg{width:16px;height:16px}
+.nav-btn.bottom{margin-top:auto}
+
+/* ── HEADER ──────────────────────────────────────────────────── */
+.header{
+  position:fixed;left:52px;top:0;right:0;height:52px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:12px;z-index:99;
+  transition:border-top 200ms ease-in-out;
+}
+.header.stale{border-top:2px solid var(--short)}
+.header-brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.brand-title{font-family:var(--font-display);font-weight:600;font-size:15px;letter-spacing:-0.01em;color:var(--text)}
+.live-badge{
+  display:flex;align-items:center;gap:5px;
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  letter-spacing:0.05em;text-transform:uppercase;
+}
+.live-badge.live{color:var(--long)}
+.live-badge.stale{color:var(--stopped)}
+.live-dot{width:6px;height:6px;border-radius:9999px}
+.live-badge.live .live-dot{background:var(--long);animation:pulse-live 2s ease-in-out infinite}
+.live-badge.stale .live-dot{background:var(--stopped)}
+@keyframes pulse-live{0%,100%{opacity:1}50%{opacity:0.4}}
+.vsep{width:1px;height:20px;background:var(--border);flex-shrink:0}
+.pair-chips{display:flex;gap:5px;flex-wrap:wrap}
+.pair-chip{
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:2px 6px;
+}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.header-ts{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+
+/* ── MAIN ────────────────────────────────────────────────────── */
+.main{margin-left:52px;margin-top:52px;padding:16px 20px 32px;max-width:calc(1440px - 52px)}
+
+/* ── SEGMENTED TOGGLE ────────────────────────────────────────── */
+.seg-toggle{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px}
+.seg-btn{
+  font-family:var(--font-mono);font-size:10px;font-weight:500;letter-spacing:0.04em;
+  padding:3px 8px;border-radius:2px;border:none;background:transparent;
+  color:var(--muted);cursor:pointer;transition:background 80ms,color 80ms;
+}
+.seg-btn.active{background:var(--accent-dim);color:var(--accent)}
+.seg-btn:hover:not(.active){color:var(--text)}
+
+/* ── STAT CARDS ──────────────────────────────────────────────── */
+.stats-row-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.stats-row-title{font-family:var(--font-ui);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted)}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+.stat-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 20px;display:flex;flex-direction:column;gap:6px;
+}
+.stat-label{font-family:var(--font-ui);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted)}
+.stat-value{font-family:var(--font-display);font-size:28px;font-weight:600;line-height:1;letter-spacing:-0.02em}
+.stat-value.green{color:var(--long)}
+.stat-value.amber{color:var(--accent)}
+.stat-value.white{color:var(--text)}
+.stat-value.red{color:var(--short)}
+.stat-unit{font-size:15px;font-weight:400;opacity:0.55}
+.stat-sub{font-family:var(--font-ui);font-size:11px;color:var(--muted);margin-top:2px}
+
+/* ── DOT MATRIX ──────────────────────────────────────────────── */
+.dot-matrix{display:flex;flex-wrap:wrap;gap:3px;padding:2px 0;min-height:14px}
+.dot{width:8px;height:8px;border-radius:9999px;flex-shrink:0}
+.dot.win{background:var(--long)}
+.dot.loss{background:var(--short)}
+.dot.stopped{background:var(--stopped)}
+.dot.tp{background:var(--accent);box-shadow:0 0 5px rgba(240,165,0,0.6)}
+.dot.open{background:var(--accent);border:1.5px solid rgba(240,165,0,0.5)}
+
+/* ── PANELS ──────────────────────────────────────────────────── */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.panel-hdr{padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.panel-title{font-family:var(--font-display);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted)}
+.panel-body{padding:14px 16px}
+
+/* ── MID GRID ────────────────────────────────────────────────── */
+.mid-grid{display:grid;grid-template-columns:65fr 35fr;gap:12px;margin-bottom:12px}
+
+/* ── REGIME TIMELINE ─────────────────────────────────────────── */
+.regime-bar-wrap{position:relative;height:40px;margin-bottom:6px}
+.regime-segment{position:absolute;top:50%;transform:translateY(-50%);height:24px;border-radius:var(--radius-sm)}
+.regime-segment.choppy{background:rgba(240,165,0,0.07);border:1px solid rgba(240,165,0,0.22)}
+.regime-segment.trending-up{background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22)}
+.regime-segment.trending-down{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.22)}
+.regime-segment.high-vol{background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.22)}
+.regime-seg-label{
+  position:absolute;top:50%;transform:translateY(-50%);
+  font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;
+  text-transform:uppercase;color:rgba(240,165,0,0.5);padding:0 8px;
+  pointer-events:none;white-space:nowrap;overflow:hidden;
+}
+.sig-dot{
+  position:absolute;top:50%;transform:translate(-50%,-50%);
+  width:7px;height:7px;border-radius:9999px;
+  border:1.5px solid var(--bg);z-index:2;cursor:pointer;
+  transition:transform 100ms ease-in-out;
+}
+.sig-dot:hover{transform:translate(-50%,-50%) scale(1.6)}
+.sig-dot.long{background:var(--long)}
+.sig-dot.short{background:var(--short)}
+.sig-dot.stopped{background:var(--stopped)}
+.sig-dot.open{background:var(--accent)}
+.regime-axis{display:flex;justify-content:space-between;margin-top:4px}
+.regime-axis span{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.regime-annotation{display:block;font-family:var(--font-mono);font-size:9px;color:var(--muted);text-align:center;margin-top:4px;opacity:0.6}
+.regime-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.regime-stat{background:var(--surface-up);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
+.rs-label{font-family:var(--font-ui);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:5px}
+.rs-val{font-family:var(--font-mono);font-size:17px;font-weight:500;color:var(--accent)}
+.rs-val.inactive{color:var(--muted);opacity:0.5}
+.rs-sub{font-size:11px;color:var(--muted);margin-top:2px}
+
+/* ── ACTIVE SIGNAL ───────────────────────────────────────────── */
+.sig-meta{display:flex;align-items:center;gap:7px;margin-bottom:12px;flex-wrap:wrap}
+.sig-pair{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text)}
+.badge{
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  letter-spacing:0.05em;text-transform:uppercase;padding:2px 6px;
+  border-radius:var(--radius-sm);display:inline-flex;align-items:center;gap:3px;
+}
+.b-long{background:var(--long-dim);color:var(--long);border:1px solid rgba(34,197,94,0.25)}
+.b-short{background:var(--short-dim);color:var(--short);border:1px solid rgba(239,68,68,0.25)}
+.b-live{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,0.3)}
+.b-regime{background:var(--surface-up);color:var(--muted);border:1px solid var(--border)}
+.b-win{background:var(--long-dim);color:var(--long)}
+.b-tp{background:var(--accent-dim);color:var(--accent)}
+.b-loss{background:var(--short-dim);color:var(--short)}
+.b-stopped{background:rgba(245,158,11,0.12);color:var(--stopped)}
+.b-open{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,0.25)}
+.prices-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+.price-row{display:flex;flex-direction:column;gap:3px}
+.price-lbl{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted)}
+.price-val{font-family:var(--font-mono);font-size:13px;font-weight:500}
+.pv-entry{color:var(--text)}
+.pv-stop{color:var(--short)}
+.pv-target{color:var(--accent)}
+.llm-wrap{
+  border-left:3px solid var(--accent);background:var(--accent-dim);
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  padding:10px 12px;margin-bottom:8px;
+}
+.llm-text{
+  font-family:var(--font-ui);font-size:12px;line-height:1.65;
+  color:var(--text);font-style:italic;opacity:0.9;
+  max-height:120px;overflow:hidden;position:relative;
+}
+.llm-text.expanded{max-height:none}
+.llm-show-more{
+  font-family:var(--font-mono);font-size:10px;color:var(--accent);
+  background:none;border:none;cursor:pointer;padding:4px 0 0;display:block;
+}
+.llm-attr{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:5px}
+.sig-footer{display:flex;justify-content:space-between;align-items:center;font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.sig-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:32px 16px;color:var(--muted);text-align:center;gap:6px;
+  min-height:160px;
+}
+.sig-empty-label{font-family:var(--font-ui);font-size:12px}
+.sig-empty-ts{font-family:var(--font-mono);font-size:10px;opacity:0.6}
+.sig-more-badge{font-family:var(--font-mono);font-size:9px;color:var(--muted);margin-left:auto}
+
+/* ── SIGNAL TABLE ────────────────────────────────────────────── */
+.tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.signal-table{width:100%;border-collapse:collapse}
+.signal-table th{
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);
+  padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);
+  white-space:nowrap;background:var(--surface);position:sticky;top:104px;
+}
+.signal-table th.r{text-align:right}
+.signal-table td{font-size:12px;padding:7px 12px;border-bottom:1px solid rgba(31,35,48,0.6);vertical-align:middle;white-space:nowrap}
+.signal-table tr:last-child td{border-bottom:none}
+.signal-table tbody tr:hover td{background:rgba(26,29,38,0.5)}
+.td-pair{font-family:var(--font-display);font-weight:600;font-size:12px}
+.td-mono{font-family:var(--font-mono);font-size:11px}
+.td-muted{font-size:11px;color:var(--muted)}
+.td-date{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.pnl-pos{font-family:var(--font-mono);font-size:12px;color:var(--long)}
+.pnl-neg{font-family:var(--font-mono);font-size:12px;color:var(--short)}
+.cell-r{text-align:right}
+.outcome-badge{
+  font-family:var(--font-mono);font-size:10px;font-weight:500;
+  letter-spacing:0.03em;text-transform:uppercase;padding:2px 5px;
+  border-radius:var(--radius-sm);display:inline-flex;align-items:center;
+}
+.tbl-hdr-right{display:flex;align-items:center;gap:8px}
+@keyframes flash-bg{0%{background:rgba(240,165,0,0.15)}100%{background:transparent}}
+.flash{animation:flash-bg 150ms ease-out}
+
+/* ── LEGEND ──────────────────────────────────────────────────── */
+.legend-row{display:flex;gap:14px;align-items:center}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.legend-dot{width:8px;height:8px;border-radius:9999px;flex-shrink:0}
+
+/* ── TOOLTIP ─────────────────────────────────────────────────── */
+.tooltip{
+  position:fixed;background:var(--surface-up);border:1px solid var(--border);
+  border-radius:var(--radius);padding:6px 10px;font-family:var(--font-mono);
+  font-size:10px;color:var(--text);pointer-events:none;z-index:200;
+  opacity:0;transition:opacity 100ms ease-in-out;white-space:nowrap;
+  transform:translate(-50%,-110%);
+}
+.tooltip.visible{opacity:1}
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sb-logo">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <polygon points="11,2 20,7 20,15 11,20 2,15 2,7" fill="none" stroke="#F0A500" stroke-width="1.5"/>
+      <circle cx="11" cy="11" r="2.5" fill="#F0A500"/>
+    </svg>
+  </div>
+  <button class="nav-btn active" title="Dashboard">
+    <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/></svg>
+  </button>
+  <button class="nav-btn" title="Signals">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,10 5,6 8,9 12,4 15,7"/></svg>
+  </button>
+  <button class="nav-btn" title="Backtest">
+    <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="10" width="2" height="5" rx=".5" fill="currentColor"/><rect x="5" y="7" width="2" height="8" rx=".5" fill="currentColor"/><rect x="9" y="4" width="2" height="11" rx=".5" fill="currentColor"/><rect x="13" y="2" width="2" height="13" rx=".5" fill="currentColor" opacity=".35"/></svg>
+  </button>
+  <button class="nav-btn bottom" title="Settings">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="2.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M3.1 12.9l1.4-1.4M11.5 4.5l1.4-1.4"/></svg>
+  </button>
+</aside>
+
+<header class="header" id="hdr">
+  <div class="header-brand">
+    <div class="live-badge live" id="live-badge"><span class="live-dot"></span><span id="live-label">LIVE</span></div>
+    <div class="vsep"></div>
+    <span class="brand-title">MEXC Signal Engine</span>
+  </div>
+  <div class="vsep"></div>
+  <div class="pair-chips" id="pair-chips">
+    <span class="pair-chip">—</span>
+  </div>
+  <div class="header-right">
+    <span class="header-ts" id="hdr-ts">—</span>
+  </div>
+</header>
+
+<main class="main">
+
+  <div class="stats-row-hdr">
+    <span class="stats-row-title" id="stats-period-label">Performance</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="seg-toggle" id="time-toggle">
+        <button class="seg-btn active" data-val="180d">180d</button>
+        <button class="seg-btn" data-val="90d">90d</button>
+        <button class="seg-btn" data-val="30d">30d</button>
+        <button class="seg-btn" data-val="all">All</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label" id="winrate-label">Win Rate</div>
+      <div class="stat-value green" id="stat-winrate">—</div>
+      <div class="stat-sub" id="stat-winrate-sub">— of — signals</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Net P&amp;L</div>
+      <div class="stat-value green" id="stat-netpnl">—</div>
+      <div class="stat-sub" id="stat-netpnl-sub">— avg &middot; R:R 1:—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win History</div>
+      <div id="dot-matrix" class="dot-matrix"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Signals Fired</div>
+      <div class="stat-value amber" id="stat-total">—</div>
+      <div class="stat-sub" id="stat-period">—</div>
+    </div>
+  </div>
+
+  <div class="mid-grid">
+
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title" id="regime-panel-title">Regime Timeline</span>
+        <div class="legend-row">
+          <span class="legend-item"><span class="legend-dot" style="background:var(--long)"></span>LONG</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--short)"></span>SHORT</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--stopped)"></span>STOP</span>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div class="regime-bar-wrap" id="regime-bar"></div>
+        <div class="regime-axis" id="regime-axis">
+          <span>—</span><span>—</span><span>—</span>
+        </div>
+        <div class="regime-stats" id="regime-stats-grid"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="signal-panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Active Signal</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="sig-more-badge" id="active-more"></span>
+          <span class="badge b-live"><span style="font-size:7px">●</span> Live</span>
+        </div>
+      </div>
+      <div id="signal-panel-body" style="padding:14px 16px">
+        <div class="sig-empty">
+          <span class="sig-empty-label">No active signal</span>
+          <span class="sig-empty-ts" id="active-empty-ts">last scan: —</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="tbl-wrap">
+    <div class="panel-hdr">
+      <span class="panel-title">Signal History</span>
+      <div class="tbl-hdr-right">
+        <div class="seg-toggle" id="shadow-toggle">
+          <button class="seg-btn active" data-val="live">Live</button>
+          <button class="seg-btn" data-val="shadow">Shadow</button>
+          <button class="seg-btn" data-val="all">All</button>
+        </div>
+        <span id="tbl-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">— signals</span>
+      </div>
+    </div>
+    <table class="signal-table">
+      <thead>
+        <tr>
+          <th>Pair</th><th>Dir</th><th>Regime</th><th>Fired</th>
+          <th>Entry</th><th>Stop</th><th>Target</th><th>Outcome</th>
+          <th class="r">P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody id="sig-tbody"></tbody>
+    </table>
+  </div>
+
+</main>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+'use strict';
+
+const POLL_MS = 5000;
+let shadowFilter = 'live';
+let timeFilter = '180d';
+let _lastSignalIds = new Set();
+
+// ─── CLOCK ───────────────────────────────────────────────────────────────────
+(function tick() {
+  const el = document.getElementById('hdr-ts');
+  const d = new Date();
+  el.textContent = d.toISOString().slice(0,19).replace('T',' ') + ' UTC';
+  setTimeout(tick, 1000);
+})();
+
+// ─── TOOLTIP ─────────────────────────────────────────────────────────────────
+const TIP = document.getElementById('tooltip');
+function showTip(e, html) {
+  TIP.innerHTML = html;
+  TIP.classList.add('visible');
+}
+function hideTip() { TIP.classList.remove('visible'); }
+document.addEventListener('mousemove', e => {
+  TIP.style.left = e.clientX + 'px';
+  TIP.style.top  = (e.clientY - 8) + 'px';
+});
+
+// ─── FILTER CONTROLS ─────────────────────────────────────────────────────────
+function initToggle(id, onChange) {
+  const el = document.getElementById(id);
+  el.addEventListener('click', e => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn) return;
+    el.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    onChange(btn.dataset.val);
+  });
+}
+
+initToggle('shadow-toggle', val => { shadowFilter = val; refresh(); });
+initToggle('time-toggle', val => { timeFilter = val; refresh(); });
+
+// ─── SINCE PARAM ─────────────────────────────────────────────────────────────
+function sinceParam() {
+  const days = {'180d':180,'90d':90,'30d':30}[timeFilter];
+  if (!days) return '';
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return '&since=' + d.toISOString().slice(0,10);
+}
+
+// ─── PRICE FORMAT ────────────────────────────────────────────────────────────
+function fmt(p) {
+  if (p == null) return '—';
+  if (p >= 1000) return p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if (p >= 10)   return p.toFixed(2);
+  return p.toFixed(4);
+}
+
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return iso.slice(0,10);
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  return iso.slice(0,16).replace('T',' ') + ' UTC';
+}
+
+function fmtAxisDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00Z');
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'});
+}
+
+// ─── PAIR CHIPS ──────────────────────────────────────────────────────────────
+function renderPairChips(pairs) {
+  const el = document.getElementById('pair-chips');
+  if (!pairs || pairs.length === 0) return;
+  el.innerHTML = pairs.map(p => {
+    const label = p.replace('/USDT:USDT','').replace('/USDT','') + '/USDT';
+    return `<span class="pair-chip">${label}</span>`;
+  }).join('');
+}
+
+// ─── HEALTH / STALE ──────────────────────────────────────────────────────────
+function renderHealth(health) {
+  const hdr = document.getElementById('hdr');
+  const badge = document.getElementById('live-badge');
+  const label = document.getElementById('live-label');
+  if (health.engine_running) {
+    hdr.classList.remove('stale');
+    badge.className = 'live-badge live';
+    label.textContent = 'LIVE';
+  } else {
+    hdr.classList.add('stale');
+    badge.className = 'live-badge stale';
+    label.textContent = 'STALE';
+  }
+}
+
+// ─── STAT CARDS ──────────────────────────────────────────────────────────────
+function renderStats(stats) {
+  const winrate = stats.accuracy != null ? (stats.accuracy * 100).toFixed(1) : '0.0';
+  const winEl = document.getElementById('stat-winrate');
+  winEl.innerHTML = `${winrate}<span class="stat-unit">%</span>`;
+  winEl.className = 'stat-value ' + (stats.accuracy >= 0.5 ? 'green' : 'red');
+
+  const w = stats.wins || 0, l = stats.losses || 0, s = stats.stopped || 0, tp = stats.tp_hits || 0;
+  document.getElementById('stat-winrate-sub').textContent =
+    `${w}W · ${l}L · ${s}S · ${tp}TP  of ${stats.total_fired} signals`;
+
+  const netR = stats.net_r != null ? stats.net_r : 0;
+  const netEl = document.getElementById('stat-netpnl');
+  netEl.innerHTML = `${netR >= 0 ? '+' : ''}${netR.toFixed(2)}<span class="stat-unit">R</span>`;
+  netEl.className = 'stat-value ' + (netR >= 0 ? 'green' : 'red');
+
+  const avgR = stats.avg_r != null ? stats.avg_r.toFixed(3) : '0.000';
+  document.getElementById('stat-netpnl-sub').textContent =
+    `${netR >= 0 ? '+' : ''}${avgR}R avg · R:R 1:${stats.rr_ratio || 2.0}`;
+
+  document.getElementById('stat-total').textContent = stats.total_fired || 0;
+
+  const ps = stats.period_start, pe = stats.period_end;
+  document.getElementById('stat-period').textContent = ps && pe ? `${ps} → ${pe}` : '—';
+
+  const label = document.getElementById('stats-period-label');
+  label.textContent = timeFilter === 'all' ? 'Performance · All time'
+    : `Performance · ${timeFilter}`;
+
+  document.getElementById('winrate-label').textContent =
+    `Win Rate (${timeFilter === 'all' ? 'all' : timeFilter})`;
+}
+
+// ─── DOT MATRIX ──────────────────────────────────────────────────────────────
+function renderDotMatrix(signals) {
+  const c = document.getElementById('dot-matrix');
+  const resolved = [...signals].filter(s => s.outcome).reverse();
+  if (resolved.length === 0) { c.innerHTML = ''; return; }
+  c.innerHTML = resolved.map(s => {
+    const cls = s.outcome === 'win' ? 'win'
+               : s.outcome === 'tp_hit' ? 'tp'
+               : s.outcome === 'loss' ? 'loss'
+               : s.outcome === 'stopped_out' ? 'stopped' : 'win';
+    const pnl = s.pnl_r != null ? `${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R` : '—';
+    return `<div class="dot ${cls}"
+      data-tip="<b>${s.pair}</b> ${s.direction.toUpperCase()} ${fmtDate(s.fired_at)}<br>${s.outcome.toUpperCase()} ${pnl}">
+    </div>`;
+  }).join('');
+  c.querySelectorAll('.dot').forEach(d => {
+    d.addEventListener('mouseenter', e => showTip(e, d.dataset.tip));
+    d.addEventListener('mouseleave', hideTip);
+  });
+}
+
+// ─── REGIME TIMELINE ─────────────────────────────────────────────────────────
+function renderRegimeTimeline(regime, signals) {
+  const bar = document.getElementById('regime-bar');
+  const axis = document.getElementById('regime-axis');
+  bar.innerHTML = '';
+
+  const ps = regime.period_start, pe = regime.period_end;
+  if (!ps || !pe) {
+    bar.innerHTML = '<span class="regime-annotation">No data</span>';
+    return;
+  }
+
+  const startMs = new Date(ps + 'T00:00:00Z').getTime();
+  const endMs   = new Date(pe + 'T00:00:00Z').getTime();
+  const totalMs = Math.max(endMs - startMs, 1);
+
+  regime.segments.forEach(seg => {
+    const segStart = new Date(seg.start + 'T00:00:00Z').getTime();
+    const segEnd   = new Date(seg.end   + 'T00:00:00Z').getTime();
+    const leftPct  = ((segStart - startMs) / totalMs * 100).toFixed(2) + '%';
+    const widthPct = ((segEnd - segStart) / totalMs * 100).toFixed(2) + '%';
+
+    const div = document.createElement('div');
+    div.className = 'regime-segment ' + seg.regime.replace(/[^a-z-]/g,'');
+    div.style.left = leftPct; div.style.width = widthPct;
+    bar.appendChild(div);
+
+    const lbl = document.createElement('div');
+    lbl.className = 'regime-seg-label';
+    lbl.style.left = leftPct; lbl.textContent = seg.regime.toUpperCase();
+    bar.appendChild(lbl);
+  });
+
+  if (regime.segments.length === 1) {
+    const ann = document.createElement('span');
+    ann.className = 'regime-annotation';
+    const days = Math.round((endMs - startMs) / 86400000);
+    ann.textContent = `Single regime · ${days}d`;
+    bar.appendChild(ann);
+  }
+
+  // signal dots — only resolved + open (not shadow unless shadow filter active)
+  const prevDots = {};
+  signals.forEach(s => {
+    if (!s.fired_at) return;
+    const ms = new Date(s.fired_at).getTime();
+    const basePct = (ms - startMs) / totalMs * 100;
+    let finalPct = Math.max(0, Math.min(100, basePct));
+
+    // collision: minimum 0.5% gap
+    const key = Math.round(finalPct);
+    if (prevDots[key] !== undefined) {
+      finalPct += (prevDots[key] % 2 === 0 ? 0.6 : -0.6);
+      prevDots[key]++;
+    } else {
+      prevDots[key] = 0;
+    }
+
+    const cls = !s.outcome ? 'open'
+               : s.outcome === 'stopped_out' ? 'stopped'
+               : s.direction;
+    const pnl = s.pnl_r != null ? `${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R` : '—';
+    const tip = `<b>${s.pair}</b> ${s.direction.toUpperCase()}<br>${fmtDate(s.fired_at)}<br>${s.outcome ? s.outcome.toUpperCase() + ' ' + pnl : 'OPEN'}`;
+
+    const dot = document.createElement('div');
+    dot.className = 'sig-dot ' + cls;
+    dot.style.left = finalPct.toFixed(2) + '%';
+    dot.addEventListener('mouseenter', e => showTip(e, tip));
+    dot.addEventListener('mouseleave', hideTip);
+    bar.appendChild(dot);
+  });
+
+  // axis labels
+  const midMs = startMs + (endMs - startMs) / 2;
+  const midDate = new Date(midMs).toISOString().slice(0,10);
+  const spans = axis.querySelectorAll('span');
+  if (spans.length >= 3) {
+    spans[0].textContent = fmtAxisDate(ps);
+    spans[1].textContent = fmtAxisDate(midDate);
+    spans[2].textContent = fmtAxisDate(pe);
+  }
+}
+
+// ─── REGIME STATS GRID ───────────────────────────────────────────────────────
+function renderRegimeStats(stats) {
+  const grid = document.getElementById('regime-stats-grid');
+  const REGIMES = [
+    {key:'choppy', label:'Choppy'},
+    {key:'trending-up', label:'Trending ↑'},
+    {key:'trending-down', label:'Trending ↓'},
+  ];
+  grid.innerHTML = REGIMES.map(({key, label}) => {
+    const r = stats.by_regime && stats.by_regime[key];
+    if (!r || r.fired === 0) {
+      return `<div class="regime-stat">
+        <div class="rs-label">${label}</div>
+        <div class="rs-val inactive">0</div>
+        <div class="rs-sub">inactive</div>
+      </div>`;
+    }
+    const acc = r.accuracy != null ? (r.accuracy * 100).toFixed(1) + '%' : '—';
+    return `<div class="regime-stat">
+      <div class="rs-label">${label}</div>
+      <div class="rs-val">${r.fired}</div>
+      <div class="rs-sub">${r.resolved} resolved · ${acc}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── ACTIVE SIGNAL ───────────────────────────────────────────────────────────
+function renderActiveSignal(signals) {
+  const body = document.getElementById('signal-panel-body');
+  const moreBadge = document.getElementById('active-more');
+  moreBadge.textContent = signals.length > 1 ? `+${signals.length - 1} more` : '';
+
+  if (signals.length === 0) {
+    const lastTs = document.getElementById('hdr-ts').textContent;
+    body.innerHTML = `<div class="sig-empty">
+      <span class="sig-empty-label">No active signal</span>
+      <span class="sig-empty-ts">last scan: ${lastTs}</span>
+    </div>`;
+    return;
+  }
+
+  const s = signals[0];
+  const rr = (s.suggested_stop_loss && s.entry_price)
+    ? Math.abs(s.entry_price - s.suggested_stop_loss) : null;
+  const riskPct = rr && s.entry_price ? ((rr / s.entry_price) * 100).toFixed(2) + '%' : '—';
+  const tpDist = s.suggested_take_profit && s.entry_price
+    ? Math.abs(s.suggested_take_profit - s.entry_price).toLocaleString('en-US',{maximumFractionDigits:0})
+    : '—';
+
+  const dirClass = s.direction === 'long' ? 'b-long' : 'b-short';
+  const commentary = s.llm_commentary || '';
+  const filedStr = s.fired_at ? fmtDateTime(s.fired_at) : '—';
+
+  body.innerHTML = `
+    <div class="sig-meta">
+      <span class="badge ${dirClass}">${s.direction.toUpperCase()}</span>
+      <span class="sig-pair">${s.pair.replace('/USDT:USDT','')}/USDT</span>
+      <span class="badge b-regime">${s.regime || '—'}</span>
+    </div>
+    <div class="prices-grid">
+      <div class="price-row">
+        <span class="price-lbl">Entry</span>
+        <span class="price-val pv-entry">${fmt(s.entry_price)}</span>
+      </div>
+      <div class="price-row">
+        <span class="price-lbl">Stop</span>
+        <span class="price-val pv-stop">${fmt(s.suggested_stop_loss)}</span>
+      </div>
+      <div class="price-row">
+        <span class="price-lbl">Target</span>
+        <span class="price-val pv-target">${fmt(s.suggested_take_profit)}</span>
+      </div>
+    </div>
+    ${commentary ? `<div class="llm-wrap">
+      <div class="llm-text" id="llm-text-active">${commentary}</div>
+      <button class="llm-show-more" onclick="this.previousElementSibling.classList.toggle('expanded');this.textContent=this.previousElementSibling.classList.contains('expanded')?'Show less':'Show full'">Show full</button>
+      <div class="llm-attr">— LLM analysis · ${filedStr}</div>
+    </div>` : ''}
+    <div class="sig-footer">
+      <span>Risk ${riskPct} · R:R 1:2.0 · +${tpDist} to TP</span>
+      <span>1h timeframe</span>
+    </div>`;
+}
+
+// ─── SIGNAL TABLE ────────────────────────────────────────────────────────────
+function renderSignalTable(signals, total) {
+  const tbody = document.getElementById('sig-tbody');
+  document.getElementById('tbl-count').textContent =
+    `${total || signals.length} signals`;
+
+  const rows = signals.slice(0, 50);
+  const newIds = new Set(rows.map(s => s.id));
+
+  const html = rows.map(s => {
+    const oc = {win:'b-win',tp_hit:'b-tp',loss:'b-loss',stopped_out:'b-stopped'}[s.outcome] || 'b-open';
+    const ol = {win:'WIN',tp_hit:'TP HIT',loss:'LOSS',stopped_out:'STOP'}[s.outcome] || 'OPEN';
+    const dc = s.direction === 'long' ? 'b-long' : 'b-short';
+    const pnl = s.pnl_r != null
+      ? `<span class="${s.pnl_r >= 0 ? 'pnl-pos' : 'pnl-neg'}">${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const isNew = !_lastSignalIds.has(s.id);
+    return `<tr${isNew && _lastSignalIds.size > 0 ? ' class="flash"' : ''}>
+      <td class="td-pair">${s.pair.replace('/USDT:USDT','')}/USDT</td>
+      <td><span class="badge ${dc}">${s.direction.toUpperCase()}</span></td>
+      <td class="td-muted">${s.regime || '—'}</td>
+      <td class="td-date">${fmtDate(s.fired_at)}</td>
+      <td class="td-mono">${fmt(s.entry_price)}</td>
+      <td class="td-mono" style="color:var(--short)">${fmt(s.suggested_stop_loss)}</td>
+      <td class="td-mono" style="color:var(--accent)">${fmt(s.suggested_take_profit)}</td>
+      <td><span class="outcome-badge ${oc}">${ol}</span></td>
+      <td class="cell-r">${pnl}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.innerHTML = html;
+  _lastSignalIds = newIds;
+}
+
+// ─── MAIN REFRESH ────────────────────────────────────────────────────────────
+async function refresh() {
+  try {
+    const [statsRes, signalsRes, activeRes, healthRes, regimeRes] = await Promise.all([
+      fetch(`/api/stats?filter=${shadowFilter}${sinceParam()}`),
+      fetch(`/api/signals?filter=${shadowFilter}`),
+      fetch('/api/active'),
+      fetch('/api/health'),
+      fetch(`/api/regime?filter=${shadowFilter}`),
+    ]);
+    const [stats, sigData, active, health, regime] = await Promise.all([
+      statsRes.json(), signalsRes.json(), activeRes.json(),
+      healthRes.json(), regimeRes.json(),
+    ]);
+
+    renderHealth(health);
+    renderStats(stats);
+    renderDotMatrix(sigData.signals);
+    renderRegimeTimeline(regime, sigData.signals);
+    renderRegimeStats(stats);
+    renderActiveSignal(active.signals);
+    renderSignalTable(sigData.signals, sigData.total);
+
+  } catch (err) {
+    console.error('Refresh error:', err);
+  }
+}
+
+// ─── PAIR CHIPS FROM CONFIG ───────────────────────────────────────────────────
+(async function loadPairs() {
+  try {
+    const r = await fetch('/api/stats?filter=all');
+    if (!r.ok) return;
+    // derive pairs from signal data instead of a dedicated /api/config endpoint
+    const sigR = await fetch('/api/signals?filter=all');
+    const data = await sigR.json();
+    const pairs = [...new Set(data.signals.map(s => s.pair))];
+    if (pairs.length) renderPairChips(pairs);
+  } catch (_) {}
+})();
+
+refresh();
+setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>
