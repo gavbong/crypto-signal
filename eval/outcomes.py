@@ -8,12 +8,13 @@ from utils.ccxt_wrapper import fetch_ohlcv_safe
 from utils.config import get as cfg
 
 
-def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float] | None:
+def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float, float | None] | None:
     """
     Fetch 1h candles from signal.fired_at to fired_at + outcome_window_hours.
-    Returns (outcome, outcome_price) or None if candle data unavailable.
+    Returns (outcome, outcome_price, pnl_r) or None if candle data unavailable.
 
-    outcome: 'win' | 'loss' | 'stopped_out'
+    outcome: 'win' | 'loss' | 'stopped_out' | 'tp_hit'
+    pnl_r: P&L in R-multiples (1R = entry-to-stop distance), None if stop is missing
     """
     c = cfg()["walk_forward"]
     window_h = c["outcome_window_hours"]
@@ -34,6 +35,7 @@ def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float] | None:
     stop = signal["suggested_stop_loss"]
     take_profit = signal["suggested_take_profit"] if "suggested_take_profit" in signal.keys() else None
     direction = signal["direction"]
+    risk = abs(entry - stop) if stop is not None else None
 
     # Walk forward: check each candle for stop-loss or take-profit hit (in candle order)
     for candle in candles:
@@ -41,27 +43,31 @@ def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float] | None:
         if direction == "long":
             if stop is not None and l <= stop:
                 logger.debug(f"Signal {signal['id']} stopped out at {stop}")
-                return "stopped_out", stop
+                return "stopped_out", stop, -1.0
             if take_profit is not None and h >= take_profit:
+                pnl_r = (take_profit - entry) / risk if risk else None
                 logger.debug(f"Signal {signal['id']} take-profit hit at {take_profit}")
-                return "tp_hit", take_profit
+                return "tp_hit", take_profit, pnl_r
         else:
             if stop is not None and h >= stop:
                 logger.debug(f"Signal {signal['id']} stopped out at {stop}")
-                return "stopped_out", stop
+                return "stopped_out", stop, -1.0
             if take_profit is not None and l <= take_profit:
+                pnl_r = (entry - take_profit) / risk if risk else None
                 logger.debug(f"Signal {signal['id']} take-profit hit at {take_profit}")
-                return "tp_hit", take_profit
+                return "tp_hit", take_profit, pnl_r
 
     # Neither stop nor TP hit — use the last candle's close
     final_close = candles[-1][4]
     if direction == "long":
         outcome = "win" if final_close > entry else "loss"
+        pnl_r = (final_close - entry) / risk if risk else None
     else:
         outcome = "win" if final_close < entry else "loss"
+        pnl_r = (entry - final_close) / risk if risk else None
 
     logger.debug(f"Signal {signal['id']} {direction} entry={entry} T+{window_h}h={final_close} → {outcome}")
-    return outcome, final_close
+    return outcome, final_close, pnl_r
 
 
 def run_evaluation(conn: sqlite3.Connection, exchange) -> dict:
@@ -77,8 +83,8 @@ def run_evaluation(conn: sqlite3.Connection, exchange) -> dict:
     for signal in pending:
         result = resolve_outcome(signal, exchange)
         if result is not None:
-            outcome, price = result
-            update_outcome(conn, signal["id"], outcome, price)
+            outcome, price, pnl_r = result
+            update_outcome(conn, signal["id"], outcome, price, pnl_r)
             resolved += 1
 
     stats = get_accuracy_stats(conn)
@@ -92,11 +98,15 @@ def _log_stats(stats: dict, c: dict) -> None:
     total_signals = sum(s["total"] for s in stats.values())
     overall_acc = total_wins / total_resolved if total_resolved > 0 else None
 
-    logger.info(
-        f"Walk-forward stats | signals={total_signals} resolved={total_resolved} "
-        f"overall_accuracy={overall_acc:.1%}" if overall_acc else
-        f"Walk-forward stats | signals={total_signals} resolved={total_resolved} accuracy=N/A"
-    )
+    if overall_acc is not None:
+        logger.info(
+            f"Walk-forward stats | signals={total_signals} resolved={total_resolved} "
+            f"overall_accuracy={overall_acc:.1%}"
+        )
+    else:
+        logger.info(
+            f"Walk-forward stats | signals={total_signals} resolved={total_resolved} accuracy=N/A"
+        )
     for regime, s in stats.items():
         acc = s["accuracy"]
         acc_str = f"{acc:.1%}" if acc is not None else "N/A"
