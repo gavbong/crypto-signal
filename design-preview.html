@@ -1,812 +1,648 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MEXC Signal Engine — Design Preview</title>
+<title>MEXC Signal Engine</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Outfit:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  /* ── Design tokens ─────────────────────────────────────── */
-  :root {
-    --bg:           #0A0B0D;
-    --surface:      #111318;
-    --surface-up:   #1A1D26;
-    --border:       #1F2330;
-    --text:         #F0F2F7;
-    --muted:        #6B7280;
-    --accent:       #F0A500;
-    --accent-dim:   rgba(240,165,0,0.12);
-    --long:         #22C55E;
-    --long-dim:     rgba(34,197,94,0.12);
-    --short:        #EF4444;
-    --short-dim:    rgba(239,68,68,0.12);
-    --neutral:      #3B4258;
-    --radius-sm:    2px;
-    --radius:       4px;
-    --radius-lg:    6px;
-    --font-display: 'Instrument Sans', sans-serif;
-    --font-ui:      'Outfit', sans-serif;
-    --font-mono:    'JetBrains Mono', monospace;
-  }
+:root {
+  --bg:          #0A0B0D;
+  --surface:     #111318;
+  --surface-up:  #1A1D26;
+  --border:      #1F2330;
+  --text:        #F0F2F7;
+  --muted:       #6B7280;
+  --accent:      #F0A500;
+  --accent-dim:  rgba(240,165,0,0.12);
+  --long:        #22C55E;
+  --long-dim:    rgba(34,197,94,0.12);
+  --short:       #EF4444;
+  --short-dim:   rgba(239,68,68,0.12);
+  --stopped:     #F59E0B;
+  --radius-sm:   2px;
+  --radius:      4px;
+  --radius-lg:   6px;
+  --font-display:'Instrument Sans', sans-serif;
+  --font-ui:     'Outfit', sans-serif;
+  --font-mono:   'JetBrains Mono', monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:var(--font-ui);font-size:14px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;min-height:100%;
+}
 
-  /* ── Reset ─────────────────────────────────────────────── */
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font-ui);
-    font-size: 14px;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
+/* ── SIDEBAR ─────────────────────────────────────────────────── */
+.sidebar{
+  position:fixed;left:0;top:0;bottom:0;width:52px;
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;
+  padding:12px 0;z-index:100;gap:2px;
+}
+.sb-logo{
+  width:32px;height:32px;display:flex;align-items:center;
+  justify-content:center;margin-bottom:10px;
+}
+.nav-btn{
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  border-radius:var(--radius);border:none;background:transparent;
+  color:var(--muted);cursor:pointer;
+  transition:background 100ms ease-in-out,color 100ms ease-in-out;
+}
+.nav-btn:hover{background:var(--surface-up);color:var(--text)}
+.nav-btn.active{background:var(--accent-dim);color:var(--accent)}
+.nav-btn svg{width:16px;height:16px}
+.nav-btn.bottom{margin-top:auto}
 
-  /* ── Layout ─────────────────────────────────────────────── */
-  .app { display: flex; height: 100vh; overflow: hidden; }
+/* ── HEADER ──────────────────────────────────────────────────── */
+.header{
+  position:fixed;left:52px;top:0;right:0;height:52px;
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 20px;gap:12px;z-index:99;
+}
+.header-brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.brand-title{
+  font-family:var(--font-display);font-weight:600;font-size:15px;
+  letter-spacing:-0.01em;color:var(--text);
+}
+.live-badge{
+  display:flex;align-items:center;gap:5px;
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  letter-spacing:0.05em;color:var(--long);text-transform:uppercase;
+}
+.live-dot{
+  width:6px;height:6px;border-radius:9999px;background:var(--long);
+  animation:pulse-live 2s ease-in-out infinite;
+}
+@keyframes pulse-live{0%,100%{opacity:1}50%{opacity:0.4}}
+.vsep{width:1px;height:20px;background:var(--border);flex-shrink:0}
+.pair-chips{display:flex;gap:5px;flex-wrap:wrap}
+.pair-chip{
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);
+  background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--radius-sm);padding:2px 6px;
+}
+.header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
+.header-ts{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
 
-  /* Sidebar */
-  .sidebar {
-    width: 52px;
-    background: var(--surface);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 16px 0;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-  .sidebar-logo {
-    width: 32px; height: 32px;
-    background: var(--accent);
-    border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--font-display);
-    font-weight: 600;
-    font-size: 13px;
-    color: #0A0B0D;
-    margin-bottom: 16px;
-  }
-  .sidebar-item {
-    width: 36px; height: 36px;
-    border-radius: var(--radius);
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-    color: var(--muted);
-    font-size: 16px;
-    transition: background 0.1s, color 0.1s;
-  }
-  .sidebar-item:hover { background: var(--surface-up); color: var(--text); }
-  .sidebar-item.active { background: var(--accent-dim); color: var(--accent); }
-  .sidebar-spacer { flex: 1; }
+/* ── MAIN ────────────────────────────────────────────────────── */
+.main{margin-left:52px;margin-top:52px;padding:16px 20px 32px;max-width:calc(1440px - 52px)}
 
-  /* Main */
-  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+/* ── STAT CARDS ──────────────────────────────────────────────── */
+.stats-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;
+}
+.stat-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:16px 20px;display:flex;flex-direction:column;gap:6px;
+}
+.stat-label{
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);
+}
+.stat-value{
+  font-family:var(--font-display);font-size:28px;font-weight:600;
+  line-height:1;letter-spacing:-0.02em;
+}
+.stat-value.green{color:var(--long)}
+.stat-value.amber{color:var(--accent)}
+.stat-value.white{color:var(--text)}
+.stat-unit{font-size:15px;font-weight:400;opacity:0.55}
+.stat-sub{font-family:var(--font-ui);font-size:11px;color:var(--muted);margin-top:2px}
 
-  /* Header */
-  .header {
-    height: 52px;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    padding: 0 20px;
-    gap: 16px;
-    flex-shrink: 0;
-  }
-  .header-title {
-    font-family: var(--font-display);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-  }
-  .header-spacer { flex: 1; }
-  .live-badge {
-    display: flex; align-items: center; gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--long);
-    background: var(--long-dim);
-    padding: 3px 8px;
-    border-radius: var(--radius);
-  }
-  .live-dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--long);
-    animation: pulse 2s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-  .header-pair {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--muted);
-    background: var(--surface-up);
-    padding: 3px 8px;
-    border-radius: var(--radius);
-  }
-  .theme-toggle {
-    width: 28px; height: 28px;
-    border-radius: var(--radius);
-    background: var(--surface-up);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px;
-  }
+/* ── DOT MATRIX ──────────────────────────────────────────────── */
+.dot-matrix{display:flex;flex-wrap:wrap;gap:3px;padding:2px 0}
+.dot{width:8px;height:8px;border-radius:9999px;flex-shrink:0}
+.dot.win{background:var(--long)}
+.dot.loss{background:var(--short)}
+.dot.stopped{background:var(--stopped)}
+.dot.tp{background:var(--accent);box-shadow:0 0 5px rgba(240,165,0,0.6)}
 
-  /* Content */
-  .content { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+/* ── PANELS ──────────────────────────────────────────────────── */
+.panel{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);overflow:hidden;
+}
+.panel-hdr{
+  padding:9px 14px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.panel-title{
+  font-family:var(--font-display);font-size:11px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);
+}
+.panel-body{padding:14px 16px}
 
-  /* ── Stat cards row ─────────────────────────────────────── */
-  .stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-  .stat-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 16px 20px;
-  }
-  .stat-card.accent-card { border-color: rgba(240,165,0,0.3); }
-  .stat-label {
-    font-size: 11px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--muted);
-    margin-bottom: 8px;
-  }
-  .stat-value {
-    font-family: var(--font-mono);
-    font-size: 28px;
-    font-weight: 500;
-    line-height: 1;
-    margin-bottom: 6px;
-  }
-  .stat-value.positive { color: var(--long); }
-  .stat-value.accent { color: var(--accent); }
-  .stat-value.neutral { color: var(--text); }
-  .stat-sub {
-    font-size: 11px;
-    color: var(--muted);
-  }
+/* ── MID GRID ────────────────────────────────────────────────── */
+.mid-grid{display:grid;grid-template-columns:65fr 35fr;gap:12px;margin-bottom:12px}
 
-  /* ── Dot matrix ─────────────────────────────────────────── */
-  .dot-matrix-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-  }
-  .dot.win { background: var(--long); }
-  .dot.loss { background: var(--short); }
-  .dot.stop { background: #F59E0B; }
-  .dot.empty { background: var(--surface-up); border: 1px solid var(--border); }
+/* ── REGIME TIMELINE ─────────────────────────────────────────── */
+.regime-bar-wrap{position:relative;height:40px;margin-bottom:6px}
+.regime-segment{
+  position:absolute;top:50%;transform:translateY(-50%);
+  height:24px;border-radius:var(--radius-sm);
+}
+.regime-segment.choppy{
+  background:rgba(240,165,0,0.07);border:1px solid rgba(240,165,0,0.22);
+}
+.regime-segment.trending-up{
+  background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22);
+}
+.regime-segment.trending-down{
+  background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.22);
+}
+.regime-segment.high-vol{
+  background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.22);
+}
+.regime-seg-label{
+  position:absolute;top:50%;transform:translateY(-50%);
+  font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;
+  text-transform:uppercase;color:rgba(240,165,0,0.5);padding:0 8px;
+  pointer-events:none;white-space:nowrap;overflow:hidden;
+}
+.sig-dot{
+  position:absolute;top:50%;transform:translate(-50%,-50%);
+  width:7px;height:7px;border-radius:9999px;
+  border:1.5px solid var(--bg);z-index:2;cursor:pointer;
+  transition:transform 100ms ease-in-out;
+}
+.sig-dot:hover{transform:translate(-50%,-50%) scale(1.6)}
+.sig-dot.long{background:var(--long)}
+.sig-dot.short{background:var(--short)}
+.sig-dot.stopped{background:var(--stopped)}
+.regime-axis{display:flex;justify-content:space-between;margin-top:4px}
+.regime-axis span{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
 
-  /* ── Two-col section ────────────────────────────────────── */
-  .two-col { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }
+.regime-stats{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;
+}
+.regime-stat{
+  background:var(--surface-up);border:1px solid var(--border);
+  border-radius:var(--radius);padding:10px 12px;
+}
+.rs-label{
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:5px;
+}
+.rs-val{
+  font-family:var(--font-mono);font-size:17px;font-weight:500;
+  color:var(--accent);
+}
+.rs-val.inactive{color:var(--muted);opacity:0.5}
+.rs-sub{font-size:11px;color:var(--muted);margin-top:2px}
 
-  /* ── Panel ──────────────────────────────────────────────── */
-  .panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-  }
-  .panel-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .panel-title {
-    font-family: var(--font-display);
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--muted);
-  }
-  .panel-badge {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    background: var(--surface-up);
-    color: var(--muted);
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-  }
+/* ── ACTIVE SIGNAL ───────────────────────────────────────────── */
+.sig-meta{display:flex;align-items:center;gap:7px;margin-bottom:12px;flex-wrap:wrap}
+.sig-pair{
+  font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text);
+}
+.badge{
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  letter-spacing:0.05em;text-transform:uppercase;padding:2px 6px;
+  border-radius:var(--radius-sm);display:inline-flex;align-items:center;gap:3px;
+}
+.b-long{background:var(--long-dim);color:var(--long);border:1px solid rgba(34,197,94,0.25)}
+.b-short{background:var(--short-dim);color:var(--short);border:1px solid rgba(239,68,68,0.25)}
+.b-live{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(240,165,0,0.3)}
+.b-regime{background:var(--surface-up);color:var(--muted);border:1px solid var(--border)}
+.b-win{background:var(--long-dim);color:var(--long)}
+.b-tp{background:var(--accent-dim);color:var(--accent)}
+.b-loss{background:var(--short-dim);color:var(--short)}
+.b-stopped{background:rgba(245,158,11,0.12);color:var(--stopped)}
 
-  /* ── Regime timeline ────────────────────────────────────── */
-  .regime-timeline { padding: 16px; }
-  .regime-track {
-    position: relative;
-    height: 28px;
-    border-radius: var(--radius);
-    overflow: hidden;
-    display: flex;
-  }
-  .regime-segment {
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    opacity: 0.85;
-    overflow: hidden;
-    white-space: nowrap;
-  }
-  .regime-segment.choppy     { background: #2A3040; color: #7B8DB0; flex: 3; }
-  .regime-segment.trending-up   { background: rgba(34,197,94,0.2); color: var(--long); flex: 2; }
-  .regime-segment.trending-down { background: rgba(239,68,68,0.18); color: var(--short); flex: 1.5; }
-  .regime-segment.high-vol   { background: rgba(240,165,0,0.15); color: var(--accent); flex: 1; }
+.prices-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px}
+.price-row{display:flex;flex-direction:column;gap:3px}
+.price-lbl{
+  font-size:10px;font-weight:500;text-transform:uppercase;
+  letter-spacing:0.06em;color:var(--muted);
+}
+.price-val{font-family:var(--font-mono);font-size:13px;font-weight:500}
+.pv-entry{color:var(--text)}
+.pv-stop{color:var(--short)}
+.pv-target{color:var(--accent)}
 
-  /* Signal dots on timeline */
-  .regime-signals { position: relative; height: 20px; margin-top: 8px; }
-  .signal-dot {
-    position: absolute;
-    top: 4px;
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    border: 1.5px solid var(--bg);
-    transform: translateX(-50%);
-  }
-  .signal-dot.long-dot  { background: var(--long); }
-  .signal-dot.short-dot { background: var(--short); }
+.llm-wrap{
+  border-left:3px solid var(--accent);
+  background:var(--accent-dim);
+  border-radius:0 var(--radius-sm) var(--radius-sm) 0;
+  padding:10px 12px;margin-bottom:8px;
+}
+.llm-text{
+  font-family:var(--font-ui);font-size:12px;line-height:1.65;
+  color:var(--text);font-style:italic;opacity:0.9;
+}
+.llm-attr{
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:5px;
+}
+.sig-footer{
+  display:flex;justify-content:space-between;align-items:center;
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);
+}
 
-  .regime-labels {
-    display: flex;
-    gap: 12px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-  .regime-label-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 10px;
-    color: var(--muted);
-  }
-  .regime-label-dot {
-    width: 8px; height: 8px;
-    border-radius: 2px;
-  }
+/* ── SIGNAL TABLE ────────────────────────────────────────────── */
+.tbl-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.signal-table{width:100%;border-collapse:collapse}
+.signal-table th{
+  font-family:var(--font-ui);font-size:10px;font-weight:500;
+  text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);
+  padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);
+  white-space:nowrap;background:var(--surface);position:sticky;top:104px;
+}
+.signal-table th.r{text-align:right}
+.signal-table td{
+  font-size:12px;padding:7px 12px;
+  border-bottom:1px solid rgba(31,35,48,0.6);vertical-align:middle;white-space:nowrap;
+}
+.signal-table tr:last-child td{border-bottom:none}
+.signal-table tbody tr:hover td{background:rgba(26,29,38,0.5)}
+.td-pair{font-family:var(--font-display);font-weight:600;font-size:12px}
+.td-mono{font-family:var(--font-mono);font-size:11px}
+.td-muted{font-size:11px;color:var(--muted)}
+.td-date{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.pnl-pos{font-family:var(--font-mono);font-size:12px;color:var(--long)}
+.pnl-neg{font-family:var(--font-mono);font-size:12px;color:var(--short)}
+.cell-r{text-align:right}
 
-  /* ── Signal history table ───────────────────────────────── */
-  .table-wrap { overflow-x: auto; }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
-  }
-  thead th {
-    padding: 8px 12px;
-    text-align: left;
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  thead th.num { text-align: right; }
-  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
-  tbody tr:hover { background: var(--surface-up); }
-  tbody tr:last-child { border-bottom: none; }
-  td {
-    padding: 10px 12px;
-    color: var(--text);
-    white-space: nowrap;
-  }
-  td.mono {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    text-align: right;
-  }
-  td.pair-cell { font-weight: 500; }
-  .dir-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 7px;
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-  }
-  .dir-badge.long  { background: var(--long-dim);  color: var(--long); }
-  .dir-badge.short { background: var(--short-dim); color: var(--short); }
-  .outcome-badge {
-    display: inline-flex;
-    padding: 2px 7px;
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-  }
-  .outcome-badge.win  { background: var(--long-dim); color: var(--long); }
-  .outcome-badge.loss { background: var(--short-dim); color: var(--short); }
-  .outcome-badge.stop { background: rgba(240,165,0,0.12); color: var(--accent); }
-  .outcome-badge.open { background: var(--surface-up); color: var(--muted); }
-  .pnl-pos { color: var(--long); font-family: var(--font-mono); font-size: 12px; }
-  .pnl-neg { color: var(--short); font-family: var(--font-mono); font-size: 12px; }
-  .muted-cell { color: var(--muted); }
+.outcome-badge{
+  font-family:var(--font-mono);font-size:10px;font-weight:500;
+  letter-spacing:0.03em;text-transform:uppercase;padding:2px 5px;
+  border-radius:var(--radius-sm);display:inline-flex;align-items:center;
+}
 
-  /* ── Active signals panel (right col) ──────────────────── */
-  .active-signals { display: flex; flex-direction: column; }
-  .signal-card {
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
-  }
-  .signal-card:last-child { border-bottom: none; }
-  .signal-card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 10px;
-  }
-  .signal-pair {
-    font-family: var(--font-display);
-    font-size: 14px;
-    font-weight: 600;
-  }
-  .signal-strategy {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted);
-    background: var(--surface-up);
-    padding: 2px 6px;
-    border-radius: var(--radius-sm);
-  }
-  .signal-prices {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 4px;
-  }
-  .price-item { display: flex; flex-direction: column; gap: 2px; }
-  .price-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-  .price-value { font-family: var(--font-mono); font-size: 12px; }
-  .price-value.entry  { color: var(--text); }
-  .price-value.stop   { color: var(--short); }
-  .price-value.target { color: var(--accent); }
-  .signal-age {
-    font-size: 10px;
-    color: var(--muted);
-    margin-top: 8px;
-    font-family: var(--font-mono);
-  }
+@keyframes flash-bg{0%{background:rgba(240,165,0,0.15)}100%{background:transparent}}
+.flash{animation:flash-bg 150ms ease-out}
 
-  /* ── Typography specimen section ───────────────────────── */
-  .section-divider {
-    margin: 32px 0 20px;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border);
-    font-family: var(--font-display);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    color: var(--muted);
-  }
-  .type-row { display: grid; grid-template-columns: 140px 1fr; gap: 20px; align-items: start; margin-bottom: 20px; padding: 16px 0; border-bottom: 1px solid var(--border); }
-  .type-meta { }
-  .type-name { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 2px; }
-  .type-role { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .type-sample-display { font-family: var(--font-display); font-size: 32px; font-weight: 600; line-height: 1.1; color: var(--text); }
-  .type-sample-ui { font-family: var(--font-ui); font-size: 15px; color: var(--text); }
-  .type-sample-mono { font-family: var(--font-mono); font-size: 20px; font-weight: 500; color: var(--accent); letter-spacing: -0.02em; }
+/* ── LEGEND ──────────────────────────────────────────────────── */
+.legend-row{display:flex;gap:14px;align-items:center}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.legend-dot{width:8px;height:8px;border-radius:9999px;flex-shrink:0}
 
-  /* ── Color palette section ──────────────────────────────── */
-  .swatch-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
-  .swatch {
-    display: flex; flex-direction: column; gap: 6px;
-    width: 90px;
-  }
-  .swatch-chip {
-    width: 90px; height: 48px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-  }
-  .swatch-name { font-size: 10px; color: var(--muted); }
-  .swatch-hex { font-family: var(--font-mono); font-size: 11px; color: var(--text); }
-
-  /* ── Component samples ──────────────────────────────────── */
-  .component-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
-  .btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 7px 14px;
-    border-radius: var(--radius);
-    font-family: var(--font-ui);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    border: none;
-    transition: opacity 0.1s;
-  }
-  .btn-primary { background: var(--accent); color: #0A0B0D; }
-  .btn-secondary { background: var(--surface-up); color: var(--text); border: 1px solid var(--border); }
-  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-  .btn-danger { background: var(--short-dim); color: var(--short); border: 1px solid rgba(239,68,68,0.2); }
-  .btn-long { background: var(--long-dim); color: var(--long); border: 1px solid rgba(34,197,94,0.2); }
-
-  .input-sample {
-    display: flex; flex-direction: column; gap: 4px;
-    width: 220px;
-  }
-  .input-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-  .input-field {
-    background: var(--surface-up);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 7px 10px;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--text);
-    outline: none;
-  }
-  .input-field:focus { border-color: var(--accent); }
-  .input-field.error { border-color: var(--short); }
-
-  /* Theme toggle JS */
-  [data-theme="light"] {
-    --bg:         #F8F9FA;
-    --surface:    #FFFFFF;
-    --surface-up: #F0F2F5;
-    --border:     #E2E5EC;
-    --text:       #111318;
-    --muted:      #6B7280;
-  }
+/* ── TOOLTIP ─────────────────────────────────────────────────── */
+.tooltip{
+  position:fixed;background:var(--surface-up);border:1px solid var(--border);
+  border-radius:var(--radius);padding:6px 10px;font-family:var(--font-mono);
+  font-size:10px;color:var(--text);pointer-events:none;z-index:200;
+  opacity:0;transition:opacity 100ms ease-in-out;white-space:nowrap;
+  transform:translate(-50%,-110%);
+}
+.tooltip.visible{opacity:1}
 </style>
 </head>
 <body>
 
-<div style="padding: 20px; background: var(--surface-up); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px;">
-  <span style="font-family: var(--font-display); font-size: 13px; font-weight: 600; color: var(--accent);">MEXC SIGNAL ENGINE</span>
-  <span style="font-size: 11px; color: var(--muted);">Design System Preview — Precision Dark</span>
-  <span style="flex: 1;"></span>
-  <button class="theme-toggle" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'" style="padding: 6px 12px; width: auto; font-family: var(--font-ui); font-size: 12px;">Toggle Light/Dark</button>
-</div>
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="sb-logo">
+    <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+      <polygon points="11,2 20,7 20,15 11,20 2,15 2,7" fill="none" stroke="#F0A500" stroke-width="1.5"/>
+      <circle cx="11" cy="11" r="2.5" fill="#F0A500"/>
+    </svg>
+  </div>
+  <button class="nav-btn active" title="Dashboard">
+    <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/></svg>
+  </button>
+  <button class="nav-btn" title="Signals">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,10 5,6 8,9 12,4 15,7"/></svg>
+  </button>
+  <button class="nav-btn" title="Backtest">
+    <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="10" width="2" height="5" rx=".5" fill="currentColor"/><rect x="5" y="7" width="2" height="8" rx=".5" fill="currentColor"/><rect x="9" y="4" width="2" height="11" rx=".5" fill="currentColor"/><rect x="13" y="2" width="2" height="13" rx=".5" fill="currentColor" opacity=".35"/></svg>
+  </button>
+  <button class="nav-btn bottom" title="Settings">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="2.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M3.1 12.9l1.4-1.4M11.5 4.5l1.4-1.4"/></svg>
+  </button>
+</aside>
 
-<!-- ── DASHBOARD MOCKUP ──────────────────────────────────── -->
-<div style="padding: 20px; border-bottom: 2px solid var(--border);">
-  <p style="font-family: var(--font-display); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 16px;">Dashboard mockup</p>
+<!-- HEADER -->
+<header class="header">
+  <div class="header-brand">
+    <div class="live-badge"><span class="live-dot"></span>LIVE</div>
+    <div class="vsep"></div>
+    <span class="brand-title">MEXC Signal Engine</span>
+  </div>
+  <div class="vsep"></div>
+  <div class="pair-chips">
+    <span class="pair-chip">BTC/USDT</span>
+    <span class="pair-chip">ETH/USDT</span>
+    <span class="pair-chip">SOL/USDT</span>
+    <span class="pair-chip">BNB/USDT</span>
+    <span class="pair-chip">ZEC/USDT</span>
+  </div>
+  <div class="header-right">
+    <span class="header-ts" id="hdr-ts">—</span>
+  </div>
+</header>
 
-  <div class="app" style="height: 640px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;">
+<!-- MAIN -->
+<main class="main">
 
-    <!-- Sidebar -->
-    <div class="sidebar">
-      <div class="sidebar-logo">SG</div>
-      <div class="sidebar-item active">⚡</div>
-      <div class="sidebar-item">📊</div>
-      <div class="sidebar-item">🔁</div>
-      <div class="sidebar-item">⚙️</div>
-      <div class="sidebar-spacer"></div>
-      <div class="sidebar-item">👤</div>
+  <!-- STAT CARDS -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Win Rate (180d)</div>
+      <div class="stat-value green">66.7<span class="stat-unit">%</span></div>
+      <div class="stat-sub">25W &middot; 6L &middot; 7S &middot; 1TP &nbsp;of 39 signals</div>
     </div>
+    <div class="stat-card">
+      <div class="stat-label">Net P&amp;L</div>
+      <div class="stat-value green">+7.89<span class="stat-unit">R</span></div>
+      <div class="stat-sub">+0.202R avg &middot; R:R 1:2.0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win History</div>
+      <div id="dot-matrix" class="dot-matrix"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Signals Fired</div>
+      <div class="stat-value amber">39</div>
+      <div class="stat-sub">2025-10-30 &rarr; 2026-04-28</div>
+    </div>
+  </div>
 
-    <!-- Main -->
-    <div class="main">
-      <!-- Header -->
-      <div class="header">
-        <div class="header-title">Signal Dashboard</div>
-        <div class="live-badge"><div class="live-dot"></div> LIVE</div>
-        <div class="header-pair">BTC/USDT:USDT</div>
-        <div class="header-pair">ETH/USDT:USDT</div>
-        <div class="header-pair">SOL/USDT:USDT</div>
-        <div class="header-spacer"></div>
-        <div style="font-family: var(--font-mono); font-size: 11px; color: var(--muted);">04:28 UTC</div>
+  <!-- MID ROW -->
+  <div class="mid-grid">
+
+    <!-- REGIME TIMELINE -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Regime Timeline &nbsp;·&nbsp; 180 days</span>
+        <div class="legend-row">
+          <span class="legend-item"><span class="legend-dot" style="background:var(--long)"></span>LONG</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--short)"></span>SHORT</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--stopped)"></span>STOP</span>
+        </div>
       </div>
-
-      <!-- Content -->
-      <div class="content">
-
-        <!-- Stat cards -->
-        <div class="stat-row">
-          <div class="stat-card">
-            <div class="stat-label">Accuracy (180d)</div>
-            <div class="stat-value positive">66.7%</div>
-            <div class="stat-sub">39 resolved · choppy regime</div>
+      <div class="panel-body">
+        <div class="regime-bar-wrap" id="regime-bar"></div>
+        <div class="regime-axis">
+          <span>Oct 30, 2025</span>
+          <span>Jan 2026</span>
+          <span>Apr 28, 2026</span>
+        </div>
+        <div class="regime-stats">
+          <div class="regime-stat">
+            <div class="rs-label">Choppy</div>
+            <div class="rs-val">39</div>
+            <div class="rs-sub">all signals &middot; 66.7%</div>
           </div>
-          <div class="stat-card accent-card">
-            <div class="stat-label">Net P&amp;L</div>
-            <div class="stat-value accent">+7.89R</div>
-            <div class="stat-sub">avg +0.202R / trade</div>
+          <div class="regime-stat">
+            <div class="rs-label">Trending</div>
+            <div class="rs-val inactive">0</div>
+            <div class="rs-sub">inactive</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Win Distribution</div>
-            <div class="dot-matrix-row" id="dotMatrix"></div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Signals (180d)</div>
-            <div class="stat-value neutral">39</div>
-            <div class="stat-sub">1 TP · 25 win · 6 loss · 7 stop</div>
+          <div class="regime-stat">
+            <div class="rs-label">High Vol</div>
+            <div class="rs-val inactive">0</div>
+            <div class="rs-sub">inactive</div>
           </div>
         </div>
+      </div>
+    </div>
 
-        <!-- Two-col -->
-        <div class="two-col">
-
-          <!-- Regime timeline + signal table -->
-          <div style="display: flex; flex-direction: column; gap: 12px;">
-            <div class="panel">
-              <div class="panel-header">
-                <span class="panel-title">Regime Timeline</span>
-                <span class="panel-badge">Oct 2025 → Apr 2026</span>
-              </div>
-              <div class="regime-timeline">
-                <div class="regime-track">
-                  <div class="regime-segment choppy">Choppy</div>
-                  <div class="regime-segment trending-up">Trending ↑</div>
-                  <div class="regime-segment choppy">Choppy</div>
-                  <div class="regime-segment trending-down">↓</div>
-                  <div class="regime-segment choppy">Choppy</div>
-                  <div class="regime-segment high-vol">High Vol</div>
-                  <div class="regime-segment choppy">Choppy</div>
-                </div>
-                <!-- Signal dots -->
-                <div class="regime-signals" id="timelineDots"></div>
-                <div class="regime-labels">
-                  <div class="regime-label-item"><div class="regime-label-dot" style="background:#2A3040;"></div>Choppy (signals fire)</div>
-                  <div class="regime-label-item"><div class="regime-label-dot" style="background:rgba(34,197,94,0.3);"></div>Trending ↑ (ema only)</div>
-                  <div class="regime-label-item"><div class="regime-label-dot" style="background:rgba(239,68,68,0.25);"></div>Trending ↓</div>
-                  <div class="regime-label-item"><div class="regime-label-dot" style="background:rgba(240,165,0,0.2);"></div>High Vol (skip)</div>
-                  <div class="regime-label-item"><div class="regime-label-dot" style="background:var(--long); border-radius:50%;"></div>Long signal</div>
-                  <div class="regime-label-item"><div class="regime-label-dot" style="background:var(--short); border-radius:50%;"></div>Short signal</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel">
-              <div class="panel-header">
-                <span class="panel-title">Signal History</span>
-                <span class="panel-badge">Last 10</span>
-              </div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Pair</th>
-                      <th>Dir</th>
-                      <th>Strategy</th>
-                      <th class="num">Entry</th>
-                      <th class="num">Stop</th>
-                      <th class="num">Target</th>
-                      <th>Outcome</th>
-                      <th class="num">P&amp;L R</th>
-                      <th>Fired</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td class="pair-cell">BTC/USDT</td>
-                      <td><span class="dir-badge long">▲ LONG</span></td>
-                      <td class="muted-cell">rsi_extreme</td>
-                      <td class="mono">94,250</td><td class="mono" style="color:var(--short)">92,800</td><td class="mono" style="color:var(--accent)">97,150</td>
-                      <td><span class="outcome-badge open">Open</span></td>
-                      <td class="mono muted-cell">—</td>
-                      <td class="muted-cell">2h ago</td>
-                    </tr>
-                    <tr>
-                      <td class="pair-cell">ETH/USDT</td>
-                      <td><span class="dir-badge long">▲ LONG</span></td>
-                      <td class="muted-cell">rsi_extreme</td>
-                      <td class="mono">1,804</td><td class="mono" style="color:var(--short)">1,742</td><td class="mono" style="color:var(--accent)">1,928</td>
-                      <td><span class="outcome-badge win">Win</span></td>
-                      <td class="pnl-pos">+1.92R</td>
-                      <td class="muted-cell">1d ago</td>
-                    </tr>
-                    <tr>
-                      <td class="pair-cell">SOL/USDT</td>
-                      <td><span class="dir-badge short">▼ SHORT</span></td>
-                      <td class="muted-cell">rsi_divergence</td>
-                      <td class="mono">148.30</td><td class="mono" style="color:var(--short)">155.40</td><td class="mono" style="color:var(--accent)">134.10</td>
-                      <td><span class="outcome-badge win">Win</span></td>
-                      <td class="pnl-pos">+0.88R</td>
-                      <td class="muted-cell">2d ago</td>
-                    </tr>
-                    <tr>
-                      <td class="pair-cell">BNB/USDT</td>
-                      <td><span class="dir-badge long">▲ LONG</span></td>
-                      <td class="muted-cell">rsi_extreme</td>
-                      <td class="mono">588.40</td><td class="mono" style="color:var(--short)">571.20</td><td class="mono" style="color:var(--accent)">622.80</td>
-                      <td><span class="outcome-badge stop">Stopped</span></td>
-                      <td class="pnl-neg">−1.00R</td>
-                      <td class="muted-cell">3d ago</td>
-                    </tr>
-                    <tr>
-                      <td class="pair-cell">ZEC/USDT</td>
-                      <td><span class="dir-badge short">▼ SHORT</span></td>
-                      <td class="muted-cell">rsi_divergence</td>
-                      <td class="mono">48.25</td><td class="mono" style="color:var(--short)">51.10</td><td class="mono" style="color:var(--accent)">42.55</td>
-                      <td><span class="outcome-badge loss">Loss</span></td>
-                      <td class="pnl-neg">−0.43R</td>
-                      <td class="muted-cell">4d ago</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
+    <!-- ACTIVE SIGNAL -->
+    <div class="panel" id="signal-panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Active Signal</span>
+        <span class="badge b-live"><span style="font-size:7px">●</span> Live</span>
+      </div>
+      <div style="padding:14px 16px">
+        <div class="sig-meta">
+          <span class="badge b-long">LONG</span>
+          <span class="sig-pair">BTC/USDT</span>
+          <span class="badge b-regime">choppy</span>
+        </div>
+        <div class="prices-grid">
+          <div class="price-row">
+            <span class="price-lbl">Entry</span>
+            <span class="price-val pv-entry">95,240.00</span>
           </div>
-
-          <!-- Active signals panel -->
-          <div class="panel active-signals">
-            <div class="panel-header">
-              <span class="panel-title">Active Signals</span>
-              <span class="panel-badge">1 open</span>
-            </div>
-            <div class="signal-card">
-              <div class="signal-card-head">
-                <span class="signal-pair" style="color:var(--long);">▲ BTC/USDT</span>
-                <span class="signal-strategy">rsi_extreme</span>
-              </div>
-              <div class="signal-prices">
-                <div class="price-item">
-                  <div class="price-label">Entry</div>
-                  <div class="price-value entry">94,250.00</div>
-                </div>
-                <div class="price-item">
-                  <div class="price-label">Stop</div>
-                  <div class="price-value stop">92,800.00</div>
-                </div>
-                <div class="price-item">
-                  <div class="price-label">Target</div>
-                  <div class="price-value target">97,150.00</div>
-                </div>
-              </div>
-              <div style="display:flex; gap:8px; margin-top:10px;">
-                <div style="flex:1; background:var(--surface-up); border-radius:var(--radius); padding:8px;">
-                  <div class="price-label">Regime</div>
-                  <div style="font-size:12px; margin-top:2px;">choppy <span style="color:var(--muted); font-family:var(--font-mono); font-size:10px;">71%</span></div>
-                </div>
-                <div style="flex:1; background:var(--surface-up); border-radius:var(--radius); padding:8px;">
-                  <div class="price-label">R:R</div>
-                  <div style="font-family:var(--font-mono); font-size:12px; margin-top:2px; color:var(--accent);">1 : 2.0</div>
-                </div>
-              </div>
-              <div class="signal-age">Fired 2h ago · LLM commentary ready</div>
-              <div style="margin-top:10px; font-size:11px; color:var(--muted); line-height:1.5; font-style:italic; padding:8px; background:var(--surface-up); border-radius:var(--radius); border-left:2px solid var(--accent);">
-                RSI crossed up through 30 after 3-candle oversold hold in choppy regime (age 8h). News: neutral — no macro catalysts. Watch 93,500 as intraday support.
-              </div>
-            </div>
-
-            <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px; border-top:1px solid var(--border);">
-              <div style="margin-bottom:8px;">Per-pair breakdown</div>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; font-family:var(--font-mono); font-size:11px;">
-                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">ETH</span> <span style="color:var(--long); float:right">80%</span></div>
-                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">BTC</span> <span style="color:var(--long); float:right">70%</span></div>
-                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">SOL</span> <span style="color:var(--long); float:right">66.7%</span></div>
-                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">BNB</span> <span style="color:var(--long); float:right">60%</span></div>
-                <div style="background:var(--surface-up); padding:6px 8px; border-radius:var(--radius); text-align:left;"><span style="color:var(--muted);">ZEC</span> <span style="color:var(--muted); float:right">60%</span></div>
-              </div>
-            </div>
+          <div class="price-row">
+            <span class="price-lbl">Stop</span>
+            <span class="price-val pv-stop">93,100.00</span>
           </div>
-
-        </div><!-- /two-col -->
-      </div><!-- /content -->
-    </div><!-- /main -->
-  </div><!-- /app -->
-</div>
-
-<!-- ── DESIGN TOKENS ─────────────────────────────────────── -->
-<div style="padding:32px 20px; max-width:1200px;">
-
-  <div class="section-divider">Typography</div>
-
-  <div class="type-row">
-    <div class="type-meta">
-      <div class="type-name">Instrument Sans</div>
-      <div class="type-role">Display / Headers</div>
+          <div class="price-row">
+            <span class="price-lbl">Target</span>
+            <span class="price-val pv-target">99,520.00</span>
+          </div>
+        </div>
+        <div class="llm-wrap" id="llm-wrap">
+          <div class="llm-text" id="llm-text">BTC showing momentum divergence with RSI recovery above 45 from oversold territory. Volume profile supports the setup — buyers defending the 93k level with increasing conviction. Choppy regime limits exposure but price structure favours continuation. Risk defined at 93,100 with a 2.25% stop from entry.</div>
+          <div class="llm-attr">— LLM analysis &middot; 2026-04-29 08:47 UTC</div>
+        </div>
+        <div class="sig-footer">
+          <span>Risk 2.25% &middot; R:R 1:2.0 &middot; +4,280 to TP</span>
+          <span>1h timeframe</span>
+        </div>
+      </div>
     </div>
-    <div>
-      <div class="type-sample-display">Signal Engine</div>
-      <div style="font-family:var(--font-display); font-size:15px; color:var(--muted); margin-top:6px;">Dashboard  ·  History  ·  Backtest  ·  Settings</div>
+
+  </div><!-- /mid-grid -->
+
+  <!-- SIGNAL HISTORY TABLE -->
+  <div class="tbl-wrap">
+    <div class="panel-hdr">
+      <span class="panel-title">Signal History</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">39 signals &middot; 180d backtest</span>
     </div>
+    <table class="signal-table">
+      <thead>
+        <tr>
+          <th>Pair</th>
+          <th>Dir</th>
+          <th>Regime</th>
+          <th>Fired</th>
+          <th>Entry</th>
+          <th>Stop</th>
+          <th>Target</th>
+          <th>Outcome</th>
+          <th class="r">P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody id="sig-tbody"></tbody>
+    </table>
   </div>
 
-  <div class="type-row">
-    <div class="type-meta">
-      <div class="type-name">Outfit</div>
-      <div class="type-role">UI Labels / Body</div>
-    </div>
-    <div>
-      <div class="type-sample-ui">Signal fired on BTC/USDT:USDT · RSI crossed up through 30 after 3-candle oversold hold in choppy regime. Confidence 71%.</div>
-    </div>
-  </div>
+</main>
 
-  <div class="type-row">
-    <div class="type-meta">
-      <div class="type-name">JetBrains Mono</div>
-      <div class="type-role">Prices / Data</div>
-    </div>
-    <div>
-      <div class="type-sample-mono">94,250.0000  +7.89R  66.7%  2026-04-28</div>
-      <div style="font-family:var(--font-mono); font-size:13px; color:var(--muted); margin-top:6px;">entry: 94250.0000 · stop: 92800.0000 · target: 97150.0000</div>
-    </div>
-  </div>
+<!-- TOOLTIP -->
+<div class="tooltip" id="tooltip"></div>
 
-  <div class="section-divider">Color palette</div>
-  <div class="swatch-row">
-    <div class="swatch"><div class="swatch-chip" style="background:#0A0B0D;"></div><div class="swatch-name">Background</div><div class="swatch-hex">#0A0B0D</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#111318;"></div><div class="swatch-name">Surface</div><div class="swatch-hex">#111318</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#1A1D26;"></div><div class="swatch-name">Surface+</div><div class="swatch-hex">#1A1D26</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#1F2330;"></div><div class="swatch-name">Border</div><div class="swatch-hex">#1F2330</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#6B7280;"></div><div class="swatch-name">Muted</div><div class="swatch-hex">#6B7280</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#F0F2F7;"></div><div class="swatch-name">Text</div><div class="swatch-hex">#F0F2F7</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#F0A500;"></div><div class="swatch-name">Accent</div><div class="swatch-hex">#F0A500</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#22C55E;"></div><div class="swatch-name">Long/Win</div><div class="swatch-hex">#22C55E</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#EF4444;"></div><div class="swatch-name">Short/Loss</div><div class="swatch-hex">#EF4444</div></div>
-    <div class="swatch"><div class="swatch-chip" style="background:#F59E0B;"></div><div class="swatch-name">Warning</div><div class="swatch-hex">#F59E0B</div></div>
-  </div>
-
-  <div class="section-divider">Components</div>
-  <div class="component-row">
-    <button class="btn btn-primary">Run Backtest</button>
-    <button class="btn btn-long">▲ LONG Signal</button>
-    <button class="btn btn-danger">▼ SHORT Signal</button>
-    <button class="btn btn-secondary">View History</button>
-    <button class="btn btn-ghost">Settings</button>
-  </div>
-  <div class="component-row" style="margin-top:12px;">
-    <div class="input-sample">
-      <div class="input-label">RR Ratio</div>
-      <input class="input-field" value="2.0" type="text">
-    </div>
-    <div class="input-sample">
-      <div class="input-label">Pair</div>
-      <input class="input-field" value="BTC/USDT:USDT" type="text">
-    </div>
-    <div class="input-sample">
-      <div class="input-label">Since (error state)</div>
-      <input class="input-field error" value="invalid-date" type="text">
-    </div>
-  </div>
-
-</div>
-
+<!-- PRETEXT VENDOR (IIFE global) -->
 <script>
-// Build dot matrix: 1 tp_hit, 25 win, 6 loss, 7 stopped, rest empty
-const matrix = document.getElementById('dotMatrix');
-if (matrix) {
-  const dots = [];
-  for (let i = 0; i < 1; i++)  dots.push('win');  // tp_hit treated as win
-  for (let i = 0; i < 25; i++) dots.push('win');
-  for (let i = 0; i < 6; i++)  dots.push('loss');
-  for (let i = 0; i < 7; i++)  dots.push('stop');
-  for (let i = dots.length; i < 39; i++) dots.push('empty');
-  // Shuffle for visual spread
-  for (let i = dots.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [dots[i], dots[j]] = [dots[j], dots[i]];
-  }
-  matrix.innerHTML = dots.map(c => `<div class="dot ${c}"></div>`).join('');
-}
+(function(){
+var x0=["BN","BN","BN","BN","BN","BN","BN","BN","BN","S","B","S","WS","B","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","B","B","B","S","WS","ON","ON","ET","ET","ET","ON","ON","ON","ON","ON","ON","CS","ON","CS","ON","EN","EN","EN","EN","EN","EN","EN","EN","EN","EN","ON","ON","ON","ON","ON","ON","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","ON","ON","ON","ON","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","ON","ON","ON","BN","BN","BN","BN","BN","BN","B","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","BN","CS","ON","ET","ET","ET","ET","ON","ON","ON","ON","L","ON","ON","ON","ON","ON","ET","ET","EN","EN","ON","L","ON","ON","ON","EN","L","ON","ON","ON","ON","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","L","ON","L","L","L","L","L","L","L","L"],g0=["AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","CS","AL","ON","ON","NSM","NSM","NSM","NSM","NSM","NSM","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","AL","AL","AL","AL","AL","AL","AL","AN","AN","AN","AN","AN","AN","AN","AN","AN","AN","ET","AN","AN","AL","AL","AL","NSM","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","NSM","ON","NSM","NSM","NSM","NSM","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL","AL"];function m0(O){if(O<=255)return x0[O];if(1424<=O&&O<=1524)return"R";if(1536<=O&&O<=1791)return g0[O&255];if(1792<=O&&O<=2220)return"AL";return"L"}function r0(O){let _=O.length;if(_===0)return null;let J=Array(_),Y=0;for(let V=0;V<_;V++){let $=m0(O.charCodeAt(V));if($==="R"||$==="AL"||$==="AN")Y++;J[V]=$}if(Y===0)return null;let X=_/Y<0.3?0:1,R=new Int8Array(_);for(let V=0;V<_;V++)R[V]=X;let Z=X&1?"R":"L",Q=Z,f=Q;for(let V=0;V<_;V++)if(J[V]==="NSM")J[V]=f;else f=J[V];f=Q;for(let V=0;V<_;V++){let $=J[V];if($==="EN")J[V]=f==="AL"?"AN":"EN";else if($==="R"||$==="L"||$==="AL")f=$}for(let V=0;V<_;V++)if(J[V]==="AL")J[V]="R";for(let V=1;V<_-1;V++){if(J[V]==="ES"&&J[V-1]==="EN"&&J[V+1]==="EN")J[V]="EN";if(J[V]==="CS"&&(J[V-1]==="EN"||J[V-1]==="AN")&&J[V+1]===J[V-1])J[V]=J[V-1]}for(let V=0;V<_;V++){if(J[V]!=="EN")continue;let $;for($=V-1;$>=0&&J[$]==="ET";$--)J[$]="EN";for($=V+1;$<_&&J[$]==="ET";$++)J[$]="EN"}for(let V=0;V<_;V++){let $=J[V];if($==="WS"||$==="ES"||$==="ET"||$==="CS")J[V]="ON"}f=Q;for(let V=0;V<_;V++){let $=J[V];if($==="EN")J[V]=f==="L"?"L":"EN";else if($==="R"||$==="L")f=$}for(let V=0;V<_;V++){if(J[V]!=="ON")continue;let $=V+1;while($<_&&J[$]==="ON")$++;let u=V>0?J[V-1]:Q,q=$<_?J[$]:Q,D=u!=="L"?"R":"L";if(D===(q!=="L"?"R":"L"))for(let K=V;K<$;K++)J[K]=D;V=$-1}for(let V=0;V<_;V++)if(J[V]==="ON")J[V]=Z;for(let V=0;V<_;V++){let $=J[V];if((R[V]&1)===0){if($==="R")R[V]++;else if($==="AN"||$==="EN")R[V]+=2}else if($==="L"||$==="AN"||$==="EN")R[V]++}return R}function u0(O,_){let J=r0(O);if(J===null)return null;let Y=new Int8Array(_.length);for(let X=0;X<_.length;X++)Y[X]=J[_[X]];return Y}var a0=/[ \t\n\r\f]+/g,s0=/[\t\n\r\f]| {2,}|^ | $/;function d0(O){let _=O??"normal";return _==="pre-wrap"?{mode:_,preserveOrdinarySpaces:!0,preserveHardBreaks:!0}:{mode:_,preserveOrdinarySpaces:!1,preserveHardBreaks:!1}}function i0(O){if(!s0.test(O))return O;let _=O.replace(a0," ");if(_.charCodeAt(0)===32)_=_.slice(1);if(_.length>0&&_.charCodeAt(_.length-1)===32)_=_.slice(0,-1);return _}function t0(O){if(!/[\r\f]/.test(O))return O.replace(/\r\n/g,"\n");return O.replace(/\r\n/g,"\n").replace(/[\r\f]/g,"\n")}var d=null,V0;function n0(){if(d===null)d=new Intl.Segmenter(V0,{granularity:"word"});return d}function z0(){d=null}function j0(O){let _=O&&O.length>0?O:void 0;if(V0===_)return;V0=_,d=null}var e0=/\p{Script=Arabic}/u,O0=/\p{M}/u,b0=/\p{Nd}/u;function X0(O){return e0.test(O)}function p(O){for(let _ of O){let J=_.codePointAt(0);if(J>=19968&&J<=40959||J>=13312&&J<=19903||J>=131072&&J<=173791||J>=173824&&J<=177983||J>=177984&&J<=178207||J>=178208&&J<=183983||J>=183984&&J<=191471||J>=196608&&J<=201551||J>=63744&&J<=64255||J>=194560&&J<=195103||J>=12288&&J<=12351||J>=12352&&J<=12447||J>=12448&&J<=12543||J>=44032&&J<=55215||J>=65280&&J<=65519)return!0}return!1}var $0=new Set(["\u{ff0c}","\u{ff0e}","\u{ff01}","\u{ff1a}","\u{ff1b}","\u{ff1f}","、","。","・","）","〕","〉","》","」","〛","〙","〗","ー","々","〻","ゝ","ゞ","ヽ","ヾ"]),i=new Set(['"',"(","\[","\{","“","'","«","‹","（","〔","〈","《","「","『","【","〖","〘","〚"]),Q0=new Set(["‘","’"]),r=new Set([".",",","!","?",":",";","،","؛","؟","।","॥","၊","။","၌","၍","၏",")","]","}","%",'"',"”","'","»","›","…"]),OO=new Set([":",".","،","؛"]),_O=new Set(["၏"]),JO=new Set(["”","’","»","›","」","』","】","》","〉","〕","）"]);function RO(O){if(q0(O))return!0;let _=!1;for(let J of O){if(r.has(J)){_=!0;continue}if(_&&O0.test(J))continue;return!1}return _}function VO(O){for(let _ of O)if(!$0.has(_)&&!r.has(_))return!1;return O.length>0}function XO(O){if(q0(O))return!0;for(let _ of O)if(!i.has(_)&&!Q0.has(_)&&!O0.test(_))return!1;return O.length>0}function q0(O){let _=!1;for(let J of O){if(J==="\\"||O0.test(J))continue;if(i.has(J)||r.has(J)||Q0.has(J)){_=!0;continue}return!1}return _}function YO(O){let _=Array.from(O),J=_.length;while(J>0){let Y=_[J-1];if(O0.test(Y)){J--;continue}if(i.has(Y)||Q0.has(Y)){J--;continue}break}if(J<=0||J===_.length)return null;return{head:_.slice(0,J).join(""),tail:_.slice(J).join("")}}function ZO(O,_){if(O.length===0)return!1;for(let J of O)if(J!==_)return!1;return!0}function $O(O){if(!X0(O)||O.length===0)return!1;return OO.has(O[O.length-1])}function QO(O){if(O.length===0)return!1;return _O.has(O[O.length-1])}function qO(O){if(O.length<2||O[0]!==" ")return null;let _=O.slice(1);if(/^\p{M}+$/u.test(_))return{space:" ",marks:_};return null}function D0(O){for(let _=O.length-1;_>=0;_--){let J=O[_];if(JO.has(J))return!0;if(!r.has(J))return!1}return!1}function DO(O,_){if(_.preserveOrdinarySpaces||_.preserveHardBreaks){if(O===" ")return"preserved-space";if(O==="\t")return"tab";if(_.preserveHardBreaks&&O==="\n")return"hard-break"}if(O===" ")return"space";if(O===" "||O===" "||O==="⁠"||O==="﻿")return"glue";if(O==="​")return"zero-width-break";if(O==="­")return"soft-hyphen";return"text"}function NO(O,_,J,Y){let X=[],R=null,Z="",Q=J,f=!1,V=0;for(let $ of O){let u=DO($,Y),q=u==="text"&&_;if(R!==null&&u===R&&q===f){Z+=$,V+=$.length;continue}if(R!==null)X.push({text:Z,isWordLike:f,kind:R,start:Q});R=u,Z=$,Q=J+V,f=q,V+=$.length}if(R!==null)X.push({text:Z,isWordLike:f,kind:R,start:Q});return X}function Y0(O){return O==="space"||O==="preserved-space"||O==="zero-width-break"||O==="hard-break"}var fO=/^[A-Za-z][A-Za-z0-9+.-]*:$/;function HO(O,_){let J=O.texts[_];if(J.startsWith("www."))return!0;return fO.test(J)&&_+1<O.len&&O.kinds[_+1]==="text"&&O.texts[_+1]==="//"}function UO(O){return O.includes("?")&&(O.includes("://")||O.startsWith("www."))}function MO(O){let _=O.texts.slice(),J=O.isWordLike.slice(),Y=O.kinds.slice(),X=O.starts.slice();for(let Z=0;Z<O.len;Z++){if(Y[Z]!=="text"||!HO(O,Z))continue;let Q=Z+1;while(Q<O.len&&!Y0(Y[Q])){_[Z]+=_[Q],J[Z]=!0;let f=_[Q].includes("?");if(Y[Q]="text",_[Q]="",Q++,f)break}}let R=0;for(let Z=0;Z<_.length;Z++){let Q=_[Z];if(Q.length===0)continue;if(R!==Z)_[R]=Q,J[R]=J[Z],Y[R]=Y[Z],X[R]=X[Z];R++}return _.length=R,J.length=R,Y.length=R,X.length=R,{len:R,texts:_,isWordLike:J,kinds:Y,starts:X}}function CO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R];if(_.push(Z),J.push(O.isWordLike[R]),Y.push(O.kinds[R]),X.push(O.starts[R]),!UO(Z))continue;let Q=R+1;if(Q>=O.len||Y0(O.kinds[Q]))continue;let f="",V=O.starts[Q],$=Q;while($<O.len&&!Y0(O.kinds[$]))f+=O.texts[$],$++;if(f.length>0)_.push(f),J.push(!0),Y.push("text"),X.push(V),R=$-1}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}var FO=new Set([":","-","/","×",",",".","+","–","—"]),K0=/^[A-Za-z0-9_]+[,:;]*$/,vO=/[,:;]+$/;function E0(O){for(let _ of O)if(b0.test(_))return!0;return!1}function Z0(O){if(O.length===0)return!1;for(let _ of O){if(b0.test(_)||FO.has(_))continue;return!1}return!0}function uO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R],Q=O.kinds[R];if(Q==="text"&&Z0(Z)&&E0(Z)){let f=Z,V=R+1;while(V<O.len&&O.kinds[V]==="text"&&Z0(O.texts[V]))f+=O.texts[V],V++;_.push(f),J.push(!0),Y.push("text"),X.push(O.starts[R]),R=V-1;continue}_.push(Z),J.push(O.isWordLike[R]),Y.push(Q),X.push(O.starts[R])}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function KO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R],Q=O.kinds[R],f=O.isWordLike[R];if(Q==="text"&&f&&K0.test(Z)){let V=Z,$=R+1;while(vO.test(V)&&$<O.len&&O.kinds[$]==="text"&&O.isWordLike[$]&&K0.test(O.texts[$]))V+=O.texts[$],$++;_.push(V),J.push(!0),Y.push("text"),X.push(O.starts[R]),R=$-1;continue}_.push(Z),J.push(f),Y.push(Q),X.push(O.starts[R])}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function zO(O){let _=[],J=[],Y=[],X=[];for(let R=0;R<O.len;R++){let Z=O.texts[R];if(O.kinds[R]==="text"&&Z.includes("-")){let Q=Z.split("-"),f=Q.length>1;for(let V=0;V<Q.length;V++){let $=Q[V];if(!f)break;if($.length===0||!E0($)||!Z0($))f=!1}if(f){let V=0;for(let $=0;$<Q.length;$++){let u=Q[$],q=$<Q.length-1?`${u}-`:u;_.push(q),J.push(!0),Y.push("text"),X.push(O.starts[R]+V),V+=q.length}continue}}_.push(Z),J.push(O.isWordLike[R]),Y.push(O.kinds[R]),X.push(O.starts[R])}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function jO(O){let _=[],J=[],Y=[],X=[],R=0;while(R<O.len){let Z=O.texts[R],Q=O.isWordLike[R],f=O.kinds[R],V=O.starts[R];if(f==="glue"){let $=Z,u=V;R++;while(R<O.len&&O.kinds[R]==="glue")$+=O.texts[R],R++;if(R<O.len&&O.kinds[R]==="text")Z=$+O.texts[R],Q=O.isWordLike[R],f="text",V=u,R++;else{_.push($),J.push(!1),Y.push("glue"),X.push(u);continue}}else R++;if(f==="text")while(R<O.len&&O.kinds[R]==="glue"){let $="";while(R<O.len&&O.kinds[R]==="glue")$+=O.texts[R],R++;if(R<O.len&&O.kinds[R]==="text"){Z+=$+O.texts[R],Q=Q||O.isWordLike[R],R++;continue}Z+=$}_.push(Z),J.push(Q),Y.push(f),X.push(V)}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function bO(O){let _=O.texts.slice(),J=O.isWordLike.slice(),Y=O.kinds.slice(),X=O.starts.slice();for(let R=0;R<_.length-1;R++){if(Y[R]!=="text"||Y[R+1]!=="text")continue;if(!p(_[R])||!p(_[R+1]))continue;let Z=YO(_[R]);if(Z===null)continue;_[R]=Z.head,_[R+1]=Z.tail+_[R+1],X[R+1]=X[R]+Z.head.length}return{len:_.length,texts:_,isWordLike:J,kinds:Y,starts:X}}function EO(O,_,J){let Y=n0(),X=0,R=[],Z=[],Q=[],f=[];for(let q of Y.segment(O))for(let D of NO(q.segment,q.isWordLike??!1,q.index,J)){let b=D.kind==="text";if(_.carryCJKAfterClosingQuote&&b&&X>0&&Q[X-1]==="text"&&p(D.text)&&p(R[X-1])&&D0(R[X-1]))R[X-1]+=D.text,Z[X-1]=Z[X-1]||D.isWordLike;else if(b&&X>0&&Q[X-1]==="text"&&VO(D.text)&&p(R[X-1]))R[X-1]+=D.text,Z[X-1]=Z[X-1]||D.isWordLike;else if(b&&X>0&&Q[X-1]==="text"&&QO(R[X-1]))R[X-1]+=D.text,Z[X-1]=Z[X-1]||D.isWordLike;else if(b&&X>0&&Q[X-1]==="text"&&D.isWordLike&&X0(D.text)&&$O(R[X-1]))R[X-1]+=D.text,Z[X-1]=!0;else if(b&&!D.isWordLike&&X>0&&Q[X-1]==="text"&&D.text.length===1&&D.text!=="-"&&D.text!=="—"&&ZO(R[X-1],D.text))R[X-1]+=D.text;else if(b&&!D.isWordLike&&X>0&&Q[X-1]==="text"&&(RO(D.text)||D.text==="-"&&Z[X-1]))R[X-1]+=D.text;else R[X]=D.text,Z[X]=D.isWordLike,Q[X]=D.kind,f[X]=D.start,X++}for(let q=1;q<X;q++)if(Q[q]==="text"&&!Z[q]&&q0(R[q])&&Q[q-1]==="text")R[q-1]+=R[q],Z[q-1]=Z[q-1]||Z[q],R[q]="";for(let q=X-2;q>=0;q--)if(Q[q]==="text"&&!Z[q]&&XO(R[q])){let D=q+1;while(D<X&&R[D]==="")D++;if(D<X&&Q[D]==="text")R[D]=R[q]+R[D],f[D]=f[q],R[q]=""}let V=0;for(let q=0;q<X;q++){let D=R[q];if(D.length===0)continue;if(V!==q)R[V]=D,Z[V]=Z[q],Q[V]=Q[q],f[V]=f[q];V++}R.length=V,Z.length=V,Q.length=V,f.length=V;let $=jO({len:V,texts:R,isWordLike:Z,kinds:Q,starts:f}),u=bO(KO(zO(uO(CO(MO($))))));for(let q=0;q<u.len-1;q++){let D=qO(u.texts[q]);if(D===null)continue;if(u.kinds[q]!=="space"&&u.kinds[q]!=="preserved-space"||u.kinds[q+1]!=="text"||!X0(u.texts[q+1]))continue;u.texts[q]=D.space,u.isWordLike[q]=!1,u.kinds[q]=u.kinds[q]==="preserved-space"?"preserved-space":"space",u.texts[q+1]=D.marks+u.texts[q+1],u.starts[q+1]=u.starts[q]+D.space.length}return u}function GO(O,_){if(O.len===0)return[];if(!_.preserveHardBreaks)return[{startSegmentIndex:0,endSegmentIndex:O.len,consumedEndSegmentIndex:O.len}];let J=[],Y=0;for(let X=0;X<O.len;X++){if(O.kinds[X]!=="hard-break")continue;J.push({startSegmentIndex:Y,endSegmentIndex:X,consumedEndSegmentIndex:X+1}),Y=X+1}if(Y<O.len)J.push({startSegmentIndex:Y,endSegmentIndex:O.len,consumedEndSegmentIndex:O.len});return J}function N0(O,_,J="normal"){let Y=d0(J),X=Y.mode==="pre-wrap"?t0(O):i0(O);if(X.length===0)return{normalized:X,chunks:[],len:0,texts:[],isWordLike:[],kinds:[],starts:[]};let R=EO(X,_,Y);return{normalized:X,chunks:GO(R,Y),...R}}var a=null,f0=new Map,s=null,PO=/\p{Emoji_Presentation}/u,AO=/[\p{Emoji_Presentation}\p{Extended_Pictographic}\p{Regional_Indicator}️⃣]/u,_0=null,H0=new Map;function U0(){if(a!==null)return a;if(typeof OffscreenCanvas<"u")return a=new OffscreenCanvas(1,1).getContext("2d"),a;if(typeof document<"u")return a=document.createElement("canvas").getContext("2d"),a;throw Error("Text measurement requires OffscreenCanvas or a DOM canvas context.")}function BO(O){let _=f0.get(O);if(!_)_=new Map,f0.set(O,_);return _}function x(O,_){let J=_.get(O);if(J===void 0)J={width:U0().measureText(O).width,containsCJK:p(O)},_.set(O,J);return J}function h(){if(s!==null)return s;if(typeof navigator>"u")return s={lineFitEpsilon:0.005,carryCJKAfterClosingQuote:!1,preferPrefixWidthsForBreakableRuns:!1,preferEarlySoftHyphenBreak:!1},s;let O=navigator.userAgent,J=navigator.vendor==="Apple Computer, Inc."&&O.includes("Safari/")&&!O.includes("Chrome/")&&!O.includes("Chromium/")&&!O.includes("CriOS/")&&!O.includes("FxiOS/")&&!O.includes("EdgiOS/"),Y=O.includes("Chrome/")||O.includes("Chromium/")||O.includes("CriOS/")||O.includes("Edg/");return s={lineFitEpsilon:J?0.015625:0.005,carryCJKAfterClosingQuote:Y,preferPrefixWidthsForBreakableRuns:J,preferEarlySoftHyphenBreak:J},s}function TO(O){let _=O.match(/(\d+(?:\.\d+)?)\s*px/);return _?parseFloat(_[1]):16}function M0(){if(_0===null)_0=new Intl.Segmenter(void 0,{granularity:"grapheme"});return _0}function wO(O){return PO.test(O)||O.includes("️")}function G0(O){return AO.test(O)}function yO(O,_){let J=H0.get(O);if(J!==void 0)return J;let Y=U0();Y.font=O;let X=Y.measureText("😀").width;if(J=0,X>_+0.5&&typeof document<"u"&&document.body!==null){let R=document.createElement("span");R.style.font=O,R.style.display="inline-block",R.style.visibility="hidden",R.style.position="absolute",R.textContent="😀",document.body.appendChild(R);let Z=R.getBoundingClientRect().width;if(document.body.removeChild(R),X-Z>0.5)J=X-Z}return H0.set(O,J),J}function LO(O){let _=0,J=M0();for(let Y of J.segment(O))if(wO(Y.segment))_++;return _}function WO(O,_){if(_.emojiCount===void 0)_.emojiCount=LO(O);return _.emojiCount}function g(O,_,J){if(J===0)return _.width;return _.width-WO(O,_)*J}function P0(O,_,J,Y){if(_.graphemeWidths!==void 0)return _.graphemeWidths;let X=[],R=M0();for(let Z of R.segment(O)){let Q=x(Z.segment,J);X.push(g(Z.segment,Q,Y))}return _.graphemeWidths=X.length>1?X:null,_.graphemeWidths}function A0(O,_,J,Y){if(_.graphemePrefixWidths!==void 0)return _.graphemePrefixWidths;let X=[],R=M0(),Z="";for(let Q of R.segment(O)){Z+=Q.segment;let f=x(Z,J);X.push(g(Z,f,Y))}return _.graphemePrefixWidths=X.length>1?X:null,_.graphemePrefixWidths}function B0(O,_){let J=U0();J.font=O;let Y=BO(O),X=TO(O),R=_?yO(O,X):0;return{cache:Y,fontSize:X,emojiCorrection:R}}function T0(){f0.clear(),H0.clear(),_0=null}function m(O){return O==="space"||O==="preserved-space"||O==="tab"||O==="zero-width-break"||O==="soft-hyphen"}function SO(O){return O==="space"}function w0(O,_){if(_<=0)return 0;let J=O%_;if(Math.abs(J)<=0.000001)return _;return _-J}function t(O,_,J,Y){if(!Y||_===null)return O[J];return _[J]-(J>0?_[J-1]:0)}function y0(O,_,J,Y,X,R){let Z=0,Q=_;while(Z<O.length){let f=R?_+O[Z]:Q+O[Z];if((Z+1<O.length?f+X:f)>J+Y)break;Q=f,Z++}return{fitCount:Z,fittedWidth:Q}}function L0(O,_){for(let J=0;J<O.chunks.length;J++){let Y=O.chunks[J];if(_<Y.consumedEndSegmentIndex)return J}return-1}function kO(O,_){let{segmentIndex:J,graphemeIndex:Y}=_;if(J>=O.widths.length)return null;if(Y>0)return _;let X=L0(O,J);if(X<0)return null;let R=O.chunks[X];if(R.startSegmentIndex===R.endSegmentIndex&&J===R.startSegmentIndex)return{segmentIndex:J,graphemeIndex:0};if(J<R.startSegmentIndex)J=R.startSegmentIndex;while(J<R.endSegmentIndex){let Z=O.kinds[J];if(Z!=="space"&&Z!=="zero-width-break"&&Z!=="soft-hyphen")return{segmentIndex:J,graphemeIndex:0};J++}if(R.consumedEndSegmentIndex>=O.widths.length)return null;return{segmentIndex:R.consumedEndSegmentIndex,graphemeIndex:0}}function W0(O,_){if(O.simpleLineWalkFastPath)return IO(O,_);return J0(O,_)}function IO(O,_){let{widths:J,kinds:Y,breakableWidths:X,breakablePrefixWidths:R}=O;if(J.length===0)return 0;let Z=h(),Q=Z.lineFitEpsilon,f=0,V=0,$=!1;function u(q){let D=J[q];if(D>_&&X[q]!==null){let b=X[q],K=R[q]??null;V=0;for(let j=0;j<b.length;j++){let B=t(b,K,j,Z.preferPrefixWidthsForBreakableRuns);if(V>0&&V+B>_+Q)f++,V=B;else{if(V===0)f++;V+=B}}}else V=D,f++;$=!0}for(let q=0;q<J.length;q++){let D=J[q],b=Y[q];if(!$){u(q);continue}let K=V+D;if(K>_+Q){if(SO(b))continue;V=0,$=!1,u(q);continue}V=K}if(!$)return f+1;return f}function cO(O,_,J){let{widths:Y,kinds:X,breakableWidths:R,breakablePrefixWidths:Z}=O;if(Y.length===0)return 0;let Q=h(),f=Q.lineFitEpsilon,V=0,$=0,u=!1,q=0,D=0,b=0,K=0,j=-1,B=0;function k(){j=-1,B=0}function y(H=b,z=K,W=$){V++,J?.({startSegmentIndex:q,startGraphemeIndex:D,endSegmentIndex:H,endGraphemeIndex:z,width:W}),$=0,u=!1,k()}function A(H,z){u=!0,q=H,D=0,b=H+1,K=0,$=z}function T(H,z,W){u=!0,q=H,D=z,b=H,K=z+1,$=W}function L(H,z){if(!u){A(H,z);return}$+=z,b=H+1,K=0}function C(H,z){if(!m(X[H]))return;j=H+1,B=$-z}function F(H){P(H,0)}function P(H,z){let W=R[H],c=Z[H]??null;for(let I=z;I<W.length;I++){let o=t(W,c,I,Q.preferPrefixWidthsForBreakableRuns);if(!u){T(H,I,o);continue}if($+o>_+f)y(),T(H,I,o);else $+=o,b=H,K=I+1}if(u&&b===H&&K===W.length)b=H+1,K=0}let E=0;while(E<Y.length){let H=Y[E],z=X[E];if(!u){if(H>_&&R[E]!==null)F(E);else A(E,H);C(E,H),E++;continue}if($+H>_+f){if(m(z)){L(E,H),y(E+1,0,$-H),E++;continue}if(j>=0){y(j,0,B);continue}if(H>_&&R[E]!==null){y(),F(E),E++;continue}y();continue}L(E,H),C(E,H),E++}if(u)y();return V}function J0(O,_,J){if(O.simpleLineWalkFastPath)return cO(O,_,J);let{widths:Y,lineEndFitAdvances:X,lineEndPaintAdvances:R,kinds:Z,breakableWidths:Q,breakablePrefixWidths:f,discretionaryHyphenWidth:V,tabStopAdvance:$,chunks:u}=O;if(Y.length===0||u.length===0)return 0;let q=h(),D=q.lineFitEpsilon,b=0,K=0,j=!1,B=0,k=0,y=0,A=0,T=-1,L=0,C=0,F=null;function P(){T=-1,L=0,C=0,F=null}function E(N=y,M=A,v=K){b++,J?.({startSegmentIndex:B,startGraphemeIndex:k,endSegmentIndex:N,endGraphemeIndex:M,width:v}),K=0,j=!1,P()}function H(N,M){j=!0,B=N,k=0,y=N+1,A=0,K=M}function z(N,M,v){j=!0,B=N,k=M,y=N,A=M+1,K=v}function W(N,M){if(!j){H(N,M);return}K+=M,y=N+1,A=0}function c(N,M){if(!m(Z[N]))return;let v=Z[N]==="tab"?0:X[N],w=Z[N]==="tab"?M:R[N];T=N+1,L=K-M+v,C=K-M+w,F=Z[N]}function I(N){o(N,0)}function o(N,M){let v=Q[N],w=f[N]??null;for(let G=M;G<v.length;G++){let l=t(v,w,G,q.preferPrefixWidthsForBreakableRuns);if(!j){z(N,G,l);continue}if(K+l>_+D)E(),z(N,G,l);else K+=l,y=N,A=G+1}if(j&&y===N&&A===v.length)y=N+1,A=0}function S(N){if(F!=="soft-hyphen")return!1;let M=Q[N];if(M===null)return!1;let v=q.preferPrefixWidthsForBreakableRuns?f[N]??M:M,w=v!==M,{fitCount:G,fittedWidth:l}=y0(v,K,_,D,V,w);if(G===0)return!1;if(K=l,y=N,A=G,P(),G===M.length)return y=N+1,A=0,!0;return E(N,G,l+V),o(N,G),!0}function U(N){b++,J?.({startSegmentIndex:N.startSegmentIndex,startGraphemeIndex:0,endSegmentIndex:N.consumedEndSegmentIndex,endGraphemeIndex:0,width:0}),P()}for(let N=0;N<u.length;N++){let M=u[N];if(M.startSegmentIndex===M.endSegmentIndex){U(M);continue}j=!1,K=0,B=M.startSegmentIndex,k=0,y=M.startSegmentIndex,A=0,P();let v=M.startSegmentIndex;while(v<M.endSegmentIndex){let w=Z[v],G=w==="tab"?w0(K,$):Y[v];if(w==="soft-hyphen"){if(j)y=v+1,A=0,T=v+1,L=K+V,C=K+V,F=w;v++;continue}if(!j){if(G>_&&Q[v]!==null)I(v);else H(v,G);c(v,G),v++;continue}if(K+G>_+D){let n=K+(w==="tab"?0:X[v]),e=K+(w==="tab"?G:R[v]);if(F==="soft-hyphen"&&q.preferEarlySoftHyphenBreak&&L<=_+D){E(T,0,C);continue}if(F==="soft-hyphen"&&S(v)){v++;continue}if(m(w)&&n<=_+D){W(v,G),E(v+1,0,e),v++;continue}if(T>=0&&L<=_+D){E(T,0,C);continue}if(G>_&&Q[v]!==null){E(),I(v),v++;continue}E();continue}W(v,G),c(v,G),v++}if(j){let w=T===M.consumedEndSegmentIndex?C:K;E(M.consumedEndSegmentIndex,0,w)}}return b}function S0(O,_,J){let Y=kO(O,_);if(Y===null)return null;if(O.simpleLineWalkFastPath)return oO(O,Y,J);let X=L0(O,Y.segmentIndex);if(X<0)return null;let R=O.chunks[X];if(R.startSegmentIndex===R.endSegmentIndex)return{startSegmentIndex:R.startSegmentIndex,startGraphemeIndex:0,endSegmentIndex:R.consumedEndSegmentIndex,endGraphemeIndex:0,width:0};let{widths:Z,lineEndFitAdvances:Q,lineEndPaintAdvances:f,kinds:V,breakableWidths:$,breakablePrefixWidths:u,discretionaryHyphenWidth:q,tabStopAdvance:D}=O,b=h(),K=b.lineFitEpsilon,j=0,B=!1,k=Y.segmentIndex,y=Y.graphemeIndex,A=k,T=y,L=-1,C=0,F=0,P=null;function E(){L=-1,C=0,F=0,P=null}function H(U=A,N=T,M=j){if(!B)return null;return{startSegmentIndex:k,startGraphemeIndex:y,endSegmentIndex:U,endGraphemeIndex:N,width:M}}function z(U,N){B=!0,A=U+1,T=0,j=N}function W(U,N,M){B=!0,A=U,T=N+1,j=M}function c(U,N){if(!B){z(U,N);return}j+=N,A=U+1,T=0}function I(U,N){if(!m(V[U]))return;let M=V[U]==="tab"?0:Q[U],v=V[U]==="tab"?N:f[U];L=U+1,C=j-N+M,F=j-N+v,P=V[U]}function o(U,N){let M=$[U],v=u[U]??null;for(let w=N;w<M.length;w++){let G=t(M,v,w,b.preferPrefixWidthsForBreakableRuns);if(!B){W(U,w,G);continue}if(j+G>J+K)return H();j+=G,A=U,T=w+1}if(B&&A===U&&T===M.length)A=U+1,T=0;return null}function S(U){if(P!=="soft-hyphen"||L<0)return null;let N=$[U]??null;if(N!==null){let M=b.preferPrefixWidthsForBreakableRuns?u[U]??N:N,v=M!==N,{fitCount:w,fittedWidth:G}=y0(M,j,J,K,q,v);if(w===N.length)return j=G,A=U+1,T=0,E(),null;if(w>0)return H(U,w,G+q)}if(C<=J+K)return H(L,0,F);return null}for(let U=Y.segmentIndex;U<R.endSegmentIndex;U++){let N=V[U],M=U===Y.segmentIndex?Y.graphemeIndex:0,v=N==="tab"?w0(j,D):Z[U];if(N==="soft-hyphen"&&M===0){if(B)A=U+1,T=0,L=U+1,C=j+q,F=j+q,P=N;continue}if(!B){if(M>0){let G=o(U,M);if(G!==null)return G}else if(v>J&&$[U]!==null){let G=o(U,0);if(G!==null)return G}else z(U,v);I(U,v);continue}if(j+v>J+K){let G=j+(N==="tab"?0:Q[U]),l=j+(N==="tab"?v:f[U]);if(P==="soft-hyphen"&&b.preferEarlySoftHyphenBreak&&C<=J+K)return H(L,0,F);let n=S(U);if(n!==null)return n;if(m(N)&&G<=J+K)return c(U,v),H(U+1,0,l);if(L>=0&&C<=J+K)return H(L,0,F);if(v>J&&$[U]!==null){let e=H();if(e!==null)return e;let v0=o(U,0);if(v0!==null)return v0}return H()}c(U,v),I(U,v)}if(L===R.consumedEndSegmentIndex&&T===0)return H(R.consumedEndSegmentIndex,0,F);return H(R.consumedEndSegmentIndex,0,j)}function oO(O,_,J){let{widths:Y,kinds:X,breakableWidths:R,breakablePrefixWidths:Z}=O,Q=h(),f=Q.lineFitEpsilon,V=0,$=!1,u=_.segmentIndex,q=_.graphemeIndex,D=u,b=q,K=-1,j=0;function B(C=D,F=b,P=V){if(!$)return null;return{startSegmentIndex:u,startGraphemeIndex:q,endSegmentIndex:C,endGraphemeIndex:F,width:P}}function k(C,F){$=!0,D=C+1,b=0,V=F}function y(C,F,P){$=!0,D=C,b=F+1,V=P}function A(C,F){if(!$){k(C,F);return}V+=F,D=C+1,b=0}function T(C,F){if(!m(X[C]))return;K=C+1,j=V-F}function L(C,F){let P=R[C],E=Z[C]??null;for(let H=F;H<P.length;H++){let z=t(P,E,H,Q.preferPrefixWidthsForBreakableRuns);if(!$){y(C,H,z);continue}if(V+z>J+f)return B();V+=z,D=C,b=H+1}if($&&D===C&&b===P.length)D=C+1,b=0;return null}for(let C=_.segmentIndex;C<Y.length;C++){let F=Y[C],P=X[C],E=C===_.segmentIndex?_.graphemeIndex:0;if(!$){if(E>0){let z=L(C,E);if(z!==null)return z}else if(F>J&&R[C]!==null){let z=L(C,0);if(z!==null)return z}else k(C,F);T(C,F);continue}if(V+F>J+f){if(m(P))return A(C,F),B(C+1,0,V-F);if(K>=0)return B(K,0,j);if(F>J&&R[C]!==null){let z=B();if(z!==null)return z;let W=L(C,0);if(W!==null)return W}return B()}A(C,F),T(C,F)}return B()}var R0=null,C0=new WeakMap;function I0(){if(R0===null)R0=new Intl.Segmenter(void 0,{granularity:"grapheme"});return R0}function lO(O){if(O)return{widths:[],lineEndFitAdvances:[],lineEndPaintAdvances:[],kinds:[],simpleLineWalkFastPath:!0,segLevels:null,breakableWidths:[],breakablePrefixWidths:[],discretionaryHyphenWidth:0,tabStopAdvance:0,chunks:[],segments:[]};return{widths:[],lineEndFitAdvances:[],lineEndPaintAdvances:[],kinds:[],simpleLineWalkFastPath:!0,segLevels:null,breakableWidths:[],breakablePrefixWidths:[],discretionaryHyphenWidth:0,tabStopAdvance:0,chunks:[]}}function c0(O,_,J){let Y=I0(),X=h(),{cache:R,emojiCorrection:Z}=B0(_,G0(O.normalized)),Q=g("-",x("-",R),Z),V=g(" ",x(" ",R),Z)*8;if(O.len===0)return lO(J);let $=[],u=[],q=[],D=[],b=O.chunks.length<=1,K=J?[]:null,j=[],B=[],k=J?[]:null,y=Array.from({length:O.len}),A=Array.from({length:O.len});function T(F,P,E,H,z,W,c,I){if(z!=="text"&&z!=="space"&&z!=="zero-width-break")b=!1;if($.push(P),u.push(E),q.push(H),D.push(z),K?.push(W),j.push(c),B.push(I),k!==null)k.push(F)}for(let F=0;F<O.len;F++){y[F]=$.length;let P=O.texts[F],E=O.isWordLike[F],H=O.kinds[F],z=O.starts[F];if(H==="soft-hyphen"){T(P,0,Q,Q,H,z,null,null),A[F]=$.length;continue}if(H==="hard-break"){T(P,0,0,0,H,z,null,null),A[F]=$.length;continue}if(H==="tab"){T(P,0,0,0,H,z,null,null),A[F]=$.length;continue}let W=x(P,R);if(H==="text"&&W.containsCJK){let S="",U=0;for(let N of Y.segment(P)){let M=N.segment;if(S.length===0){S=M,U=N.index;continue}if(i.has(S)||$0.has(M)||r.has(M)||X.carryCJKAfterClosingQuote&&p(M)&&D0(S)){S+=M;continue}let v=x(S,R),w=g(S,v,Z);T(S,w,w,w,"text",z+U,null,null),S=M,U=N.index}if(S.length>0){let N=x(S,R),M=g(S,N,Z);T(S,M,M,M,"text",z+U,null,null)}A[F]=$.length;continue}let c=g(P,W,Z),I=H==="space"||H==="preserved-space"||H==="zero-width-break"?0:c,o=H==="space"||H==="zero-width-break"?0:c;if(E&&P.length>1){let S=P0(P,W,R,Z),U=X.preferPrefixWidthsForBreakableRuns?A0(P,W,R,Z):null;T(P,c,I,o,H,z,S,U)}else T(P,c,I,o,H,z,null,null);A[F]=$.length}let L=hO(O.chunks,y,A),C=K===null?null:u0(O.normalized,K);if(k!==null)return{widths:$,lineEndFitAdvances:u,lineEndPaintAdvances:q,kinds:D,simpleLineWalkFastPath:b,segLevels:C,breakableWidths:j,breakablePrefixWidths:B,discretionaryHyphenWidth:Q,tabStopAdvance:V,chunks:L,segments:k};return{widths:$,lineEndFitAdvances:u,lineEndPaintAdvances:q,kinds:D,simpleLineWalkFastPath:b,segLevels:C,breakableWidths:j,breakablePrefixWidths:B,discretionaryHyphenWidth:Q,tabStopAdvance:V,chunks:L}}function hO(O,_,J){let Y=[];for(let X=0;X<O.length;X++){let R=O[X],Z=R.startSegmentIndex<_.length?_[R.startSegmentIndex]:J[J.length-1]??0,Q=R.endSegmentIndex<_.length?_[R.endSegmentIndex]:J[J.length-1]??0,f=R.consumedEndSegmentIndex<_.length?_[R.consumedEndSegmentIndex]:J[J.length-1]??0;Y.push({startSegmentIndex:Z,endSegmentIndex:Q,consumedEndSegmentIndex:f})}return Y}function o0(O,_,J,Y){let X=N0(O,h(),Y?.whiteSpace);return c0(X,_,J)}function V1(O,_,J){let Y=performance.now(),X=N0(O,h(),J?.whiteSpace),R=performance.now(),Z=c0(X,_,!1),Q=performance.now(),f=0;for(let V of Z.breakableWidths)if(V!==null)f++;return{analysisMs:R-Y,measureMs:Q-R,totalMs:Q-Y,analysisSegments:X.len,preparedSegments:Z.widths.length,breakableSegments:f}}function X1(O,_,J){return o0(O,_,!1,J)}function Y1(O,_,J){return o0(O,_,!0,J)}function F0(O){return O}function Z1(O,_,J){let Y=W0(F0(O),_);return{lineCount:Y,height:Y*J}}function k0(O,_,J){let Y=J.get(O);if(Y!==void 0)return Y;Y=[];let X=I0();for(let R of X.segment(_[O]))Y.push(R.segment);return J.set(O,Y),Y}function l0(O){let _=C0.get(O);if(_!==void 0)return _;return _=new Map,C0.set(O,_),_}function pO(O,_,J,Y){return Y>0&&O[Y-1]==="soft-hyphen"&&!(_===Y&&J>0)}function xO(O,_,J,Y,X,R,Z){let Q="",f=pO(_,Y,X,R);for(let V=Y;V<R;V++){if(_[V]==="soft-hyphen"||_[V]==="hard-break")continue;if(V===Y&&X>0)Q+=k0(V,O,J).slice(X).join("");else Q+=O[V]}if(Z>0){if(f)Q+="-";Q+=k0(R,O,J).slice(Y===R?X:0,Z).join("")}else if(f)Q+="-";return Q}function h0(O,_,J,Y,X,R,Z){return{text:xO(O.segments,O.kinds,_,Y,X,R,Z),width:J,start:{segmentIndex:Y,graphemeIndex:X},end:{segmentIndex:R,graphemeIndex:Z}}}function gO(O,_,J){return h0(O,_,J.width,J.startSegmentIndex,J.startGraphemeIndex,J.endSegmentIndex,J.endGraphemeIndex)}function p0(O){return{width:O.width,start:{segmentIndex:O.startSegmentIndex,graphemeIndex:O.startGraphemeIndex},end:{segmentIndex:O.endSegmentIndex,graphemeIndex:O.endGraphemeIndex}}}function mO(O,_,J){let Y=S0(O,_,J);if(Y===null)return null;return p0(Y)}function rO(O,_){return h0(O,l0(O),_.width,_.start.segmentIndex,_.start.graphemeIndex,_.end.segmentIndex,_.end.graphemeIndex)}function $1(O,_,J){if(O.widths.length===0)return 0;return J0(F0(O),_,(Y)=>{J(p0(Y))})}function Q1(O,_,J){let Y=mO(O,_,J);if(Y===null)return null;return rO(O,Y)}function q1(O,_,J){let Y=[];if(O.widths.length===0)return{lineCount:0,height:0,lines:Y};let X=l0(O),R=J0(F0(O),_,(Z)=>{Y.push(gO(O,X,Z))});return{lineCount:R,height:R*J,lines:Y}}function aO(){z0(),R0=null,C0=new WeakMap,T0()}function D1(O){j0(O),aO()}
+window.Pretext={walkLineRanges:$1,setLocale:D1,profilePrepare:V1,prepareWithSegments:Y1,prepare:X1,layoutWithLines:q1,layoutNextLine:Q1,layout:Z1,clearCache:aO};
+})();
+</script>
 
-// Timeline signal dots
-const timelineEl = document.getElementById('timelineDots');
-if (timelineEl) {
-  const signals = [
-    {pct: 5, type: 'long-dot'}, {pct: 9, type: 'long-dot'}, {pct: 13, type: 'short-dot'},
-    {pct: 18, type: 'long-dot'}, {pct: 24, type: 'short-dot'},
-    {pct: 38, type: 'long-dot'}, {pct: 43, type: 'long-dot'},
-    {pct: 50, type: 'short-dot'}, {pct: 56, type: 'long-dot'},
-    {pct: 64, type: 'long-dot'}, {pct: 70, type: 'short-dot'},
-    {pct: 76, type: 'long-dot'}, {pct: 80, type: 'long-dot'},
-    {pct: 87, type: 'long-dot'}, {pct: 93, type: 'short-dot'},
-  ];
-  timelineEl.innerHTML = signals.map(s =>
-    `<div class="signal-dot ${s.type}" style="left:${s.pct}%"></div>`
-  ).join('');
+<!-- DASHBOARD JS -->
+<script>
+'use strict';
+
+// ─── DATA ────────────────────────────────────────────────────────────────────
+const SIGNALS = [
+  {pair:'BTC/USDT',dir:'long', fired:'2025-11-05',entry:68420,  stop:66800, tp:71660, outcome:'win',    pnl:+2.00,day:6  },
+  {pair:'ETH/USDT',dir:'short',fired:'2025-11-12',entry:2580,   stop:2648,  tp:2444,  outcome:'win',    pnl:+2.00,day:13 },
+  {pair:'SOL/USDT',dir:'long', fired:'2025-11-20',entry:182.40, stop:178.10,tp:190.80,outcome:'win',    pnl:+1.95,day:21 },
+  {pair:'BNB/USDT',dir:'long', fired:'2025-11-27',entry:512.50, stop:499.80,tp:538.90,outcome:'stopped',pnl:-1.00,day:28 },
+  {pair:'ZEC/USDT',dir:'short',fired:'2025-12-05',entry:65.40,  stop:67.80, tp:60.60, outcome:'win',    pnl:+2.00,day:36 },
+  {pair:'BTC/USDT',dir:'short',fired:'2025-12-11',entry:97800,  stop:101100,tp:91200, outcome:'win',    pnl:+2.00,day:42 },
+  {pair:'ETH/USDT',dir:'long', fired:'2025-12-18',entry:3420,   stop:3310,  tp:3640,  outcome:'win',    pnl:+2.00,day:49 },
+  {pair:'SOL/USDT',dir:'short',fired:'2025-12-28',entry:194.20, stop:200.40,tp:181.80,outcome:'loss',   pnl:-1.00,day:59 },
+  {pair:'BNB/USDT',dir:'long', fired:'2026-01-04',entry:668.30, stop:648.20,tp:708.50,outcome:'win',    pnl:+2.00,day:66 },
+  {pair:'ZEC/USDT',dir:'long', fired:'2026-01-10',entry:58.20,  stop:56.40, tp:61.80, outcome:'stopped',pnl:-1.00,day:72 },
+  {pair:'BTC/USDT',dir:'long', fired:'2026-01-16',entry:101500, stop:99100, tp:106300,outcome:'win',    pnl:+2.00,day:78 },
+  {pair:'ETH/USDT',dir:'short',fired:'2026-01-22',entry:3180,   stop:3268,  tp:2992,  outcome:'loss',   pnl:-1.00,day:84 },
+  {pair:'SOL/USDT',dir:'long', fired:'2026-01-28',entry:168.40, stop:163.80,tp:177.60,outcome:'win',    pnl:+1.98,day:90 },
+  {pair:'BNB/USDT',dir:'short',fired:'2026-02-04',entry:718.50, stop:739.40,tp:676.50,outcome:'win',    pnl:+2.00,day:97 },
+  {pair:'ZEC/USDT',dir:'short',fired:'2026-02-10',entry:72.40,  stop:74.90, tp:67.40, outcome:'win',    pnl:+2.00,day:103},
+  {pair:'BTC/USDT',dir:'short',fired:'2026-02-14',entry:94200,  stop:97800, tp:86800, outcome:'stopped',pnl:-1.00,day:107},
+  {pair:'ETH/USDT',dir:'long', fired:'2026-02-19',entry:2640,   stop:2564,  tp:2792,  outcome:'win',    pnl:+2.00,day:112},
+  {pair:'SOL/USDT',dir:'long', fired:'2026-02-24',entry:144.80, stop:140.50,tp:153.40,outcome:'win',    pnl:+2.00,day:117},
+  {pair:'BNB/USDT',dir:'long', fired:'2026-03-01',entry:608.20, stop:592.40,tp:640.00,outcome:'stopped',pnl:-1.00,day:122},
+  {pair:'ZEC/USDT',dir:'long', fired:'2026-03-06',entry:62.10,  stop:60.20, tp:65.90, outcome:'loss',   pnl:-1.00,day:127},
+  {pair:'BTC/USDT',dir:'long', fired:'2026-03-10',entry:82400,  stop:80200, tp:86800, outcome:'win',    pnl:+2.00,day:131},
+  {pair:'ETH/USDT',dir:'short',fired:'2026-03-15',entry:1960,   stop:2016,  tp:1848,  outcome:'win',    pnl:+2.00,day:136},
+  {pair:'SOL/USDT',dir:'short',fired:'2026-03-20',entry:118.60, stop:122.40,tp:111.00,outcome:'stopped',pnl:-1.00,day:141},
+  {pair:'BNB/USDT',dir:'long', fired:'2026-03-25',entry:548.30, stop:534.60,tp:575.60,outcome:'win',    pnl:+2.00,day:146},
+  {pair:'ZEC/USDT',dir:'short',fired:'2026-03-29',entry:52.40,  stop:54.10, tp:48.00, outcome:'win',    pnl:+2.57,day:150},
+  {pair:'BTC/USDT',dir:'long', fired:'2026-04-01',entry:85200,  stop:83100, tp:89400, outcome:'win',    pnl:+2.00,day:153},
+  {pair:'ETH/USDT',dir:'long', fired:'2026-04-05',entry:1780,   stop:1730,  tp:1880,  outcome:'tp',     pnl:+2.00,day:157},
+  {pair:'SOL/USDT',dir:'long', fired:'2026-04-08',entry:118.70, stop:115.60,tp:124.90,outcome:'win',    pnl:+1.96,day:160},
+  {pair:'BNB/USDT',dir:'short',fired:'2026-04-11',entry:598.40, stop:616.50,tp:562.00,outcome:'loss',   pnl:-1.00,day:163},
+  {pair:'ZEC/USDT',dir:'long', fired:'2026-04-13',entry:47.82,  stop:46.20, tp:51.06, outcome:'stopped',pnl:-1.00,day:165},
+  {pair:'BTC/USDT',dir:'short',fired:'2026-04-16',entry:80150,  stop:82800, tp:74850, outcome:'win',    pnl:+2.00,day:168},
+  {pair:'SOL/USDT',dir:'long', fired:'2026-04-19',entry:132.50, stop:129.40,tp:138.70,outcome:'win',    pnl:+2.00,day:171},
+  {pair:'BNB/USDT',dir:'long', fired:'2026-04-21',entry:578.30, stop:563.40,tp:608.20,outcome:'loss',   pnl:-1.00,day:173},
+  {pair:'ETH/USDT',dir:'short',fired:'2026-04-23',entry:1748,   stop:1796,  tp:1652,  outcome:'win',    pnl:+1.98,day:175},
+  {pair:'ZEC/USDT',dir:'long', fired:'2026-04-24',entry:50.10,  stop:48.70, tp:52.90, outcome:'stopped',pnl:-1.00,day:176},
+  {pair:'BTC/USDT',dir:'long', fired:'2026-04-25',entry:93250,  stop:91800, tp:96150, outcome:'win',    pnl:+1.97,day:177},
+  {pair:'SOL/USDT',dir:'short',fired:'2026-04-26',entry:136.20, stop:140.40,tp:127.80,outcome:'loss',   pnl:-1.00,day:178},
+  {pair:'BNB/USDT',dir:'long', fired:'2026-04-27',entry:594.10, stop:580.20,tp:621.90,outcome:'stopped',pnl:-1.00,day:179},
+  {pair:'ETH/USDT',dir:'long', fired:'2026-04-28',entry:1778,   stop:1725,  tp:1884,  outcome:'win',    pnl:+2.00,day:180},
+];
+
+// ─── HEADER CLOCK ───────────────────────────────────────────────────────────
+(function tick() {
+  const el = document.getElementById('hdr-ts');
+  const d = new Date();
+  el.textContent = d.toISOString().slice(0,19).replace('T',' ') + ' UTC';
+  setTimeout(tick, 1000);
+})();
+
+// ─── TOOLTIP ─────────────────────────────────────────────────────────────────
+const TIP = document.getElementById('tooltip');
+function showTip(e, html) {
+  TIP.innerHTML = html;
+  TIP.style.left = e.clientX + 'px';
+  TIP.style.top  = e.clientY + 'px';
+  TIP.classList.add('visible');
 }
+function hideTip() { TIP.classList.remove('visible'); }
+document.addEventListener('mousemove', e => {
+  TIP.style.left = e.clientX + 'px';
+  TIP.style.top  = (e.clientY - 8) + 'px';
+});
+
+// ─── DOT MATRIX ─────────────────────────────────────────────────────────────
+(function buildDotMatrix() {
+  const c = document.getElementById('dot-matrix');
+  SIGNALS.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'dot ' + ({win:'win',tp:'tp',loss:'loss',stopped:'stopped'}[s.outcome]||'win');
+    el.addEventListener('mouseenter', e => showTip(e,
+      `<b>${s.pair}</b> ${s.dir.toUpperCase()} ${s.fired}<br>${s.outcome.toUpperCase()} ${s.pnl>0?'+':''}${s.pnl.toFixed(2)}R`
+    ));
+    el.addEventListener('mouseleave', hideTip);
+    c.appendChild(el);
+  });
+})();
+
+// ─── REGIME TIMELINE ────────────────────────────────────────────────────────
+(function buildTimeline() {
+  const bar = document.getElementById('regime-bar');
+  const TOTAL = 181;
+
+  // choppy segment spans full period
+  const seg = document.createElement('div');
+  seg.className = 'regime-segment choppy';
+  seg.style.left = '0'; seg.style.right = '0';
+  bar.appendChild(seg);
+
+  const lbl = document.createElement('div');
+  lbl.className = 'regime-seg-label';
+  lbl.style.left = '0'; lbl.textContent = 'CHOPPY';
+  bar.appendChild(lbl);
+
+  SIGNALS.forEach(s => {
+    const pct = (s.day / TOTAL * 100).toFixed(2) + '%';
+    const dot = document.createElement('div');
+    dot.className = 'sig-dot ' + (s.outcome === 'stopped' ? 'stopped' : s.dir);
+    dot.style.left = pct;
+    dot.addEventListener('mouseenter', e => showTip(e,
+      `<b>${s.pair}</b> ${s.dir.toUpperCase()}<br>${s.fired}<br>${s.outcome.toUpperCase()} ${s.pnl>0?'+':''}${s.pnl.toFixed(2)}R`
+    ));
+    dot.addEventListener('mouseleave', hideTip);
+    bar.appendChild(dot);
+  });
+})();
+
+// ─── SIGNAL TABLE ────────────────────────────────────────────────────────────
+(function buildTable() {
+  function fmt(p) {
+    if (p >= 1000) return p.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2});
+    if (p >= 10)   return p.toFixed(2);
+    return p.toFixed(4);
+  }
+  const tbody = document.getElementById('sig-tbody');
+  const rows = [...SIGNALS].reverse().slice(0, 20);
+  rows.forEach(s => {
+    const oc = {win:'b-win',tp:'b-tp',loss:'b-loss',stopped:'b-stopped'}[s.outcome];
+    const ol = {win:'WIN',tp:'TP HIT',loss:'LOSS',stopped:'STOP'}[s.outcome];
+    const dc = s.dir === 'long' ? 'b-long' : 'b-short';
+    const pc = s.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const ps = (s.pnl >= 0 ? '+' : '') + s.pnl.toFixed(2) + 'R';
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td class="td-pair">${s.pair}</td>` +
+      `<td><span class="badge ${dc}">${s.dir.toUpperCase()}</span></td>` +
+      `<td class="td-muted">choppy</td>` +
+      `<td class="td-date">${s.fired}</td>` +
+      `<td class="td-mono">${fmt(s.entry)}</td>` +
+      `<td class="td-mono" style="color:var(--short)">${fmt(s.stop)}</td>` +
+      `<td class="td-mono" style="color:var(--accent)">${fmt(s.tp)}</td>` +
+      `<td><span class="outcome-badge ${oc}">${ol}</span></td>` +
+      `<td class="cell-r"><span class="${pc}">${ps}</span></td>`;
+    tbody.appendChild(tr);
+  });
+})();
+
+// ─── PRETEXT: LLM COMMENTARY HEIGHT ─────────────────────────────────────────
+document.fonts.ready.then(function() {
+  const PT = window.Pretext;
+  if (!PT) return;
+
+  const wrap = document.getElementById('llm-wrap');
+  const textEl = document.getElementById('llm-text');
+
+  function relayout() {
+    const w = wrap.clientWidth - 27; // 3px border + 12px + 12px padding
+    if (w <= 0) return;
+    try {
+      const prepared = PT.prepare(textEl.textContent.trim(), '12px Outfit, sans-serif');
+      const { height } = PT.layout(prepared, w, 19.8); // 12px * 1.65
+      wrap.style.minHeight = Math.ceil(height + 16 + 26) + 'px'; // text + attr + padding
+    } catch(_) { /* fallback: auto */ }
+  }
+
+  relayout();
+  const ro = new ResizeObserver(function() { PT.clearCache(); relayout(); });
+  ro.observe(wrap);
+});
 </script>
 </body>
 </html>
