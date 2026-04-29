@@ -6,7 +6,7 @@ from eval.outcomes import resolve_outcome
 
 
 def _make_signal_row(direction="long", entry=50000.0, stop=49000.0,
-                     fired_at: datetime | None = None):
+                     take_profit=None, fired_at: datetime | None = None):
     if fired_at is None:
         fired_at = datetime.now(timezone.utc) - timedelta(hours=5)
     return {
@@ -19,6 +19,7 @@ def _make_signal_row(direction="long", entry=50000.0, stop=49000.0,
         "regime_age_candles": 5,
         "entry_price": entry,
         "suggested_stop_loss": stop,
+        "suggested_take_profit": take_profit,
         "timeframe": "1h",
         "fired_at": fired_at.isoformat(),
         "shadow_mode": 1,
@@ -51,7 +52,7 @@ class TestResolveOutcome:
         ex = _mock_exchange(candles)
         result = resolve_outcome(signal, ex)
         assert result is not None
-        outcome, price = result
+        outcome, price, pnl_r = result
         assert outcome == "win"
 
     def test_loss_long(self):
@@ -61,7 +62,7 @@ class TestResolveOutcome:
         ex = _mock_exchange(candles)
         result = resolve_outcome(signal, ex)
         assert result is not None
-        outcome, price = result
+        outcome, price, pnl_r = result
         assert outcome == "loss"
 
     def test_stopped_out_long(self):
@@ -74,7 +75,7 @@ class TestResolveOutcome:
         ex = _mock_exchange(candles)
         result = resolve_outcome(signal, ex)
         assert result is not None
-        outcome, price = result
+        outcome, price, pnl_r = result
         assert outcome == "stopped_out"
         assert price == 49000.0
 
@@ -85,7 +86,7 @@ class TestResolveOutcome:
         ex = _mock_exchange(candles)
         result = resolve_outcome(signal, ex)
         assert result is not None
-        outcome, _ = result
+        outcome, *_ = result
         assert outcome == "win"
 
     def test_loss_short(self):
@@ -95,7 +96,7 @@ class TestResolveOutcome:
         ex = _mock_exchange(candles)
         result = resolve_outcome(signal, ex)
         assert result is not None
-        outcome, _ = result
+        outcome, *_ = result
         assert outcome == "loss"
 
     def test_stopped_out_short(self):
@@ -106,7 +107,7 @@ class TestResolveOutcome:
         ex = _mock_exchange(candles)
         result = resolve_outcome(signal, ex)
         assert result is not None
-        outcome, _ = result
+        outcome, *_ = result
         assert outcome == "stopped_out"
 
     def test_no_candle_data_returns_none(self):
@@ -115,10 +116,42 @@ class TestResolveOutcome:
         result = resolve_outcome(signal, ex)
         assert result is None
 
+    def test_tp_hit_long(self):
+        signal = _mock_signal_row("long", entry=50000.0, stop=49000.0,
+                                  take_profit=52000.0)
+        # High exceeds take_profit; low does not breach stop
+        candles = [_candle(0, 50000.0, 52100.0, 51000.0)]
+        ex = _mock_exchange(candles)
+        outcome, price, pnl_r = resolve_outcome(signal, ex)
+        assert outcome == "tp_hit"
+        assert price == 52000.0
+        assert abs(pnl_r - 2.0) < 0.001  # (52000-50000)/1000 = 2R
 
-def _mock_signal_row(direction="long", entry=50000.0, stop=49000.0):
+    def test_tp_hit_short(self):
+        signal = _mock_signal_row("short", entry=50000.0, stop=51000.0,
+                                  take_profit=48000.0)
+        # Low goes below take_profit; high does not breach stop
+        candles = [_candle(0, 47900.0, 50500.0, 49000.0)]
+        ex = _mock_exchange(candles)
+        outcome, price, pnl_r = resolve_outcome(signal, ex)
+        assert outcome == "tp_hit"
+        assert price == 48000.0
+        assert abs(pnl_r - 2.0) < 0.001  # (50000-48000)/1000 = 2R
+
+    def test_pnl_r_none_when_no_stop(self):
+        signal = _mock_signal_row("long", entry=50000.0, stop=None)
+        candles = [_candle(i, 50100 + i * 50, 50300 + i * 50, 50200 + i * 50)
+                   for i in range(3)]
+        ex = _mock_exchange(candles)
+        outcome, price, pnl_r = resolve_outcome(signal, ex)
+        assert outcome == "win"
+        assert pnl_r is None
+
+
+def _mock_signal_row(direction="long", entry=50000.0, stop=49000.0,
+                     take_profit=None):
     """Return a dict-like object with subscript access."""
-    d = _make_signal_row(direction, entry, stop)
+    d = _make_signal_row(direction, entry, stop, take_profit=take_profit)
 
     class RowLike(dict):
         def __getitem__(self, key):
@@ -147,6 +180,6 @@ class TestAccuracyCalculation:
             for row in rows[5:]:
                 update_outcome(conn, row["id"], "loss", 49000.0)
 
-            stats = get_accuracy_stats(conn)
+            stats = get_accuracy_stats(conn, shadow_mode=1)
             assert "trending-up" in stats
             assert abs(stats["trending-up"]["accuracy"] - 5 / 7) < 0.001
