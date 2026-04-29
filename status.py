@@ -33,13 +33,13 @@ def main() -> None:
     with get_conn() as conn:
         # -- Signal counts -----------------------------------------------------
         total_signals = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE shadow_mode=1"
+            "SELECT COUNT(*) FROM signals WHERE shadow_mode=0"
         ).fetchone()[0]
 
         # -- Last signal -------------------------------------------------------
         last = conn.execute(
             "SELECT pair, direction, strategy, regime, entry_price, fired_at "
-            "FROM signals WHERE shadow_mode=1 ORDER BY fired_at DESC LIMIT 1"
+            "FROM signals WHERE shadow_mode=0 ORDER BY fired_at DESC LIMIT 1"
         ).fetchone()
 
         # -- Per-regime breakdown ----------------------------------------------
@@ -50,18 +50,18 @@ def main() -> None:
                       SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) as losses,
                       SUM(CASE WHEN outcome='stopped_out' THEN 1 ELSE 0 END) as stopped,
                       SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END) as resolved
-               FROM signals WHERE shadow_mode=1
+               FROM signals WHERE shadow_mode=0
                GROUP BY regime ORDER BY total DESC"""
         ).fetchall()
 
         # -- Pending outcomes --------------------------------------------------
         pending = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE shadow_mode=1 AND outcome IS NULL"
+            "SELECT COUNT(*) FROM signals WHERE shadow_mode=0 AND outcome IS NULL"
         ).fetchone()[0]
 
         # -- Commentary failures -----------------------------------------------
         commentary_pending = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE shadow_mode=1 AND commentary_status='pending'"
+            "SELECT COUNT(*) FROM signals WHERE shadow_mode=0 AND commentary_status='pending'"
         ).fetchone()[0]
 
     # -- Render ----------------------------------------------------------------
