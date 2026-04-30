@@ -1,14 +1,19 @@
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from utils.config import db_path
 
 
-def get_conn(path: Path | None = None) -> sqlite3.Connection:
+@contextmanager
+def get_conn(path: Path | None = None):
     conn = sqlite3.connect(path or db_path())
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_db(path: Path | None = None) -> None:
@@ -45,12 +50,16 @@ def init_db(path: Path | None = None) -> None:
             CREATE INDEX IF NOT EXISTS idx_signals_commentary_pending
             ON signals (commentary_status, created_at);
         """)
-        # Migration: add column if DB was created before take-profit was introduced
-        try:
-            conn.execute("ALTER TABLE signals ADD COLUMN suggested_take_profit REAL")
-            conn.commit()
-        except Exception:
-            pass  # column already exists
+        # Migrations: add columns introduced after initial schema
+        for migration in [
+            "ALTER TABLE signals ADD COLUMN suggested_take_profit REAL",
+            "ALTER TABLE signals ADD COLUMN pnl_r REAL",
+        ]:
+            try:
+                conn.execute(migration)
+                conn.commit()
+            except Exception:
+                pass  # column already exists
 
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS regime_log (
@@ -87,8 +96,8 @@ def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
 
 def is_duplicate(conn: sqlite3.Connection, pair: str, direction: str,
                  strategy: str, regime: str, window_hours: int) -> bool:
-    from datetime import datetime, timedelta
-    cutoff = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
     row = conn.execute(
         """SELECT 1 FROM signals
            WHERE pair=? AND direction=? AND strategy=? AND regime=?
@@ -99,8 +108,8 @@ def is_duplicate(conn: sqlite3.Connection, pair: str, direction: str,
 
 
 def get_pending_outcomes(conn: sqlite3.Connection, older_than_hours: int) -> list:
-    from datetime import datetime, timedelta
-    cutoff = (datetime.utcnow() - timedelta(hours=older_than_hours)).isoformat()
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=older_than_hours)).isoformat()
     return conn.execute(
         """SELECT * FROM signals
            WHERE outcome IS NULL AND fired_at <= ?
@@ -110,13 +119,13 @@ def get_pending_outcomes(conn: sqlite3.Connection, older_than_hours: int) -> lis
 
 
 def update_outcome(conn: sqlite3.Connection, signal_id: int, outcome: str,
-                   outcome_price: float) -> None:
-    from datetime import datetime
+                   outcome_price: float, pnl_r: float | None = None) -> None:
+    from datetime import datetime, timezone
     conn.execute(
         """UPDATE signals
-           SET outcome=?, outcome_price=?, outcome_resolved_at=?
+           SET outcome=?, outcome_price=?, outcome_resolved_at=?, pnl_r=?
            WHERE id=?""",
-        (outcome, outcome_price, datetime.utcnow().isoformat(), signal_id),
+        (outcome, outcome_price, datetime.now(timezone.utc).isoformat(), pnl_r, signal_id),
     )
     conn.commit()
 
@@ -130,15 +139,16 @@ def update_commentary(conn: sqlite3.Connection, signal_id: int,
     conn.commit()
 
 
-def get_accuracy_stats(conn: sqlite3.Connection) -> dict:
+def get_accuracy_stats(conn: sqlite3.Connection, shadow_mode: int = 0) -> dict:
     rows = conn.execute(
         """SELECT regime,
                   COUNT(*) as total,
                   SUM(CASE WHEN outcome IN ('win', 'tp_hit') THEN 1 ELSE 0 END) as wins,
                   SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END) as resolved
            FROM signals
-           WHERE shadow_mode=1
-           GROUP BY regime"""
+           WHERE shadow_mode=?
+           GROUP BY regime""",
+        (shadow_mode,),
     ).fetchall()
     stats = {}
     for row in rows:

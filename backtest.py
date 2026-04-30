@@ -184,7 +184,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool) -> dict:
 
                 if not dry_run:
                     signal_id = log_signal(conn, signal)
-                    update_outcome(conn, signal_id, outcome, price)
+                    update_outcome(conn, signal_id, outcome, price, pnl_r)
             else:
                 stats["unresolved"] += 1
                 if not dry_run:
