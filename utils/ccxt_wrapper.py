@@ -5,13 +5,10 @@ from typing import Optional
 
 
 def _make_exchange(api_key: str, secret: str) -> ccxt.mexc:
-    config: dict = {"options": {"defaultType": "swap"}, "enableRateLimit": True}
-    # Only attach credentials when they look real — placeholder values cause MEXC
-    # to reject even public endpoints with "Api key info invalid".
-    if api_key and not api_key.startswith("your_"):
-        config["apiKey"] = api_key
-        config["secret"] = secret
-    return ccxt.mexc(config)
+    # Signal engine only reads public market data (candles, ticker) — no credentials needed.
+    # Attaching credentials triggers private endpoint calls that fail if the key lacks
+    # futures permissions, breaking even public data fetches.
+    return ccxt.mexc({"options": {"defaultType": "swap"}, "enableRateLimit": True})
 
 
 def fetch_ohlcv_safe(

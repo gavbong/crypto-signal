@@ -61,23 +61,42 @@ def classify_single(df: pd.DataFrame) -> tuple[str, float]:
     adx_thresh = c["adx_trend_threshold"]
     hv_mult = c["high_vol_bb_multiplier"]
 
-    # High-volatility has priority
-    if not pd.isna(bb_width) and not pd.isna(bb_width_avg) and bb_width_avg > 0:
-        if bb_width > bb_width_avg * hv_mult:
-            confidence = min(bb_width / (bb_width_avg * hv_mult), 2.0) / 2.0
-            return "high-volatility", round(confidence, 3)
+    bb_valid = not pd.isna(bb_width) and not pd.isna(bb_width_avg) and bb_width_avg > 0
 
-    # Trending
+    # High-volatility has priority — composite: BB excess + EMA divergence
+    if bb_valid and bb_width > bb_width_avg * hv_mult:
+        # 0 at detection threshold, 1 when BB width doubles the threshold
+        bb_score = min((bb_width / bb_width_avg - hv_mult) / hv_mult, 1.0)
+        # EMA spread confirms vol is directional, not just noise
+        ema_sep = abs(ema_fast_val - ema_slow_val) / ema_slow_val
+        ema_score = min(ema_sep / 0.02, 1.0)  # 2% EMA spread = full score
+        confidence = 0.7 * bb_score + 0.3 * ema_score
+        return "high-volatility", round(confidence, 3)
+
+    # Trending — all three must contribute; barely-trending ADX alone scores low
     if adx_val > adx_thresh:
+        # ADX: 0 at threshold, 1 at 2× threshold (50 with default config)
+        adx_score = min(adx_val / (2.0 * adx_thresh), 1.0)
+        # EMA separation: how committed the spread is relative to price
+        ema_sep = abs(ema_fast_val - ema_slow_val) / ema_slow_val
+        ema_sep_score = min(ema_sep / 0.03, 1.0)  # 3% spread = full score
+        # Slope magnitude: how steep the current momentum is
+        slope_score = min(abs(ema_slope) / (slope_thresh * 10), 1.0)
+
         if ema_slope > slope_thresh and ema_fast_val > ema_slow_val:
-            confidence = min(adx_val / 50.0, 1.0)
+            confidence = 0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score
             return "trending-up", round(confidence, 3)
         if ema_slope < -slope_thresh and ema_fast_val < ema_slow_val:
-            confidence = min(adx_val / 50.0, 1.0)
+            confidence = 0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score
             return "trending-down", round(confidence, 3)
 
-    # Choppy (default)
-    confidence = 1.0 - min(adx_val / adx_thresh, 1.0)
+    # Choppy (default) — all three indicators must be sleepy
+    adx_score = max(1.0 - adx_val / adx_thresh, 0.0)
+    # Tight BB: low volatility supports range-bound
+    bb_tight_score = max(1.0 - bb_width / (bb_width_avg * 1.2), 0.0) if bb_valid else 0.5
+    # Flat slope: EMA not trending anywhere
+    slope_flat_score = max(1.0 - abs(ema_slope) / (slope_thresh * 3), 0.0)
+    confidence = 0.5 * adx_score + 0.3 * bb_tight_score + 0.2 * slope_flat_score
     return "choppy", round(confidence, 3)
 
 
