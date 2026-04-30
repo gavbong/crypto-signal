@@ -23,6 +23,18 @@ logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} | {level} | {messag
 logger.add("logs/signal_engine.log", rotation="1 day", retention="7 days", level="DEBUG")
 
 
+def _market_session(utc_hour: int) -> str:
+    if 0 <= utc_hour < 8:
+        return "Asia 🌏"
+    if 8 <= utc_hour < 13:
+        return "London 🇬🇧"
+    if 13 <= utc_hour < 17:
+        return "Overlap (London/NY) 🌍"
+    if 17 <= utc_hour < 22:
+        return "New York 🗽"
+    return "Off-hours 🌙"
+
+
 def _build_regime_context(exchange, pairs: list, timeframe: str, limit: int) -> dict:
     """Fetch current regime for all pairs — used as LLM context."""
     context = {}
@@ -113,6 +125,7 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
             signal["commentary_status"] = "done" if commentary else "pending"
 
             signal["shadow_mode"] = shadow_mode
+            signal["market_session"] = _market_session(datetime.now(timezone.utc).hour)
             signal_id = log_signal(conn, signal)
             signal["id"] = signal_id
 
@@ -172,7 +185,7 @@ def main() -> None:
     scheduler.add_job(
         signal_job,
         "interval",
-        hours=1,
+        minutes=15,
         args=[exchange, pairs, timeframe, limit, dedup_window, shadow_mode],
         next_run_time=datetime.now(timezone.utc),
     )
