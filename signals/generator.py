@@ -158,7 +158,7 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
             continue
         row = df.iloc[i]
         body = abs(row["close"] - row["open"])
-        if body <= 1.5 * atr_val:
+        if body <= c["sd_impulse_atr_mult"] * atr_val:
             continue
 
         top = max(row["open"], row["close"])
@@ -201,12 +201,18 @@ def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
         if close_now > zone["top"]:
             zone["mitigated"] = True
 
-    for zone in demand_zones:
-        if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
-            return _signal(pair, "long", "supply_demand", regime, df, timeframe)
-    for zone in supply_zones:
-        if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
-            return _signal(pair, "short", "supply_demand", regime, df, timeframe)
+    # In trending regimes, only trade with the trend — don't counter-trend on S/D zones
+    allow_long  = regime.label != "trending-down"
+    allow_short = regime.label != "trending-up"
+
+    if allow_long:
+        for zone in demand_zones:
+            if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+                return _signal(pair, "long", "supply_demand", regime, df, timeframe)
+    if allow_short:
+        for zone in supply_zones:
+            if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+                return _signal(pair, "short", "supply_demand", regime, df, timeframe)
 
     return None
 

@@ -12,8 +12,8 @@ class TestActiveStrategies:
         assert "ema_9_21_crossover" in active
         assert "macd_crossover" in active
         assert "supply_demand" in active
+        assert "vol_breakout" in active       # consolidation-then-breakout continuation
         assert "rsi_divergence" not in active
-        assert "vol_breakout" not in active
         assert "liquidity_grab" not in active
 
     def test_trending_down_fires_ema_and_macd(self):
@@ -23,13 +23,13 @@ class TestActiveStrategies:
         assert "supply_demand" in active
         assert "rsi_divergence" not in active
 
-    def test_choppy_fires_rsi_and_sd(self):
+    def test_choppy_fires_rsi_and_liq(self):
         active = active_strategies("choppy")
         assert "macd_crossover" in active
         assert "rsi_divergence" in active
         assert "rsi_extreme" in active
-        assert "supply_demand" in active
         assert "liquidity_grab" in active
+        assert "supply_demand" not in active   # structural zones don't apply in directionless chop
         assert "ema_9_21_crossover" not in active
         assert "vol_breakout" not in active
 
@@ -58,16 +58,18 @@ class TestActionFor:
         assert action_for("trending-down", "ema_9_21_crossover") == "FIRE"
         assert action_for("choppy", "rsi_divergence") == "FIRE"
         assert action_for("high-volatility", "vol_breakout") == "FIRE"
-        assert action_for("choppy", "supply_demand") == "FIRE"
+        assert action_for("trending-up", "vol_breakout") == "FIRE"   # new: trending breakout
         assert action_for("high-volatility", "liquidity_grab") == "FIRE"
 
     def test_unknown_strategy_returns_skip(self):
         for regime in ("trending-up", "trending-down", "choppy", "high-volatility"):
             assert action_for(regime, "nonexistent_strategy") == "SKIP"
 
-    def test_supply_demand_fires_in_all_regimes(self):
-        for regime in ("trending-up", "trending-down", "choppy", "high-volatility"):
-            assert action_for(regime, "supply_demand") == "FIRE"
+    def test_supply_demand_fires_in_trending_and_high_vol(self):
+        assert action_for("trending-up", "supply_demand") == "FIRE"
+        assert action_for("trending-down", "supply_demand") == "FIRE"
+        assert action_for("high-volatility", "supply_demand") == "FIRE"
+        assert action_for("choppy", "supply_demand") == "SKIP"  # removed: structural zones don't suit chop
 
 
 class TestMapCompleteness:
