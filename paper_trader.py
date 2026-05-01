@@ -1,8 +1,8 @@
 """
-paper_trader.py — Paper trading simulator for ZEC/USDT:USDT futures.
+paper_trader.py — Paper trading simulator for all configured futures pairs.
 
-Polls the signals DB for new ZEC signals, opens/closes virtual positions using
-live market prices, and tracks PnL indefinitely.
+Polls the signals DB for new signals across all pairs in config, opens/closes
+virtual positions using live market prices, and tracks PnL indefinitely.
 
 State is persisted to signals.db (paper_* tables) — crash-safe and restartable.
 """
@@ -14,17 +14,25 @@ from pathlib import Path
 from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from utils.config import env, db_path
+from utils.config import env, db_path, get as cfg
 from utils.ccxt_wrapper import _make_exchange, fetch_ticker_safe
 from db.schema import get_conn
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-PAIR            = "ZEC/USDT:USDT"
-INITIAL_BALANCE = 100_000.0
-LEVERAGE        = 20
-RISK_PCT        = 0.02      # 2% of free balance per trade
-MIN_CONTRACT    = 0.1       # MEXC ZEC minimum lot size
+INITIAL_BALANCE = 1_000.0
+LEVERAGE        = 10       # 10x: liquidation requires ~10% adverse move, stops fire first
+RISK_PCT        = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
+
+# MEXC futures minimum lot sizes per pair
+MIN_CONTRACTS: dict[str, float] = {
+    "BTC/USDT:USDT": 0.001,
+    "ETH/USDT:USDT": 0.01,
+    "SOL/USDT:USDT": 0.1,
+    "BNB/USDT:USDT": 0.01,
+    "ZEC/USDT:USDT": 0.1,
+}
+DEFAULT_MIN_CONTRACT = 0.01
 
 LOG_DIR = Path("logs/paper_trade")
 
@@ -95,19 +103,31 @@ def get_free_balance(conn) -> float:
     return INITIAL_BALANCE + closed - locked
 
 
+def _fetch_tickers(exchange, pairs: set[str]) -> dict[str, float]:
+    """Fetch live price for each unique pair. Returns {pair: price}."""
+    prices = {}
+    for pair in pairs:
+        ticker = fetch_ticker_safe(exchange, pair)
+        if ticker and ticker.get("last"):
+            prices[pair] = float(ticker["last"])
+    return prices
+
+
 def get_unrealized_pnl(conn, exchange) -> float:
-    """Sum unrealized PnL across all open positions using live price."""
+    """Sum unrealized PnL across all open positions using live prices."""
     rows = conn.execute(
         "SELECT * FROM paper_positions WHERE exit_price IS NULL"
     ).fetchall()
     if not rows:
         return 0.0
-    ticker = fetch_ticker_safe(exchange, PAIR)
-    if not ticker or not ticker.get("last"):
-        return 0.0
-    live = float(ticker["last"])
+
+    prices = _fetch_tickers(exchange, {pos["pair"] for pos in rows})
+
     total = 0.0
     for pos in rows:
+        live = prices.get(pos["pair"])
+        if live is None:
+            continue
         if pos["direction"] == "long":
             total += (live - pos["entry_price"]) * pos["contracts"]
         else:
@@ -135,17 +155,19 @@ def _set_state(conn, key: str, value: str) -> None:
 def open_position(conn, signal: dict, live_price: float) -> dict | None:
     """
     Attempt to open a paper position for a signal.
+    One position per pair — if a position is already open for this pair, skip.
     Returns the position row dict on success, None if skipped.
     """
+    pair      = signal["pair"]
     direction = signal["direction"]
 
-    # One open position per direction
+    # One open position per pair regardless of direction
     existing = conn.execute(
-        "SELECT 1 FROM paper_positions WHERE direction=? AND exit_price IS NULL",
-        (direction,),
+        "SELECT 1 FROM paper_positions WHERE pair=? AND exit_price IS NULL",
+        (pair,),
     ).fetchone()
     if existing:
-        logger.debug(f"Paper: already have open {direction} — skipping signal {signal['id']}")
+        logger.debug(f"Paper: already have open position on {pair} — skipping signal {signal['id']}")
         return None
 
     stop = signal.get("suggested_stop_loss")
@@ -164,13 +186,15 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         logger.warning("Paper: no free balance — skipping")
         return None
 
-    risk_usdt = free * RISK_PCT
+    min_contract = MIN_CONTRACTS.get(pair, DEFAULT_MIN_CONTRACT)
+
+    risk_usdt     = free * RISK_PCT
     raw_contracts = risk_usdt / risk_per_contract
     max_contracts = (free * LEVERAGE) / live_price
-    contracts = max(MIN_CONTRACT, min(raw_contracts, max_contracts))
-    contracts = math.floor(contracts / MIN_CONTRACT) * MIN_CONTRACT  # round to lot
-    if contracts < MIN_CONTRACT:
-        logger.warning(f"Paper: contracts {contracts} below minimum — skipping")
+    contracts     = max(min_contract, min(raw_contracts, max_contracts))
+    contracts     = math.floor(contracts / min_contract) * min_contract  # round to lot
+    if contracts < min_contract:
+        logger.warning(f"Paper: contracts {contracts} below minimum for {pair} — skipping")
         return None
 
     margin = (contracts * live_price) / LEVERAGE
@@ -181,20 +205,21 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
            (signal_id, pair, direction, strategy, regime,
             entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (signal["id"], PAIR, direction, signal["strategy"], signal["regime"],
+        (signal["id"], pair, direction, signal["strategy"], signal["regime"],
          live_price, contracts, margin, stop, tp, now),
     )
     conn.commit()
     pos_id = cur.lastrowid
 
     logger.info(
-        f"Paper OPEN  [{pos_id}] {direction.upper()} {PAIR} "
+        f"Paper OPEN  [{pos_id}] {direction.upper()} {pair} "
         f"entry={live_price:.4f} contracts={contracts} "
         f"stop={stop:.4f} tp={tp:.4f} margin={margin:.2f}"
     )
     return {
-        "id": pos_id, "direction": direction, "entry_price": live_price,
-        "contracts": contracts, "stop_loss": stop, "take_profit": tp,
+        "id": pos_id, "pair": pair, "direction": direction,
+        "entry_price": live_price, "contracts": contracts,
+        "stop_loss": stop, "take_profit": tp,
     }
 
 
@@ -216,7 +241,7 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
 
     outcome = "WIN" if pnl >= 0 else "LOSS"
     logger.info(
-        f"Paper CLOSE [{pos['id']}] {pos['direction'].upper()} {PAIR} "
+        f"Paper CLOSE [{pos['id']}] {pos['direction'].upper()} {pos['pair']} "
         f"exit={exit_price:.4f} reason={reason} pnl={pnl:+.2f} USDT [{outcome}]"
     )
     return pnl
@@ -225,21 +250,22 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
 # ── Poll cycle ────────────────────────────────────────────────────────────────
 
 def check_positions(conn, exchange) -> int:
-    """Check open positions against live price; close on SL/TP hit. Returns closed count."""
+    """Check open positions against live prices; close on SL/TP hit. Returns closed count."""
     rows = conn.execute(
         "SELECT * FROM paper_positions WHERE exit_price IS NULL"
     ).fetchall()
     if not rows:
         return 0
 
-    ticker = fetch_ticker_safe(exchange, PAIR)
-    if not ticker or not ticker.get("last"):
-        logger.warning("Paper: ticker fetch failed — skipping position check")
-        return 0
+    prices = _fetch_tickers(exchange, {pos["pair"] for pos in rows})
 
-    live = float(ticker["last"])
     closed = 0
     for pos in rows:
+        live = prices.get(pos["pair"])
+        if live is None:
+            logger.warning(f"Paper: no ticker for {pos['pair']} — skipping position check")
+            continue
+
         if pos["direction"] == "long":
             if live <= pos["stop_loss"]:
                 close_position(conn, pos, live, "stop_loss")
@@ -257,14 +283,13 @@ def check_positions(conn, exchange) -> int:
     return closed
 
 
-def poll_new_signals(conn) -> list[dict]:
-    """Fetch new ZEC signals from the signals table since last seen id."""
+def poll_new_signals(conn, pairs: list[str]) -> list[dict]:
+    """Fetch new signals from the signals table for all configured pairs since last seen id."""
     last_id = int(_get_state(conn, "last_signal_id"))
+    placeholders = ",".join("?" * len(pairs))
     rows = conn.execute(
-        """SELECT * FROM signals
-           WHERE pair=? AND id > ?
-           ORDER BY id""",
-        (PAIR, last_id),
+        f"SELECT * FROM signals WHERE pair IN ({placeholders}) AND id > ? ORDER BY id",
+        (*pairs, last_id),
     ).fetchall()
     if not rows:
         return []
@@ -276,13 +301,11 @@ def poll_new_signals(conn) -> list[dict]:
 
 def snapshot_day(conn, exchange) -> dict:
     """Capture end-of-day PnL snapshot and write JSON log."""
-    # Compute day_number locally — state is updated only after the INSERT commits
-    # to avoid a crash between the two leaving the counter permanently off by one.
     day_number = int(_get_state(conn, "day_number")) + 1
 
-    free = get_free_balance(conn)
+    free       = get_free_balance(conn)
     unrealized = get_unrealized_pnl(conn, exchange)
-    equity = free + unrealized
+    equity     = free + unrealized
 
     realized_pnl = conn.execute(
         "SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
@@ -296,7 +319,7 @@ def snapshot_day(conn, exchange) -> dict:
     wins = conn.execute(
         "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt >= 0"
     ).fetchone()[0]
-    losses = total_trades - wins
+    losses   = total_trades - wins
     win_rate = wins / total_trades if total_trades > 0 else None
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -341,17 +364,17 @@ def snapshot_day(conn, exchange) -> dict:
 
 # ── Scheduler jobs ────────────────────────────────────────────────────────────
 
-def poll_job(exchange) -> None:
+def poll_job(exchange, pairs: list[str]) -> None:
     with get_conn() as conn:
         closed = check_positions(conn, exchange)
         if closed:
             logger.info(f"Paper: closed {closed} position(s) this tick")
 
-        signals = poll_new_signals(conn)
+        signals = poll_new_signals(conn, pairs)
         for sig in signals:
-            ticker = fetch_ticker_safe(exchange, PAIR)
+            ticker = fetch_ticker_safe(exchange, sig["pair"])
             if not ticker or not ticker.get("last"):
-                logger.warning(f"Paper: no live price for signal {sig['id']} — skipping")
+                logger.warning(f"Paper: no live price for {sig['pair']} signal {sig['id']} — skipping")
                 continue
             live_price = float(ticker["last"])
             open_position(conn, sig, live_price)
@@ -372,6 +395,8 @@ def main() -> None:
     logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} | {level} | {message}")
     logger.add("logs/paper_trader.log", rotation="1 day", retention="30 days", level="DEBUG")
 
+    pairs = cfg()["pairs"]
+
     with get_conn() as conn:
         init_paper_db(conn)
 
@@ -382,7 +407,7 @@ def main() -> None:
         free = get_free_balance(conn)
 
     logger.info(
-        f"Paper trader starting | pair={PAIR} balance={free:.2f} USDT "
+        f"Paper trader starting | pairs={pairs} balance={free:.2f} USDT "
         f"leverage={LEVERAGE}x risk={RISK_PCT:.0%}"
     )
 
@@ -392,7 +417,7 @@ def main() -> None:
         poll_job,
         "interval",
         minutes=15,
-        args=[exchange],
+        args=[exchange, pairs],
         next_run_time=datetime.now(timezone.utc),
     )
 
