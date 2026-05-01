@@ -1,6 +1,7 @@
 """
 signal_engine.py — Phase 1a shadow mode signal generator.
-Runs every 1 minute via APScheduler.
+Runs every 15 minutes via APScheduler. Uses 1h candles for regime
+classification (MTF) and 15m candles for signal indicator calculation.
 """
 import sys
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from utils.config import env, get as cfg
 from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe, fetch_ticker_safe
 from db.schema import init_db, get_conn, log_signal, is_duplicate
-from regime.classifier import classify, _to_df
+from regime.classifier import classify, RegimeResult, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy
 from llm.commentary import generate_commentary
@@ -35,45 +36,32 @@ def _market_session(utc_hour: int) -> str:
     return "Off-hours 🌙"
 
 
-def _build_regime_context(exchange, pairs: list, timeframe: str, limit: int) -> dict:
-    """Fetch current regime for all pairs — used as LLM context."""
-    context = {}
+def _build_regime_context(exchange, pairs: list, timeframe: str, limit: int) -> dict[str, RegimeResult]:
+    """Fetch 1h regime for all pairs. Returns dict[pair, RegimeResult] for MTF signal generation."""
+    context: dict[str, RegimeResult] = {}
     for pair in pairs:
         ohlcv = fetch_ohlcv_safe(exchange, pair, timeframe, limit)
         if ohlcv is None or len(ohlcv) < 55:
             continue
         try:
             result = classify(ohlcv)
-            context[pair] = {
-                "regime": result.label,
-                "confidence": result.confidence,
-                "age_candles": result.age_candles,
-                "stable": result.stable,
-            }
+            context[pair] = result
         except ValueError:
             pass
     return context
 
 
 def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
-             dedup_window: int, regime_context: dict, shadow_mode: bool = True) -> list[dict]:
-    """One signal engine cycle. Returns list of signals fired this run."""
+             dedup_window: int, regimes_1h: dict[str, RegimeResult],
+             shadow_mode: bool = True) -> list[dict]:
+    """One signal engine cycle. Uses pre-built 1h regimes; fetches 15m candles for indicators."""
     fired = []
 
     for pair in pairs:
-        ohlcv = fetch_ohlcv_safe(exchange, pair, timeframe, limit)
-        if ohlcv is None:
-            logger.warning(f"Skipping {pair}: no candle data")
-            continue
-
-        if len(ohlcv) < 55:
-            logger.warning(f"Skipping {pair}: only {len(ohlcv)} candles (need 55)")
-            continue
-
-        try:
-            regime = classify(ohlcv)
-        except ValueError as e:
-            logger.warning(f"Regime error on {pair}: {e}")
+        # Use 1h regime from pre-built MTF context
+        regime = regimes_1h.get(pair)
+        if regime is None:
+            logger.warning(f"Skipping {pair}: no 1h regime available")
             continue
 
         if not regime.stable:
@@ -85,9 +73,19 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
             logger.debug(f"{pair}: no active strategies for regime {regime.label}")
             continue
 
+        # Fetch 15m candles for signal indicator calculation
+        ohlcv = fetch_ohlcv_safe(exchange, pair, timeframe, limit)
+        if ohlcv is None:
+            logger.warning(f"Skipping {pair}: no 15m candle data")
+            continue
+
+        if len(ohlcv) < 55:
+            logger.warning(f"Skipping {pair}: only {len(ohlcv)} candles (need 55)")
+            continue
+
         df = _to_df(ohlcv)
 
-        # Fetch live price once per pair — candle close can be up to 59 min stale
+        # Fetch live price once per pair — candle close can be up to 14 min stale on 15m
         live_price: float | None = None
         ticker = fetch_ticker_safe(exchange, pair)
         if ticker and ticker.get("last"):
@@ -119,8 +117,13 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
                 logger.debug(f"Duplicate suppressed: {pair} {signal['direction']} {strategy} {regime.label}")
                 continue
 
-            # Generate LLM commentary (non-blocking: failure logs null)
-            commentary = generate_commentary(signal, regime_context)
+            # Serialize RegimeResult to plain dict for LLM commentary (JSON-safe)
+            regime_context_for_llm = {
+                p: {"regime": r.label, "confidence": r.confidence,
+                    "age_candles": r.age_candles, "stable": r.stable}
+                for p, r in regimes_1h.items()
+            }
+            commentary = generate_commentary(signal, regime_context_for_llm)
             signal["llm_commentary"] = commentary
             signal["commentary_status"] = "done" if commentary else "pending"
 
@@ -147,10 +150,13 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
 
 def signal_job(exchange, pairs: list, timeframe: str, limit: int,
                dedup_window: int, shadow_mode: bool) -> None:
+    c = cfg()
     with get_conn() as conn:
-        regime_context = _build_regime_context(exchange, pairs, timeframe, limit)
+        regimes_1h = _build_regime_context(
+            exchange, pairs, c["regime_timeframe"], c["regime_limit"]
+        )
         fired = run_once(exchange, conn, pairs, timeframe, limit, dedup_window,
-                         regime_context, shadow_mode)
+                         regimes_1h, shadow_mode)
         if not fired:
             logger.debug(f"No signals this run at {datetime.now(timezone.utc).isoformat()}")
 
@@ -181,7 +187,6 @@ def main() -> None:
 
     scheduler = BlockingScheduler(timezone="UTC")
 
-    # Signal scan: every hour, aligned to the candle close
     scheduler.add_job(
         signal_job,
         "interval",
@@ -190,7 +195,6 @@ def main() -> None:
         next_run_time=datetime.now(timezone.utc),
     )
 
-    # Outcome evaluation: every outcome_window_hours (default 4h)
     scheduler.add_job(
         eval_job,
         "interval",

@@ -1,31 +1,39 @@
 REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "trending-up": {
-        "ema_crossover": "FIRE",
-        "rsi_divergence": "SKIP",
-        "rsi_extreme":    "SKIP",
-        "vol_breakout":   "SKIP",
-        "volume_spike":   "GATE",
+        "ema_9_21_crossover": "FIRE",
+        "macd_crossover":     "FIRE",
+        "rsi_divergence":     "SKIP",
+        "rsi_extreme":        "SKIP",
+        "vol_breakout":       "SKIP",
+        "supply_demand":      "FIRE",
+        "liquidity_grab":     "SKIP",
     },
     "trending-down": {
-        "ema_crossover": "FIRE",
-        "rsi_divergence": "SKIP",
-        "rsi_extreme":    "SKIP",
-        "vol_breakout":   "SKIP",
-        "volume_spike":   "GATE",
+        "ema_9_21_crossover": "FIRE",
+        "macd_crossover":     "FIRE",
+        "rsi_divergence":     "SKIP",
+        "rsi_extreme":        "SKIP",
+        "vol_breakout":       "SKIP",
+        "supply_demand":      "FIRE",
+        "liquidity_grab":     "SKIP",
     },
     "choppy": {
-        "ema_crossover": "SKIP",
-        "rsi_divergence": "FIRE",
-        "rsi_extreme":    "FIRE",
-        "vol_breakout":   "SKIP",
-        "volume_spike":   "GATE",
+        "ema_9_21_crossover": "SKIP",
+        "macd_crossover":     "FIRE",
+        "rsi_divergence":     "FIRE",
+        "rsi_extreme":        "FIRE",
+        "vol_breakout":       "SKIP",
+        "supply_demand":      "FIRE",
+        "liquidity_grab":     "FIRE",
     },
     "high-volatility": {
-        "ema_crossover": "SKIP",
-        "rsi_divergence": "SKIP",
-        "rsi_extreme":    "SKIP",
-        "vol_breakout":   "FIRE",
-        "volume_spike":   "GATE",
+        "ema_9_21_crossover": "SKIP",
+        "macd_crossover":     "SKIP",
+        "rsi_divergence":     "SKIP",
+        "rsi_extreme":        "FIRE",
+        "vol_breakout":       "FIRE",
+        "supply_demand":      "FIRE",
+        "liquidity_grab":     "FIRE",
     },
 }
 
@@ -37,5 +45,5 @@ def active_strategies(regime: str) -> list[str]:
 
 
 def action_for(regime: str, strategy: str) -> str:
-    """Return FIRE | SKIP | GATE for a specific regime+strategy pair."""
+    """Return FIRE | SKIP for a specific regime+strategy pair."""
     return REGIME_STRATEGY_MAP.get(regime, {}).get(strategy, "SKIP")
