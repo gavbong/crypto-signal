@@ -13,6 +13,9 @@ import pytest
 
 import paper_trader as pt
 
+TEST_PAIR  = "ZEC/USDT:USDT"
+OTHER_PAIR = "BTC/USDT:USDT"
+
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -45,19 +48,20 @@ def conn():
     c.close()
 
 
-def _signal(conn, direction="long", entry=100.0, stop=95.0, tp=110.0) -> dict:
-    """Insert a fake ZEC signal and return it as a dict."""
+def _signal(conn, direction="long", entry=100.0, stop=95.0, tp=110.0,
+            pair=TEST_PAIR) -> dict:
+    """Insert a fake signal and return it as a dict."""
     cur = conn.execute(
         """INSERT INTO signals
            (pair, direction, strategy, regime, entry_price,
             suggested_stop_loss, suggested_take_profit, timeframe, fired_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (pt.PAIR, direction, "rsi_extreme", "trending_up", entry, stop, tp,
+        (pair, direction, "rsi_extreme", "trending_up", entry, stop, tp,
          "15m", "2026-01-01T00:00:00"),
     )
     conn.commit()
     return {
-        "id": cur.lastrowid, "pair": pt.PAIR, "direction": direction,
+        "id": cur.lastrowid, "pair": pair, "direction": direction,
         "strategy": "rsi_extreme", "regime": "trending_up",
         "entry_price": entry, "suggested_stop_loss": stop,
         "suggested_take_profit": tp,
@@ -117,20 +121,31 @@ def test_open_position_inserts_row(conn):
     ).fetchone()
     assert row["direction"] == "long"
     assert row["entry_price"] == 100.0
-    assert row["contracts"] >= pt.MIN_CONTRACT
+    min_c = pt.MIN_CONTRACTS.get(TEST_PAIR, pt.DEFAULT_MIN_CONTRACT)
+    assert row["contracts"] >= min_c
 
 
-def test_open_position_skips_duplicate_direction(conn):
+def test_open_position_skips_duplicate_pair(conn):
+    """Second position on the same pair is blocked (one-per-pair rule)."""
     _open_long(conn)
     sig2 = _signal(conn, "long")
     result = pt.open_position(conn, sig2, 100.0)
-    assert result is None  # second long blocked
+    assert result is None
 
 
-def test_open_position_allows_opposite_direction(conn):
+def test_open_position_skips_opposite_direction_same_pair(conn):
+    """Short on same pair as open long is also blocked (one-per-pair)."""
     _open_long(conn)
-    sig_short = _signal(conn, "short", 100.0, 105.0, 90.0)
+    sig_short = _signal(conn, "short", 100.0, 105.0, 90.0, pair=TEST_PAIR)
     result = pt.open_position(conn, sig_short, 100.0)
+    assert result is None
+
+
+def test_open_position_allows_different_pair(conn):
+    """Long ZEC open → short BTC on a different pair is allowed."""
+    _open_long(conn)
+    sig_btc = _signal(conn, "short", 60000.0, 61000.0, 58000.0, pair=OTHER_PAIR)
+    result = pt.open_position(conn, sig_btc, 60000.0)
     assert result is not None
 
 
@@ -145,8 +160,9 @@ def test_open_position_contracts_floored_to_lot(conn):
     sig = _signal(conn, "long", 100.0, 99.99, 100.01)  # tiny risk per contract
     pos = pt.open_position(conn, sig, 100.0)
     if pos is not None:
-        # contracts must be an integer multiple of MIN_CONTRACT
-        ratio = pos["contracts"] / pt.MIN_CONTRACT
+        # contracts must be an integer multiple of the pair's min lot size
+        min_c = pt.MIN_CONTRACTS.get(TEST_PAIR, pt.DEFAULT_MIN_CONTRACT)
+        ratio = pos["contracts"] / min_c
         assert abs(ratio - round(ratio)) < 1e-6
 
 
@@ -212,29 +228,38 @@ def test_check_positions_no_open_positions(conn):
 
 def test_poll_new_signals_returns_new(conn):
     _signal(conn)
-    signals = pt.poll_new_signals(conn)
+    signals = pt.poll_new_signals(conn, [TEST_PAIR])
     assert len(signals) == 1
-    assert signals[0]["pair"] == pt.PAIR
+    assert signals[0]["pair"] == TEST_PAIR
 
 
 def test_poll_new_signals_advances_cursor(conn):
     _signal(conn)
-    pt.poll_new_signals(conn)
+    pt.poll_new_signals(conn, [TEST_PAIR])
     _signal(conn)
-    second = pt.poll_new_signals(conn)
+    second = pt.poll_new_signals(conn, [TEST_PAIR])
     assert len(second) == 1
 
 
 def test_poll_new_signals_filters_other_pairs(conn):
+    """Signals for pairs not in the watch list are excluded."""
     conn.execute(
         """INSERT INTO signals (pair, direction, strategy, regime, entry_price,
            suggested_stop_loss, suggested_take_profit, timeframe, fired_at)
-           VALUES ('BTC/USDT:USDT', 'long', 'rsi_extreme', 'trending_up',
-                   50000, 49000, 51000, '15m', '2026-01-01T00:00:00')"""
+           VALUES ('XRP/USDT:USDT', 'long', 'rsi_extreme', 'trending_up',
+                   0.5, 0.45, 0.55, '15m', '2026-01-01T00:00:00')"""
     )
     conn.commit()
-    signals = pt.poll_new_signals(conn)
+    signals = pt.poll_new_signals(conn, [TEST_PAIR])
     assert signals == []
+
+
+def test_poll_new_signals_includes_all_configured_pairs(conn):
+    """Signals for multiple configured pairs are all returned."""
+    _signal(conn, pair=TEST_PAIR)
+    _signal(conn, pair=OTHER_PAIR)
+    signals = pt.poll_new_signals(conn, [TEST_PAIR, OTHER_PAIR])
+    assert len(signals) == 2
 
 
 # ── snapshot_day ──────────────────────────────────────────────────────────────
