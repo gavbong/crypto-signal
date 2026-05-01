@@ -133,12 +133,18 @@ def test_open_position_skips_duplicate_pair(conn):
     assert result is None
 
 
-def test_open_position_skips_opposite_direction_same_pair(conn):
-    """Short on same pair as open long is also blocked (one-per-pair)."""
-    _open_long(conn)
+def test_open_position_flips_on_opposite_direction_same_pair(conn):
+    """Short signal on same pair as open long closes the long and opens a short (flip)."""
+    _open_long(conn, entry=100.0, stop=95.0, tp=110.0)
     sig_short = _signal(conn, "short", 100.0, 105.0, 90.0, pair=TEST_PAIR)
     result = pt.open_position(conn, sig_short, 100.0)
-    assert result is None
+    assert result is not None
+    assert result["direction"] == "short"
+    flipped = conn.execute(
+        "SELECT * FROM paper_positions WHERE exit_reason='signal_flip'"
+    ).fetchone()
+    assert flipped is not None
+    assert flipped["direction"] == "long"
 
 
 def test_open_position_allows_different_pair(conn):
@@ -340,6 +346,22 @@ def test_open_position_skips_no_free_balance(conn):
     with patch("paper_trader.get_free_balance", return_value=0.0):
         result = pt.open_position(conn, sig, 100.0)
     assert result is None
+
+
+def test_open_position_skips_low_regime_confidence(conn):
+    """Signal with regime_confidence below MIN_REGIME_CONFIDENCE is skipped."""
+    sig = _signal(conn, "long", 100.0, 95.0, 110.0)
+    sig["regime_confidence"] = pt.MIN_REGIME_CONFIDENCE - 0.01
+    result = pt.open_position(conn, sig, 100.0)
+    assert result is None
+
+
+def test_open_position_allows_sufficient_regime_confidence(conn):
+    """Signal at exactly MIN_REGIME_CONFIDENCE is allowed."""
+    sig = _signal(conn, "long", 100.0, 95.0, 110.0)
+    sig["regime_confidence"] = pt.MIN_REGIME_CONFIDENCE
+    result = pt.open_position(conn, sig, 100.0)
+    assert result is not None
 
 
 # ── check_positions short paths ───────────────────────────────────────────────

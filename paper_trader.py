@@ -20,9 +20,10 @@ from db.schema import get_conn
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-INITIAL_BALANCE = 1_000.0
-LEVERAGE        = 10       # 10x: liquidation requires ~10% adverse move, stops fire first
-RISK_PCT        = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
+INITIAL_BALANCE       = 1_000.0
+LEVERAGE              = 10       # 10x: liquidation requires ~10% adverse move, stops fire first
+RISK_PCT              = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
+MIN_REGIME_CONFIDENCE = 0.20     # skip signals where regime classification is very uncertain
 
 # MEXC futures minimum lot sizes per pair
 MIN_CONTRACTS: dict[str, float] = {
@@ -155,20 +156,40 @@ def _set_state(conn, key: str, value: str) -> None:
 def open_position(conn, signal: dict, live_price: float) -> dict | None:
     """
     Attempt to open a paper position for a signal.
-    One position per pair — if a position is already open for this pair, skip.
+    Same-direction duplicate on the same pair is skipped.
+    Opposite-direction signal closes the existing position and flips.
     Returns the position row dict on success, None if skipped.
     """
     pair      = signal["pair"]
     direction = signal["direction"]
 
-    # One open position per pair regardless of direction
+    # Regime confidence gate
+    conf = signal.get("regime_confidence")
+    if conf is not None and conf < MIN_REGIME_CONFIDENCE:
+        logger.debug(
+            f"Paper: signal {signal.get('id')} regime_confidence={conf:.3f} "
+            f"below {MIN_REGIME_CONFIDENCE} — skipping"
+        )
+        return None
+
     existing = conn.execute(
-        "SELECT 1 FROM paper_positions WHERE pair=? AND exit_price IS NULL",
+        "SELECT * FROM paper_positions WHERE pair=? AND exit_price IS NULL",
         (pair,),
     ).fetchone()
     if existing:
-        logger.debug(f"Paper: already have open position on {pair} — skipping signal {signal['id']}")
-        return None
+        if existing["direction"] != direction:
+            # Opposite signal — close existing and flip to new direction
+            logger.info(
+                f"Paper: FLIP {pair} {existing['direction'].upper()}→{direction.upper()} "
+                f"signal {signal.get('id')} @ {live_price:.4f}"
+            )
+            close_position(conn, dict(existing), live_price, "signal_flip")
+        else:
+            # Same direction — already positioned correctly
+            logger.debug(
+                f"Paper: already {direction} on {pair} — skipping signal {signal.get('id')}"
+            )
+            return None
 
     stop = signal.get("suggested_stop_loss")
     tp   = signal.get("suggested_take_profit")
