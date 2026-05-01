@@ -305,36 +305,29 @@ body{
 <main class="main">
 
   <div class="stats-row-hdr">
-    <span class="stats-row-title" id="stats-period-label">Performance</span>
-    <div style="display:flex;gap:8px;align-items:center">
-      <div class="seg-toggle" id="time-toggle">
-        <button class="seg-btn active" data-val="180d">180d</button>
-        <button class="seg-btn" data-val="90d">90d</button>
-        <button class="seg-btn" data-val="30d">30d</button>
-        <button class="seg-btn" data-val="all">All</button>
-      </div>
-    </div>
+    <span class="stats-row-title">Paper Trading</span>
   </div>
 
   <div class="stats-grid">
     <div class="stat-card">
-      <div class="stat-label" id="winrate-label">Win Rate</div>
-      <div class="stat-value green" id="stat-winrate">—</div>
-      <div class="stat-sub" id="stat-winrate-sub">— of — signals</div>
+      <div class="stat-label">Balance</div>
+      <div class="stat-value" id="stat-balance">—</div>
+      <div class="stat-sub" id="stat-balance-sub">Initial 1,000 USDT</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Net P&amp;L</div>
-      <div class="stat-value green" id="stat-netpnl">—</div>
-      <div class="stat-sub" id="stat-netpnl-sub">— avg &middot; R:R 1:—</div>
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="stat-realized">—</div>
+      <div class="stat-sub" id="stat-realized-sub">— trades closed</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Win History</div>
+      <div class="stat-label">Win Rate</div>
       <div id="dot-matrix" class="dot-matrix"></div>
+      <div class="stat-sub" id="stat-winrate-sub">—W · —L</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Signals Fired</div>
-      <div class="stat-value amber" id="stat-total">—</div>
-      <div class="stat-sub" id="stat-period">—</div>
+      <div class="stat-label">Open Positions</div>
+      <div class="stat-value amber" id="stat-open-count">—</div>
+      <div class="stat-sub" id="stat-margin-sub">— USDT margin in use</div>
     </div>
   </div>
 
@@ -358,18 +351,15 @@ body{
       </div>
     </div>
 
-    <div class="panel" id="signal-panel">
+    <div class="panel" id="positions-panel">
       <div class="panel-hdr">
-        <span class="panel-title">Active Signal</span>
-        <div style="display:flex;align-items:center;gap:6px">
-          <span class="sig-more-badge" id="active-more"></span>
-          <span class="badge b-live"><span style="font-size:7px">●</span> Live</span>
-        </div>
+        <span class="panel-title">Open Positions</span>
+        <span class="badge b-live"><span style="font-size:7px">●</span> Paper</span>
       </div>
-      <div id="signal-panel-body" style="padding:14px 16px">
+      <div id="positions-panel-body" style="padding:14px 16px">
         <div class="sig-empty">
-          <span class="sig-empty-label">No active signal</span>
-          <span class="sig-empty-ts" id="active-empty-ts">last scan: —</span>
+          <span class="sig-empty-label">No open positions</span>
+          <span class="sig-empty-ts">paper trader idle</span>
         </div>
       </div>
     </div>
@@ -378,25 +368,18 @@ body{
 
   <div class="tbl-wrap">
     <div class="panel-hdr">
-      <span class="panel-title">Signal History</span>
-      <div class="tbl-hdr-right">
-        <div class="seg-toggle" id="shadow-toggle">
-          <button class="seg-btn active" data-val="live">Live</button>
-          <button class="seg-btn" data-val="shadow">Shadow</button>
-          <button class="seg-btn" data-val="all">All</button>
-        </div>
-        <span id="tbl-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">— signals</span>
-      </div>
+      <span class="panel-title">Trade History</span>
+      <span id="tbl-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">— trades</span>
     </div>
     <table class="signal-table">
       <thead>
         <tr>
-          <th>Pair</th><th>Dir</th><th>Regime</th><th>Fired</th>
-          <th>Entry</th><th>Stop</th><th>Target</th><th>Outcome</th>
+          <th>Pair</th><th>Dir</th><th>Strategy</th><th>Opened</th>
+          <th>Entry</th><th>Exit</th><th>Reason</th>
           <th class="r">P&amp;L</th>
         </tr>
       </thead>
-      <tbody id="sig-tbody"></tbody>
+      <tbody id="trades-tbody"></tbody>
     </table>
   </div>
 
@@ -408,9 +391,7 @@ body{
 'use strict';
 
 const POLL_MS = 5000;
-let shadowFilter = 'live';
-let timeFilter = '180d';
-let _lastSignalIds = new Set();
+let _lastTradeIds = new Set();
 
 // ─── CLOCK ───────────────────────────────────────────────────────────────────
 (function tick() {
@@ -431,30 +412,6 @@ document.addEventListener('mousemove', e => {
   TIP.style.left = e.clientX + 'px';
   TIP.style.top  = (e.clientY - 8) + 'px';
 });
-
-// ─── FILTER CONTROLS ─────────────────────────────────────────────────────────
-function initToggle(id, onChange) {
-  const el = document.getElementById(id);
-  el.addEventListener('click', e => {
-    const btn = e.target.closest('.seg-btn');
-    if (!btn) return;
-    el.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    onChange(btn.dataset.val);
-  });
-}
-
-initToggle('shadow-toggle', val => { shadowFilter = val; refresh(); });
-initToggle('time-toggle', val => { timeFilter = val; refresh(); });
-
-// ─── SINCE PARAM ─────────────────────────────────────────────────────────────
-function sinceParam() {
-  const days = {'180d':180,'90d':90,'30d':30}[timeFilter];
-  if (!days) return '';
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return '&since=' + d.toISOString().slice(0,10);
-}
 
 // ─── PRICE FORMAT ────────────────────────────────────────────────────────────
 function fmt(p) {
@@ -478,6 +435,16 @@ function fmtAxisDate(dateStr) {
   if (!dateStr) return '—';
   const d = new Date(dateStr + 'T00:00:00Z');
   return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',timeZone:'UTC'});
+}
+
+function fmtDuration(openedAt, closedAt) {
+  if (!openedAt) return '—';
+  const ms = (closedAt ? new Date(closedAt) : new Date()) - new Date(openedAt);
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h >= 48) return `${Math.floor(h/24)}d`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
 }
 
 // ─── PAIR CHIPS ──────────────────────────────────────────────────────────────
@@ -506,52 +473,47 @@ function renderHealth(health) {
   }
 }
 
-// ─── STAT CARDS ──────────────────────────────────────────────────────────────
-function renderStats(stats) {
-  const winrate = stats.accuracy != null ? (stats.accuracy * 100).toFixed(1) : '0.0';
-  const winEl = document.getElementById('stat-winrate');
-  winEl.innerHTML = `${winrate}<span class="stat-unit">%</span>`;
-  winEl.className = 'stat-value ' + (stats.accuracy >= 0.5 ? 'green' : 'red');
+// ─── PAPER STAT CARDS ────────────────────────────────────────────────────────
+function renderPaperStats(stats) {
+  const balance = stats.balance_usdt ?? 0;
+  const initial = stats.initial_balance ?? 1000;
+  const pnl = balance - initial;
+  const balEl = document.getElementById('stat-balance');
+  balEl.innerHTML = balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '<span class="stat-unit"> USDT</span>';
+  balEl.className = 'stat-value ' + (balance >= initial ? 'green' : 'red');
+  document.getElementById('stat-balance-sub').textContent =
+    `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT vs ${initial.toLocaleString()} initial`;
 
-  const w = stats.wins || 0, l = stats.losses || 0, s = stats.stopped || 0, tp = stats.tp_hits || 0;
+  const realized = stats.realized_pnl ?? 0;
+  const realEl = document.getElementById('stat-realized');
+  realEl.innerHTML = `${realized >= 0 ? '+' : ''}${realized.toFixed(2)}<span class="stat-unit"> USDT</span>`;
+  realEl.className = 'stat-value ' + (realized >= 0 ? 'green' : 'red');
+  document.getElementById('stat-realized-sub').textContent =
+    `${stats.total_closed || 0} trades closed`;
+
+  const wr = stats.win_rate ?? 0;
   document.getElementById('stat-winrate-sub').textContent =
-    `${w}W · ${l}L · ${s}S · ${tp}TP  of ${stats.total_fired} signals`;
+    `${stats.wins || 0}W · ${stats.losses || 0}L` +
+    (stats.total_closed > 0 ? ` · ${(wr * 100).toFixed(1)}%` : '');
 
-  const netR = stats.net_r != null ? stats.net_r : 0;
-  const netEl = document.getElementById('stat-netpnl');
-  netEl.innerHTML = `${netR >= 0 ? '+' : ''}${netR.toFixed(2)}<span class="stat-unit">R</span>`;
-  netEl.className = 'stat-value ' + (netR >= 0 ? 'green' : 'red');
-
-  const avgR = stats.avg_r != null ? stats.avg_r.toFixed(3) : '0.000';
-  document.getElementById('stat-netpnl-sub').textContent =
-    `${netR >= 0 ? '+' : ''}${avgR}R avg · R:R 1:${stats.rr_ratio || 2.0}`;
-
-  document.getElementById('stat-total').textContent = stats.total_fired || 0;
-
-  const ps = stats.period_start, pe = stats.period_end;
-  document.getElementById('stat-period').textContent = ps && pe ? `${ps} → ${pe}` : '—';
-
-  const label = document.getElementById('stats-period-label');
-  label.textContent = timeFilter === 'all' ? 'Performance · All time'
-    : `Performance · ${timeFilter}`;
-
-  document.getElementById('winrate-label').textContent =
-    `Win Rate (${timeFilter === 'all' ? 'all' : timeFilter})`;
+  document.getElementById('stat-open-count').textContent = stats.open_count ?? 0;
+  document.getElementById('stat-margin-sub').textContent = stats.open_margin > 0
+    ? `${stats.open_margin.toFixed(2)} USDT margin in use`
+    : 'no margin in use';
 }
 
-// ─── DOT MATRIX ──────────────────────────────────────────────────────────────
-function renderDotMatrix(signals) {
+// ─── DOT MATRIX (paper trades) ───────────────────────────────────────────────
+function renderDotMatrix(trades) {
   const c = document.getElementById('dot-matrix');
-  const resolved = [...signals].filter(s => s.outcome).reverse();
-  if (resolved.length === 0) { c.innerHTML = ''; return; }
-  c.innerHTML = resolved.map(s => {
-    const cls = s.outcome === 'win' ? 'win'
-               : s.outcome === 'tp_hit' ? 'tp'
-               : s.outcome === 'loss' ? 'loss'
-               : s.outcome === 'stopped_out' ? 'stopped' : 'win';
-    const pnl = s.pnl_r != null ? `${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R` : '—';
+  if (!trades.length) { c.innerHTML = ''; return; }
+  c.innerHTML = [...trades].reverse().map(t => {
+    const won = t.pnl_usdt > 0;
+    const cls = won ? (t.exit_reason === 'take_profit' ? 'tp' : 'win')
+              : (t.exit_reason === 'stop_loss' ? 'loss' : 'stopped');
+    const pnl = t.pnl_usdt != null ? `${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)} USDT` : '—';
+    const reason = (t.exit_reason || '—').toUpperCase().replace('_',' ');
     return `<div class="dot ${cls}"
-      data-tip="<b>${s.pair}</b> ${s.direction.toUpperCase()} ${fmtDate(s.fired_at)}<br>${s.outcome.toUpperCase()} ${pnl}">
+      data-tip="<b>${t.pair.replace('/USDT:USDT','/USDT')}</b> ${t.direction.toUpperCase()} ${fmtDate(t.closed_at)}<br>${reason} ${pnl}">
     </div>`;
   }).join('');
   c.querySelectorAll('.dot').forEach(d => {
@@ -561,7 +523,7 @@ function renderDotMatrix(signals) {
 }
 
 // ─── REGIME TIMELINE ─────────────────────────────────────────────────────────
-function renderRegimeTimeline(regime, signals) {
+function renderRegimeTimeline(regime, trades) {
   const bar = document.getElementById('regime-bar');
   const axis = document.getElementById('regime-axis');
   bar.innerHTML = '';
@@ -601,28 +563,26 @@ function renderRegimeTimeline(regime, signals) {
     bar.appendChild(ann);
   }
 
-  // signal dots — only resolved + open (not shadow unless shadow filter active)
+  // Paper trade open events as dots on the timeline
   const prevDots = {};
-  signals.forEach(s => {
-    if (!s.fired_at) return;
-    const ms = new Date(s.fired_at).getTime();
+  trades.forEach(t => {
+    if (!t.opened_at) return;
+    const ms = new Date(t.opened_at).getTime();
     const basePct = (ms - startMs) / totalMs * 100;
     let finalPct = Math.max(0, Math.min(100, basePct));
 
-    // collision: minimum 0.5% gap
     const key = Math.round(finalPct);
     if (prevDots[key] !== undefined) {
       finalPct += (prevDots[key] % 2 === 0 ? 0.6 : -0.6);
       prevDots[key]++;
-    } else {
-      prevDots[key] = 0;
-    }
+    } else { prevDots[key] = 0; }
 
-    const cls = !s.outcome ? 'open'
-               : s.outcome === 'stopped_out' ? 'stopped'
-               : s.direction;
-    const pnl = s.pnl_r != null ? `${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R` : '—';
-    const tip = `<b>${s.pair}</b> ${s.direction.toUpperCase()}<br>${fmtDate(s.fired_at)}<br>${s.outcome ? s.outcome.toUpperCase() + ' ' + pnl : 'OPEN'}`;
+    const isOpen = t.exit_price == null;
+    const won = t.pnl_usdt > 0;
+    const cls = isOpen ? 'open' : (won ? t.direction : (t.exit_reason === 'stop_loss' ? 'stopped' : 'short'));
+    const pnl = t.pnl_usdt != null ? `${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)} USDT` : '';
+    const reason = isOpen ? 'OPEN' : (t.exit_reason || '—').toUpperCase().replace('_',' ');
+    const tip = `<b>${t.pair.replace('/USDT:USDT','/USDT')}</b> ${t.direction.toUpperCase()}<br>${fmtDate(t.opened_at)}<br>${reason}${pnl ? ' ' + pnl : ''}`;
 
     const dot = document.createElement('div');
     dot.className = 'sig-dot ' + cls;
@@ -632,7 +592,6 @@ function renderRegimeTimeline(regime, signals) {
     bar.appendChild(dot);
   });
 
-  // axis labels
   const midMs = startMs + (endMs - startMs) / 2;
   const midDate = new Date(midMs).toISOString().slice(0,10);
   const spans = axis.querySelectorAll('span');
@@ -669,135 +628,107 @@ function renderRegimeStats(stats) {
   }).join('');
 }
 
-// ─── ACTIVE SIGNAL ───────────────────────────────────────────────────────────
-function renderActiveSignal(signals) {
-  const body = document.getElementById('signal-panel-body');
-  const moreBadge = document.getElementById('active-more');
-  moreBadge.textContent = signals.length > 1 ? `+${signals.length - 1} more` : '';
-
-  if (signals.length === 0) {
-    const lastTs = document.getElementById('hdr-ts').textContent;
+// ─── OPEN POSITIONS ───────────────────────────────────────────────────────────
+function renderOpenPositions(positions) {
+  const body = document.getElementById('positions-panel-body');
+  if (positions.length === 0) {
     body.innerHTML = `<div class="sig-empty">
-      <span class="sig-empty-label">No active signal</span>
-      <span class="sig-empty-ts">last scan: ${lastTs}</span>
+      <span class="sig-empty-label">No open positions</span>
+      <span class="sig-empty-ts">paper trader idle</span>
     </div>`;
     return;
   }
-
-  const s = signals[0];
-  const rr = (s.suggested_stop_loss && s.entry_price)
-    ? Math.abs(s.entry_price - s.suggested_stop_loss) : null;
-  const riskPct = rr && s.entry_price ? ((rr / s.entry_price) * 100).toFixed(2) + '%' : '—';
-  const tpDist = s.suggested_take_profit && s.entry_price
-    ? Math.abs(s.suggested_take_profit - s.entry_price).toLocaleString('en-US',{maximumFractionDigits:0})
-    : '—';
-
-  const dirClass = s.direction === 'long' ? 'b-long' : 'b-short';
-  const commentary = s.llm_commentary || '';
-  const filedStr = s.fired_at ? fmtDateTime(s.fired_at) : '—';
-
-  body.innerHTML = `
-    <div class="sig-meta">
-      <span class="badge ${dirClass}">${s.direction.toUpperCase()}</span>
-      <span class="sig-pair">${s.pair.replace('/USDT:USDT','')}/USDT</span>
-      <span class="badge b-regime">${s.regime || '—'}</span>
-    </div>
-    <div class="prices-grid">
-      <div class="price-row">
-        <span class="price-lbl">Entry</span>
-        <span class="price-val pv-entry">${fmt(s.entry_price)}</span>
+  body.innerHTML = positions.map((p, i) => {
+    const dc = p.direction === 'long' ? 'b-long' : 'b-short';
+    const sep = i < positions.length - 1;
+    return `<div style="margin-bottom:${sep?'12px':'0'};padding-bottom:${sep?'12px':'0'};border-bottom:${sep?'1px solid var(--border)':'none'}">
+      <div class="sig-meta" style="margin-bottom:8px">
+        <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
+        <span class="sig-pair">${p.pair.replace('/USDT:USDT','/USDT')}</span>
+        <span class="badge b-regime">${p.regime || '—'}</span>
+        <span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted)">${fmtDuration(p.opened_at, null)}</span>
       </div>
-      <div class="price-row">
-        <span class="price-lbl">Stop</span>
-        <span class="price-val pv-stop">${fmt(s.suggested_stop_loss)}</span>
+      <div class="prices-grid" style="margin-bottom:8px">
+        <div class="price-row"><span class="price-lbl">Entry</span><span class="price-val pv-entry">${fmt(p.entry_price)}</span></div>
+        <div class="price-row"><span class="price-lbl">Stop</span><span class="price-val pv-stop">${fmt(p.stop_loss)}</span></div>
+        <div class="price-row"><span class="price-lbl">Target</span><span class="price-val pv-target">${fmt(p.take_profit)}</span></div>
       </div>
-      <div class="price-row">
-        <span class="price-lbl">Target</span>
-        <span class="price-val pv-target">${fmt(s.suggested_take_profit)}</span>
+      <div class="sig-footer">
+        <span>${p.contracts} contracts · ${p.strategy || '—'}</span>
+        <span>${p.margin_usdt != null ? p.margin_usdt.toFixed(2) + ' USDT margin' : '—'}</span>
       </div>
-    </div>
-    ${commentary ? `<div class="llm-wrap">
-      <div class="llm-text" id="llm-text-active">${commentary}</div>
-      <button class="llm-show-more" onclick="this.previousElementSibling.classList.toggle('expanded');this.textContent=this.previousElementSibling.classList.contains('expanded')?'Show less':'Show full'">Show full</button>
-      <div class="llm-attr">— LLM analysis · ${filedStr}</div>
-    </div>` : ''}
-    <div class="sig-footer">
-      <span>Risk ${riskPct} · R:R 1:2.0 · +${tpDist} to TP</span>
-      <span>1h timeframe</span>
     </div>`;
+  }).join('');
 }
 
-// ─── SIGNAL TABLE ────────────────────────────────────────────────────────────
-function renderSignalTable(signals, total) {
-  const tbody = document.getElementById('sig-tbody');
-  document.getElementById('tbl-count').textContent =
-    `${total || signals.length} signals`;
-
-  const rows = signals.slice(0, 50);
-  const newIds = new Set(rows.map(s => s.id));
-
-  const html = rows.map(s => {
-    const oc = {win:'b-win',tp_hit:'b-tp',loss:'b-loss',stopped_out:'b-stopped'}[s.outcome] || 'b-open';
-    const ol = {win:'WIN',tp_hit:'TP HIT',loss:'LOSS',stopped_out:'STOP'}[s.outcome] || 'OPEN';
-    const dc = s.direction === 'long' ? 'b-long' : 'b-short';
-    const pnl = s.pnl_r != null
-      ? `<span class="${s.pnl_r >= 0 ? 'pnl-pos' : 'pnl-neg'}">${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R</span>`
+// ─── TRADE HISTORY TABLE ─────────────────────────────────────────────────────
+function renderTradeHistory(trades) {
+  const tbody = document.getElementById('trades-tbody');
+  document.getElementById('tbl-count').textContent = `${trades.length} trade${trades.length !== 1 ? 's' : ''}`;
+  const newIds = new Set(trades.map(t => t.id));
+  tbody.innerHTML = trades.map(t => {
+    const dc = t.direction === 'long' ? 'b-long' : 'b-short';
+    const won = t.pnl_usdt > 0;
+    const reasonLabel = {take_profit:'TP',stop_loss:'SL',signal_flip:'FLIP'}[t.exit_reason] || t.exit_reason || '—';
+    const reasonCls = t.exit_reason === 'take_profit' ? 'b-tp'
+      : t.exit_reason === 'stop_loss' ? 'b-loss'
+      : t.exit_reason === 'signal_flip' ? 'b-stopped' : 'b-regime';
+    const pnl = t.pnl_usdt != null
+      ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
-    const isNew = !_lastSignalIds.has(s.id);
-    return `<tr${isNew && _lastSignalIds.size > 0 ? ' class="flash"' : ''}>
-      <td class="td-pair">${s.pair.replace('/USDT:USDT','')}/USDT</td>
-      <td><span class="badge ${dc}">${s.direction.toUpperCase()}</span></td>
-      <td class="td-muted">${s.regime || '—'}</td>
-      <td class="td-date">${fmtDate(s.fired_at)}</td>
-      <td class="td-mono">${fmt(s.entry_price)}</td>
-      <td class="td-mono" style="color:var(--short)">${fmt(s.suggested_stop_loss)}</td>
-      <td class="td-mono" style="color:var(--accent)">${fmt(s.suggested_take_profit)}</td>
-      <td><span class="outcome-badge ${oc}">${ol}</span></td>
+    const isNew = !_lastTradeIds.has(t.id);
+    return `<tr${isNew && _lastTradeIds.size > 0 ? ' class="flash"' : ''}>
+      <td class="td-pair">${t.pair.replace('/USDT:USDT','/USDT')}</td>
+      <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
+      <td class="td-muted">${t.strategy || '—'}</td>
+      <td class="td-date">${fmtDate(t.opened_at)}</td>
+      <td class="td-mono">${fmt(t.entry_price)}</td>
+      <td class="td-mono">${fmt(t.exit_price)}</td>
+      <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
       <td class="cell-r">${pnl}</td>
     </tr>`;
   }).join('');
-
-  tbody.innerHTML = html;
-  _lastSignalIds = newIds;
+  _lastTradeIds = newIds;
 }
 
 // ─── MAIN REFRESH ────────────────────────────────────────────────────────────
 async function refresh() {
   try {
-    const [statsRes, signalsRes, activeRes, healthRes, regimeRes] = await Promise.all([
-      fetch(`/api/stats?filter=${shadowFilter}${sinceParam()}`),
-      fetch(`/api/signals?filter=${shadowFilter}`),
-      fetch('/api/active'),
+    const [paperStatsRes, posRes, histRes, healthRes, regimeRes, sigStatsRes] = await Promise.all([
+      fetch('/api/paper/stats'),
+      fetch('/api/paper/positions'),
+      fetch('/api/paper/history'),
       fetch('/api/health'),
-      fetch(`/api/regime?filter=${shadowFilter}`),
+      fetch('/api/regime?filter=all'),
+      fetch('/api/stats?filter=live'),
     ]);
-    const [stats, sigData, active, health, regime] = await Promise.all([
-      statsRes.json(), signalsRes.json(), activeRes.json(),
-      healthRes.json(), regimeRes.json(),
+    const [paperStats, posData, histData, health, regime, sigStats] = await Promise.all([
+      paperStatsRes.json(), posRes.json(), histRes.json(),
+      healthRes.json(), regimeRes.json(), sigStatsRes.json(),
     ]);
 
+    const allTrades = [...posData.positions, ...histData.trades];
+
     renderHealth(health);
-    renderStats(stats);
-    renderDotMatrix(sigData.signals);
-    renderRegimeTimeline(regime, sigData.signals);
-    renderRegimeStats(stats);
-    renderActiveSignal(active.signals);
-    renderSignalTable(sigData.signals, sigData.total);
+    renderPaperStats(paperStats);
+    renderDotMatrix(histData.trades);
+    renderRegimeTimeline(regime, allTrades);
+    renderRegimeStats(sigStats);
+    renderOpenPositions(posData.positions);
+    renderTradeHistory(histData.trades);
 
   } catch (err) {
     console.error('Refresh error:', err);
   }
 }
 
-// ─── PAIR CHIPS FROM CONFIG ───────────────────────────────────────────────────
+// ─── PAIR CHIPS FROM OPEN POSITIONS ──────────────────────────────────────────
 (async function loadPairs() {
   try {
-    const r = await fetch('/api/stats?filter=all');
+    const r = await fetch('/api/paper/history');
     if (!r.ok) return;
-    // derive pairs from signal data instead of a dedicated /api/config endpoint
-    const sigR = await fetch('/api/signals?filter=all');
-    const data = await sigR.json();
-    const pairs = [...new Set(data.signals.map(s => s.pair))];
+    const data = await r.json();
+    const pairs = [...new Set(data.trades.map(t => t.pair))];
     if (pairs.length) renderPairChips(pairs);
   } catch (_) {}
 })();
