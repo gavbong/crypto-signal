@@ -7,7 +7,7 @@ pairs:
 
 shadow_mode: false             # true = log only, false = live alerts
 
-timeframe: "1h"
+timeframe: "15m"
 candle_limit: 100
 
 regime:

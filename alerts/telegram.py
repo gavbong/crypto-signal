@@ -48,13 +48,18 @@ def _format_message(signal: dict) -> str:
         pct = abs(take_profit - entry) / entry * 100
         tp_pct = f"  <i>(+{pct:.1f}%)</i>" if direction == "LONG" else f"  <i>(-{pct:.1f}%)</i>"
 
+    session = signal.get("market_session", "")
+    session_line = f"<b>Session </b>  {session}" if session else ""
+
     lines = [
         f"{colour} <b>{direction}</b>  {pair}  <code>[{mode}]</code>",
         f"",
         f"<b>Strategy</b>  {strategy}",
         f"<b>Regime  </b>  {regime}  <i>(conf {confidence:.0%})</i>",
-        f"<b>Entry   </b>  <code>{entry:,.4f}</code>",
     ]
+    if session_line:
+        lines.append(session_line)
+    lines.append(f"<b>Entry   </b>  <code>{entry:,.4f}</code>")
     if stop is not None:
         lines.append(f"<b>Stop    </b>  <code>{stop:,.4f}</code>{stop_pct}")
     if take_profit is not None:
