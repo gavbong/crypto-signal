@@ -401,9 +401,19 @@ def create_app() -> Flask:
     return app
 
 
+def _migrate_paper_db():
+    with get_conn() as conn:
+        try:
+            conn.execute("ALTER TABLE paper_positions ADD COLUMN last_price REAL")
+            conn.commit()
+        except Exception:
+            pass  # column already exists
+
+
 if __name__ == "__main__":
     dash_cfg = cfg().get("dashboard", {})
     init_db()
+    _migrate_paper_db()
     app = create_app()
     app.run(
         host=dash_cfg.get("host", "127.0.0.1"),
