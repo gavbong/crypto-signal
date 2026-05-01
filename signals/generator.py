@@ -62,13 +62,13 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
     }
 
 
-def ema_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
-                  timeframe: str) -> Optional[dict]:
+def ema_9_21_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                       timeframe: str) -> Optional[dict]:
     c = cfg()["signals"]
-    ema_fast = ta.ema(df["close"], length=cfg()["regime"]["ema_fast"])
-    ema_slow = ta.ema(df["close"], length=cfg()["regime"]["ema_slow"])
+    ema_fast = ta.ema(df["close"], length=c["ema_signal_fast"])
+    ema_slow = ta.ema(df["close"], length=c["ema_signal_slow"])
 
-    if len(ema_fast) < 2 or pd.isna(ema_fast.iloc[-2]):
+    if ema_fast is None or ema_slow is None or len(ema_fast) < 2 or pd.isna(ema_fast.iloc[-2]) or pd.isna(ema_slow.iloc[-2]):
         return None
 
     prev_fast, curr_fast = ema_fast.iloc[-2], ema_fast.iloc[-1]
@@ -77,13 +77,39 @@ def ema_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if any(pd.isna(v) for v in [prev_fast, curr_fast, prev_slow, curr_slow]):
         return None
 
-    if not _volume_gate_passes(df):
+    close = df["close"].iloc[-1]
+
+    if prev_fast <= prev_slow and curr_fast > curr_slow and close > curr_fast:
+        return _signal(pair, "long", "ema_9_21_crossover", regime, df, timeframe)
+    if prev_fast >= prev_slow and curr_fast < curr_slow and close < curr_fast:
+        return _signal(pair, "short", "ema_9_21_crossover", regime, df, timeframe)
+    return None
+
+
+def macd_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                   timeframe: str) -> Optional[dict]:
+    macd_df = ta.macd(df["close"])
+    if macd_df is None or len(macd_df) < 2:
         return None
 
-    if prev_fast <= prev_slow and curr_fast > curr_slow:
-        return _signal(pair, "long", "ema_crossover", regime, df, timeframe)
-    if prev_fast >= prev_slow and curr_fast < curr_slow:
-        return _signal(pair, "short", "ema_crossover", regime, df, timeframe)
+    macd_col = next((c for c in macd_df.columns if c.startswith("MACD_")), None)
+    signal_col = next((c for c in macd_df.columns if c.startswith("MACDs_")), None)
+    hist_col = next((c for c in macd_df.columns if c.startswith("MACDh_")), None)
+
+    if macd_col is None or signal_col is None or hist_col is None:
+        return None
+
+    prev_macd, curr_macd = macd_df[macd_col].iloc[-2], macd_df[macd_col].iloc[-1]
+    prev_sig, curr_sig = macd_df[signal_col].iloc[-2], macd_df[signal_col].iloc[-1]
+    hist = macd_df[hist_col].iloc[-1]
+
+    if any(pd.isna(v) for v in [prev_macd, curr_macd, prev_sig, curr_sig, hist]):
+        return None
+
+    if prev_macd <= prev_sig and curr_macd > curr_sig and hist > 0:
+        return _signal(pair, "long", "macd_crossover", regime, df, timeframe)
+    if prev_macd >= prev_sig and curr_macd < curr_sig and hist < 0:
+        return _signal(pair, "short", "macd_crossover", regime, df, timeframe)
     return None
 
 
@@ -96,15 +122,10 @@ def rsi_divergence(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if len(rsi) < lookback or rsi.iloc[-lookback:].isna().any():
         return None
 
-    if not _volume_gate_passes(df):
-        return None
-
     closes = df["close"].iloc[-lookback:]
     rsi_vals = rsi.iloc[-lookback:]
     rsi_now = rsi_vals.iloc[-1]
 
-    # Bullish divergence: price at recent low, RSI meaningfully higher than prior low,
-    # AND RSI is oversold (confirms we're in a potential reversal zone)
     if closes.iloc[-1] <= closes.min() * 1.001:
         prior_low_rsi = rsi_vals.iloc[:-2].min() if len(rsi_vals) > 2 else None
         if (prior_low_rsi is not None
@@ -112,8 +133,6 @@ def rsi_divergence(pair: str, df: pd.DataFrame, regime: RegimeResult,
                 and rsi_now < c["rsi_oversold"]):
             return _signal(pair, "long", "rsi_divergence", regime, df, timeframe)
 
-    # Bearish divergence: price at recent high, RSI meaningfully lower than prior high,
-    # AND RSI is overbought
     if closes.iloc[-1] >= closes.max() * 0.999:
         prior_high_rsi = rsi_vals.iloc[:-2].max() if len(rsi_vals) > 2 else None
         if (prior_high_rsi is not None
@@ -124,56 +143,164 @@ def rsi_divergence(pair: str, df: pd.DataFrame, regime: RegimeResult,
     return None
 
 
+def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
+    """Find supply/demand zones from impulse candles. Returns zones with mitigation status."""
+    c = cfg()["signals"]
+    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+
+    if atr_series is None or pd.isna(atr_series.iloc[-1]):
+        return []
+
+    zones = []
+    for i in range(len(df) - 1):
+        atr_val = atr_series.iloc[i]
+        if pd.isna(atr_val) or atr_val == 0:
+            continue
+        row = df.iloc[i]
+        body = abs(row["close"] - row["open"])
+        if body <= 1.5 * atr_val:
+            continue
+
+        top = max(row["open"], row["close"])
+        bottom = min(row["open"], row["close"])
+        zone_type = "demand" if row["close"] > row["open"] else "supply"
+
+        # Zone is mitigated if any subsequent prior candle closes through it
+        mitigated = False
+        for j in range(i + 1, len(df) - 1):
+            close_j = df["close"].iloc[j]
+            if zone_type == "demand" and close_j < bottom:
+                mitigated = True
+                break
+            if zone_type == "supply" and close_j > top:
+                mitigated = True
+                break
+
+        zones.append({"zone_type": zone_type, "top": top, "bottom": bottom, "mitigated": mitigated})
+
+    return zones
+
+
+def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                  timeframe: str) -> Optional[dict]:
+    zones = _find_sd_zones(df)
+    if not zones:
+        return None
+
+    # Cap at 3 most recent live zones per side
+    demand_zones = [z for z in zones if z["zone_type"] == "demand" and not z["mitigated"]][-3:]
+    supply_zones = [z for z in zones if z["zone_type"] == "supply" and not z["mitigated"]][-3:]
+
+    close_now = df["close"].iloc[-1]
+
+    # Check mitigation by current candle BEFORE checking entry
+    for zone in demand_zones:
+        if close_now < zone["bottom"]:
+            zone["mitigated"] = True
+    for zone in supply_zones:
+        if close_now > zone["top"]:
+            zone["mitigated"] = True
+
+    for zone in demand_zones:
+        if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+            return _signal(pair, "long", "supply_demand", regime, df, timeframe)
+    for zone in supply_zones:
+        if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+            return _signal(pair, "short", "supply_demand", regime, df, timeframe)
+
+    return None
+
+
+def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                   timeframe: str) -> Optional[dict]:
+    c = cfg()["signals"]
+    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+    if atr_series is None:
+        return None
+    atr = atr_series.iloc[-1]
+
+    if pd.isna(atr):
+        return None
+
+    prior = df.iloc[:-1]
+    if len(prior) < 8:
+        return None
+
+    # Use last 20 prior candles for swing detection
+    swing_window = prior.iloc[-20:]
+    swing_low = swing_window["low"].min()
+    swing_high = swing_window["high"].max()
+
+    curr = df.iloc[-1]
+
+    if curr["low"] < swing_low - 0.3 * atr and curr["close"] > swing_low + 0.2 * atr:
+        return _signal(pair, "long", "liquidity_grab", regime, df, timeframe)
+    if curr["high"] > swing_high + 0.3 * atr and curr["close"] < swing_high - 0.2 * atr:
+        return _signal(pair, "short", "liquidity_grab", regime, df, timeframe)
+
+    return None
+
+
 def vol_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
                  timeframe: str) -> Optional[dict]:
-    c = cfg()["regime"]
-    bb = ta.bbands(df["close"], length=c["bb_period"], std=c["bb_std"])
-    upper_col = next((col for col in bb.columns if col.startswith("BBU_")), None)
-    lower_col = next((col for col in bb.columns if col.startswith("BBL_")), None)
+    c_regime = cfg()["regime"]
+    bb = ta.bbands(df["close"], length=c_regime["bb_period"], std=c_regime["bb_std"])
+    upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
+    lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
 
-    if bb is None or upper_col is None or pd.isna(bb[upper_col].iloc[-2]):
+    if upper_col is None or lower_col is None:
+        return None
+
+    upper = bb[upper_col].iloc[-1]
+    lower = bb[lower_col].iloc[-1]
+
+    if pd.isna(upper) or pd.isna(lower):
         return None
 
     if not _volume_gate_passes(df):
         return None
 
-    # Mean-reversion play: prior candle was outside band, current candle closes back inside.
-    # In high-volatility, spike moves that return inside the band tend to continue reverting.
-    close_now = df["close"].iloc[-1]
-    close_prev = df["close"].iloc[-2]
-    upper_now = bb[upper_col].iloc[-1]
-    upper_prev = bb[upper_col].iloc[-2]
-    lower_now = bb[lower_col].iloc[-1]
-    lower_prev = bb[lower_col].iloc[-2]
+    # Consolidation precondition: ≥5 of 8 prior candles inside bands
+    lookback = 8
+    if len(df) < lookback + 1:
+        return None
 
-    if close_prev > upper_prev and close_now <= upper_now:
-        return _signal(pair, "short", "vol_breakout", regime, df, timeframe)
-    if close_prev < lower_prev and close_now >= lower_now:
+    prior_closes = df["close"].iloc[-lookback - 1:-1]
+    prior_upper = bb[upper_col].iloc[-lookback - 1:-1]
+    prior_lower = bb[lower_col].iloc[-lookback - 1:-1]
+
+    inside_count = sum(
+        1 for i in range(len(prior_closes))
+        if (not pd.isna(prior_upper.iloc[i]) and not pd.isna(prior_lower.iloc[i])
+            and prior_lower.iloc[i] <= prior_closes.iloc[i] <= prior_upper.iloc[i])
+    )
+
+    if inside_count < 5:
+        return None
+
+    close_now = df["close"].iloc[-1]
+
+    if close_now > upper:
         return _signal(pair, "long", "vol_breakout", regime, df, timeframe)
+    if close_now < lower:
+        return _signal(pair, "short", "vol_breakout", regime, df, timeframe)
     return None
 
 
 def rsi_extreme(pair: str, df: pd.DataFrame, regime: RegimeResult,
                 timeframe: str) -> Optional[dict]:
-    """Fire when RSI exits oversold (<30) or overbought (>70) territory.
-    Crossout confirmation (prev inside zone, now outside) avoids chasing extended moves."""
+    """Fire when RSI exits oversold/overbought territory. No volume gate."""
     c = cfg()["signals"]
     rsi = ta.rsi(df["close"], length=c["rsi_period"])
 
-    if len(rsi) < 2 or pd.isna(rsi.iloc[-1]) or pd.isna(rsi.iloc[-2]):
-        return None
-
-    if not _volume_gate_passes(df):
+    if rsi is None or len(rsi) < 2 or pd.isna(rsi.iloc[-1]) or pd.isna(rsi.iloc[-2]):
         return None
 
     rsi_prev = rsi.iloc[-2]
     rsi_now = rsi.iloc[-1]
 
-    # RSI crosses UP through 30: oversold exit → long
     if rsi_prev < c["rsi_extreme_oversold"] and rsi_now >= c["rsi_extreme_oversold"]:
         return _signal(pair, "long", "rsi_extreme", regime, df, timeframe)
-
-    # RSI crosses DOWN through 70: overbought exit → short
     if rsi_prev > c["rsi_extreme_overbought"] and rsi_now <= c["rsi_extreme_overbought"]:
         return _signal(pair, "short", "rsi_extreme", regime, df, timeframe)
 
@@ -181,10 +308,13 @@ def rsi_extreme(pair: str, df: pd.DataFrame, regime: RegimeResult,
 
 
 GENERATORS = {
-    "ema_crossover": ema_crossover,
-    "rsi_divergence": rsi_divergence,
-    "vol_breakout": vol_breakout,
-    "rsi_extreme": rsi_extreme,
+    "ema_9_21_crossover": ema_9_21_crossover,
+    "macd_crossover":     macd_crossover,
+    "rsi_divergence":     rsi_divergence,
+    "vol_breakout":       vol_breakout,
+    "rsi_extreme":        rsi_extreme,
+    "supply_demand":      supply_demand,
+    "liquidity_grab":     liquidity_grab,
 }
 
 
