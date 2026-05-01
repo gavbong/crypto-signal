@@ -19,9 +19,6 @@ from eval.outcomes import run_evaluation
 from alerts.telegram import send_signal_alert
 
 
-logger.remove()
-logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} | {level} | {message}")
-logger.add("logs/signal_engine.log", rotation="1 day", retention="7 days", level="DEBUG")
 
 
 def _market_session(utc_hour: int) -> str:
@@ -170,6 +167,12 @@ def eval_job(exchange) -> None:
 def main() -> None:
     import os
     os.makedirs("logs", exist_ok=True)
+
+    logger.remove()
+    logger.add(sys.stderr, level="INFO",
+               format="{time:HH:mm:ss} | {level:<7} | signal | {message}")
+    logger.add("logs/signal_engine.log", rotation="1 day", retention="7 days", level="DEBUG",
+               format="{time:YYYY-MM-DD HH:mm:ss} | {level:<7} | {message}")
 
     init_db()
     c = cfg()

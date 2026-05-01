@@ -413,8 +413,10 @@ def main() -> None:
     os.makedirs("logs", exist_ok=True)
 
     logger.remove()
-    logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} | {level} | {message}")
-    logger.add("logs/paper_trader.log", rotation="1 day", retention="30 days", level="DEBUG")
+    logger.add(sys.stderr, level="INFO",
+               format="{time:HH:mm:ss} | {level:<7} | paper  | {message}")
+    logger.add("logs/paper_trader.log", rotation="1 day", retention="30 days", level="DEBUG",
+               format="{time:YYYY-MM-DD HH:mm:ss} | {level:<7} | {message}")
 
     pairs = cfg()["pairs"]
 
