@@ -204,6 +204,114 @@ def create_app() -> Flask:
             ]
         })
 
+    # ── Paper Trading API ─────────────────────────────────────────────────────
+    _PAPER_INITIAL = 1_000.0
+
+    @app.route("/api/paper/stats")
+    def api_paper_stats():
+        _auth()
+        with get_conn() as conn:
+            realized = conn.execute(
+                "SELECT COALESCE(SUM(pnl_usdt),0) FROM paper_positions WHERE exit_price IS NOT NULL"
+            ).fetchone()[0]
+            open_margin = conn.execute(
+                "SELECT COALESCE(SUM(margin_usdt),0) FROM paper_positions WHERE exit_price IS NULL"
+            ).fetchone()[0]
+            wins = conn.execute(
+                "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt > 0"
+            ).fetchone()[0]
+            losses = conn.execute(
+                "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt <= 0"
+            ).fetchone()[0]
+            open_count = conn.execute(
+                "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NULL"
+            ).fetchone()[0]
+        total_closed = wins + losses
+        balance = _PAPER_INITIAL + realized - open_margin
+        return jsonify({
+            "balance_usdt": round(balance, 2),
+            "initial_balance": _PAPER_INITIAL,
+            "realized_pnl": round(realized, 2),
+            "open_margin": round(open_margin, 2),
+            "wins": wins,
+            "losses": losses,
+            "total_closed": total_closed,
+            "open_count": open_count,
+            "win_rate": round(wins / total_closed, 4) if total_closed > 0 else 0.0,
+        })
+
+    @app.route("/api/paper/positions")
+    def api_paper_positions():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, pair, direction, strategy, regime,
+                          entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at
+                   FROM paper_positions WHERE exit_price IS NULL ORDER BY opened_at DESC"""
+            ).fetchall()
+        return jsonify({
+            "positions": [
+                {
+                    "id": r["id"], "pair": r["pair"], "direction": r["direction"],
+                    "strategy": r["strategy"], "regime": r["regime"],
+                    "entry_price": r["entry_price"], "contracts": r["contracts"],
+                    "margin_usdt": r["margin_usdt"], "stop_loss": r["stop_loss"],
+                    "take_profit": r["take_profit"],
+                    "opened_at": _normalize_ts(r["opened_at"]),
+                }
+                for r in rows
+            ]
+        })
+
+    @app.route("/api/paper/history")
+    def api_paper_history():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, pair, direction, strategy, regime, entry_price,
+                          contracts, margin_usdt, exit_price, exit_reason, pnl_usdt,
+                          opened_at, closed_at
+                   FROM paper_positions WHERE exit_price IS NOT NULL
+                   ORDER BY closed_at DESC LIMIT 50"""
+            ).fetchall()
+        return jsonify({
+            "trades": [
+                {
+                    "id": r["id"], "pair": r["pair"], "direction": r["direction"],
+                    "strategy": r["strategy"], "regime": r["regime"],
+                    "entry_price": r["entry_price"], "contracts": r["contracts"],
+                    "margin_usdt": r["margin_usdt"], "exit_price": r["exit_price"],
+                    "exit_reason": r["exit_reason"], "pnl_usdt": r["pnl_usdt"],
+                    "opened_at": _normalize_ts(r["opened_at"]),
+                    "closed_at": _normalize_ts(r["closed_at"]),
+                }
+                for r in rows
+            ]
+        })
+
+    @app.route("/api/paper/daily")
+    def api_paper_daily():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT day_number, snapshot_date, balance_usdt, equity_usdt,
+                          realized_pnl, unrealized_pnl, open_positions,
+                          total_trades, wins, losses, win_rate
+                   FROM paper_daily_pnl ORDER BY day_number DESC LIMIT 30"""
+            ).fetchall()
+        return jsonify({
+            "snapshots": [
+                {
+                    "day_number": r["day_number"], "snapshot_date": r["snapshot_date"],
+                    "balance_usdt": r["balance_usdt"], "equity_usdt": r["equity_usdt"],
+                    "realized_pnl": r["realized_pnl"], "unrealized_pnl": r["unrealized_pnl"],
+                    "open_positions": r["open_positions"], "total_trades": r["total_trades"],
+                    "wins": r["wins"], "losses": r["losses"], "win_rate": r["win_rate"],
+                }
+                for r in rows
+            ]
+        })
+
     @app.route("/api/health")
     def api_health():
         _auth()
