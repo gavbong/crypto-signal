@@ -226,7 +226,7 @@ body{
   font-family:var(--font-ui);font-size:10px;font-weight:500;
   text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);
   padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);
-  white-space:nowrap;background:var(--surface);position:sticky;top:104px;
+  white-space:nowrap;background:var(--surface);
 }
 .signal-table th.r{text-align:right}
 .signal-table td{font-size:12px;padding:7px 12px;border-bottom:1px solid rgba(31,35,48,0.6);vertical-align:middle;white-space:nowrap}
@@ -540,7 +540,7 @@ function renderRegimeTimeline(regime, trades) {
   }
 
   const startMs = new Date(ps + 'T00:00:00Z').getTime();
-  const endMs   = new Date(pe + 'T00:00:00Z').getTime();
+  const endMs   = new Date(pe + 'T23:59:59Z').getTime();
   const totalMs = Math.max(endMs - startMs, 1);
 
   regime.segments.forEach(seg => {
