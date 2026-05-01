@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     closed_at   TIMESTAMP,
     exit_price  REAL,
     exit_reason TEXT,
-    pnl_usdt    REAL
+    pnl_usdt    REAL,
+    last_price  REAL
 );
 
 CREATE TABLE IF NOT EXISTS paper_daily_pnl (
@@ -83,6 +84,12 @@ CREATE TABLE IF NOT EXISTS paper_state (
 
 def init_paper_db(conn) -> None:
     conn.executescript(_SCHEMA)
+    # Migrate: add last_price column to existing tables
+    try:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN last_price REAL")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
     for key, default in [("last_signal_id", "0"), ("day_number", "0")]:
         conn.execute(
             "INSERT OR IGNORE INTO paper_state (key, value) VALUES (?, ?)",
@@ -287,6 +294,8 @@ def check_positions(conn, exchange) -> int:
             logger.warning(f"Paper: no ticker for {pos['pair']} — skipping position check")
             continue
 
+        conn.execute("UPDATE paper_positions SET last_price=? WHERE id=?", (live, pos["id"]))
+
         if pos["direction"] == "long":
             if live <= pos["stop_loss"]:
                 close_position(conn, pos, live, "stop_loss")
@@ -301,6 +310,7 @@ def check_positions(conn, exchange) -> int:
             elif live <= pos["take_profit"]:
                 close_position(conn, pos, live, "take_profit")
                 closed += 1
+    conn.commit()
     return closed
 
 

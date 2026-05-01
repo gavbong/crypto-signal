@@ -310,7 +310,7 @@ body{
 
   <div class="stats-grid">
     <div class="stat-card">
-      <div class="stat-label">Balance</div>
+      <div class="stat-label">Equity</div>
       <div class="stat-value" id="stat-balance">—</div>
       <div class="stat-sub" id="stat-balance-sub">Initial 1,000 USDT</div>
     </div>
@@ -475,14 +475,19 @@ function renderHealth(health) {
 
 // ─── PAPER STAT CARDS ────────────────────────────────────────────────────────
 function renderPaperStats(stats) {
-  const balance = stats.balance_usdt ?? 0;
+  const equity = stats.equity_usdt ?? stats.balance_usdt ?? 0;
   const initial = stats.initial_balance ?? 1000;
-  const pnl = balance - initial;
+  const balance = stats.balance_usdt ?? 0;
+  const unrealized = stats.unrealized_pnl ?? 0;
+  const equityDelta = equity - initial;
   const balEl = document.getElementById('stat-balance');
-  balEl.innerHTML = balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '<span class="stat-unit"> USDT</span>';
-  balEl.className = 'stat-value ' + (balance >= initial ? 'green' : 'red');
+  balEl.innerHTML = equity.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '<span class="stat-unit"> USDT</span>';
+  balEl.className = 'stat-value ' + (equity >= initial ? 'green' : 'red');
+  const unrealStr = unrealized !== 0
+    ? ` · unreal: ${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(2)}`
+    : '';
   document.getElementById('stat-balance-sub').textContent =
-    `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT vs ${initial.toLocaleString()} initial`;
+    `${equityDelta >= 0 ? '+' : ''}${equityDelta.toFixed(2)} vs initial${unrealStr}`;
 
   const realized = stats.realized_pnl ?? 0;
   const realEl = document.getElementById('stat-realized');
@@ -641,6 +646,15 @@ function renderOpenPositions(positions) {
   body.innerHTML = positions.map((p, i) => {
     const dc = p.direction === 'long' ? 'b-long' : 'b-short';
     const sep = i < positions.length - 1;
+    const haslive = p.last_price != null;
+    const upnl = p.unrealized_pnl;
+    const upnlCls = upnl == null ? '' : upnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const upnlStr = upnl != null
+      ? `<span class="${upnlCls}">${upnl >= 0 ? '+' : ''}${upnl.toFixed(2)} USDT</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const notionalStr = p.notional_usdt != null
+      ? `<span style="color:var(--muted)">${p.notional_usdt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} USDT</span>`
+      : '';
     return `<div style="margin-bottom:${sep?'12px':'0'};padding-bottom:${sep?'12px':'0'};border-bottom:${sep?'1px solid var(--border)':'none'}">
       <div class="sig-meta" style="margin-bottom:8px">
         <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
@@ -653,6 +667,11 @@ function renderOpenPositions(positions) {
         <div class="price-row"><span class="price-lbl">Stop</span><span class="price-val pv-stop">${fmt(p.stop_loss)}</span></div>
         <div class="price-row"><span class="price-lbl">Target</span><span class="price-val pv-target">${fmt(p.take_profit)}</span></div>
       </div>
+      ${haslive ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11px">
+        <span style="color:var(--muted)">Live <span style="font-family:var(--font-mono);color:var(--fg)">${fmt(p.last_price)}</span></span>
+        <span>Unrealized ${upnlStr}</span>
+        <span>Notional ${notionalStr}</span>
+      </div>` : ''}
       <div class="sig-footer">
         <span>${p.contracts} contracts · ${p.strategy || '—'}</span>
         <span>${p.margin_usdt != null ? p.margin_usdt.toFixed(2) + ' USDT margin' : '—'}</span>

@@ -226,12 +226,27 @@ def create_app() -> Flask:
             open_count = conn.execute(
                 "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NULL"
             ).fetchone()[0]
+            open_positions = conn.execute(
+                "SELECT direction, entry_price, contracts, last_price FROM paper_positions WHERE exit_price IS NULL"
+            ).fetchall()
+
+        unrealized = 0.0
+        for p in open_positions:
+            if p["last_price"] is not None:
+                if p["direction"] == "long":
+                    unrealized += (p["last_price"] - p["entry_price"]) * p["contracts"]
+                else:
+                    unrealized += (p["entry_price"] - p["last_price"]) * p["contracts"]
+
         total_closed = wins + losses
         balance = _PAPER_INITIAL + realized - open_margin
+        equity = balance + unrealized
         return jsonify({
             "balance_usdt": round(balance, 2),
+            "equity_usdt": round(equity, 2),
             "initial_balance": _PAPER_INITIAL,
             "realized_pnl": round(realized, 2),
+            "unrealized_pnl": round(unrealized, 2),
             "open_margin": round(open_margin, 2),
             "wins": wins,
             "losses": losses,
@@ -246,9 +261,18 @@ def create_app() -> Flask:
         with get_conn() as conn:
             rows = conn.execute(
                 """SELECT id, pair, direction, strategy, regime,
-                          entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at
+                          entry_price, contracts, margin_usdt, stop_loss, take_profit,
+                          opened_at, last_price
                    FROM paper_positions WHERE exit_price IS NULL ORDER BY opened_at DESC"""
             ).fetchall()
+
+        def _unrealized(r):
+            if r["last_price"] is None:
+                return None
+            if r["direction"] == "long":
+                return round((r["last_price"] - r["entry_price"]) * r["contracts"], 4)
+            return round((r["entry_price"] - r["last_price"]) * r["contracts"], 4)
+
         return jsonify({
             "positions": [
                 {
@@ -258,6 +282,9 @@ def create_app() -> Flask:
                     "margin_usdt": r["margin_usdt"], "stop_loss": r["stop_loss"],
                     "take_profit": r["take_profit"],
                     "opened_at": _normalize_ts(r["opened_at"]),
+                    "last_price": r["last_price"],
+                    "unrealized_pnl": _unrealized(r),
+                    "notional_usdt": round(r["contracts"] * r["last_price"], 2) if r["last_price"] else None,
                 }
                 for r in rows
             ]
