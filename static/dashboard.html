@@ -377,7 +377,7 @@ body{
     <table class="signal-table">
       <thead>
         <tr>
-          <th>Pair</th><th>Dir</th><th>Strategy</th><th>Opened</th>
+          <th>Pair</th><th>Dir</th><th>Strategy</th><th>Opened</th><th>Closed</th>
           <th>Entry</th><th>Exit</th><th>Reason</th>
           <th class="r">P&amp;L</th>
         </tr>
@@ -437,6 +437,11 @@ function fmt(p) {
 function fmtDate(iso) {
   if (!iso) return '—';
   return iso.slice(0,10);
+}
+
+function fmtDT(iso) {
+  if (!iso) return '—';
+  return iso.slice(5,16).replace('T',' ');
 }
 
 function fmtDateTime(iso) {
@@ -711,7 +716,8 @@ function renderTradeHistory(trades) {
       <td class="td-pair">${t.pair.replace('/USDT:USDT','/USDT')}</td>
       <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
       <td class="td-muted">${t.strategy || '—'}</td>
-      <td class="td-date">${fmtDate(t.opened_at)}</td>
+      <td class="td-date">${fmtDT(t.opened_at)}</td>
+      <td class="td-date">${fmtDT(t.closed_at)}</td>
       <td class="td-mono">${fmt(t.entry_price)}</td>
       <td class="td-mono">${fmt(t.exit_price)}</td>
       <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
