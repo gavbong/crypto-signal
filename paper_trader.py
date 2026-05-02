@@ -21,7 +21,7 @@ from db.schema import get_conn
 # ── Constants ────────────────────────────────────────────────────────────────
 
 INITIAL_BALANCE       = 1_000.0
-LEVERAGE              = 10       # 10x: liquidation requires ~10% adverse move, stops fire first
+LEVERAGE              = 20       # 20x: liquidation requires ~5% adverse move, stops fire first
 RISK_PCT              = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
 MIN_REGIME_CONFIDENCE = 0.20     # skip signals where regime classification is very uncertain
 
