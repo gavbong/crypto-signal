@@ -718,7 +718,7 @@ async function refresh() {
       fetch('/api/paper/positions'),
       fetch('/api/paper/history'),
       fetch('/api/health'),
-      fetch('/api/regime?filter=all'),
+      fetch('/api/regime?filter=live'),
       fetch('/api/stats?filter=live'),
     ]);
     const [paperStats, posData, histData, health, regime, sigStats] = await Promise.all([
