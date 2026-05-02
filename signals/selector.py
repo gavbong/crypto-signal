@@ -19,7 +19,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     },
     "choppy": {
         "ema_9_21_crossover": "SKIP",
-        "macd_crossover":     "FIRE",
+        "macd_crossover":     "SKIP",  # lagging crossover whipsaws in sideways markets
         "rsi_divergence":     "FIRE",
         "rsi_extreme":        "FIRE",
         "vol_breakout":       "SKIP",

@@ -32,9 +32,16 @@ def _calc_stop_loss(df: pd.DataFrame, direction: str, regime_label: str = "") ->
     return round(entry - atr * mult, 8) if direction == "long" else round(entry + atr * mult, 8)
 
 
-def _calc_take_profit(entry: float, stop: float, direction: str) -> float:
+def _calc_take_profit(entry: float, stop: float, direction: str, regime_label: str = "") -> float:
     risk = abs(entry - stop)
-    rr = cfg()["signals"]["rr_ratio"]
+    c = cfg()["signals"]
+    rr_map = {
+        "choppy":       c.get("rr_ratio_choppy",   c["rr_ratio"]),
+        "trending-up":  c.get("rr_ratio_trending",  c["rr_ratio"]),
+        "trending-down": c.get("rr_ratio_trending", c["rr_ratio"]),
+        "high-volatility": c.get("rr_ratio_high_vol", c["rr_ratio"]),
+    }
+    rr = rr_map.get(regime_label, c["rr_ratio"])
     return round(entry + risk * rr, 8) if direction == "long" else round(entry - risk * rr, 8)
 
 
@@ -45,7 +52,7 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
     if stop is None:
         logger.warning(f"ATR is NaN for {pair} — skipping stop-loss")
         return None
-    take_profit = _calc_take_profit(entry, stop, direction)
+    take_profit = _calc_take_profit(entry, stop, direction, regime.label)
     return {
         "pair": pair,
         "direction": direction,
