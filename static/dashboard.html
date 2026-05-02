@@ -86,6 +86,8 @@ body{
 }
 .header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
 .header-ts{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.refresh-age{font-family:var(--font-mono);font-size:10px;color:var(--muted);opacity:0.6;transition:opacity 200ms}
+.refresh-age.fresh{opacity:1;color:var(--long)}
 
 /* ── MAIN ────────────────────────────────────────────────────── */
 .main{margin-left:52px;margin-top:52px;padding:16px 20px 32px;max-width:calc(1440px - 52px)}
@@ -298,6 +300,7 @@ body{
     <span class="pair-chip">—</span>
   </div>
   <div class="header-right">
+    <span class="refresh-age" id="refresh-age"></span>
     <span class="header-ts" id="hdr-ts">—</span>
   </div>
 </header>
@@ -392,12 +395,22 @@ body{
 
 const POLL_MS = 5000;
 let _lastTradeIds = new Set();
+let _lastRefresh = null;
 
-// ─── CLOCK ───────────────────────────────────────────────────────────────────
+// ─── CLOCK + REFRESH AGE ─────────────────────────────────────────────────────
 (function tick() {
   const el = document.getElementById('hdr-ts');
   const d = new Date();
   el.textContent = d.toISOString().slice(0,19).replace('T',' ') + ' UTC';
+
+  const ageEl = document.getElementById('refresh-age');
+  if (ageEl && _lastRefresh) {
+    const secs = Math.round((Date.now() - _lastRefresh) / 1000);
+    ageEl.textContent = '↻ ' + (secs < 2 ? 'just now' : secs + 's ago');
+    if (secs < 3) { ageEl.classList.add('fresh'); }
+    else { ageEl.classList.remove('fresh'); }
+  }
+
   setTimeout(tick, 1000);
 })();
 
@@ -552,12 +565,10 @@ function renderRegimeTimeline(regime, trades) {
     const div = document.createElement('div');
     div.className = 'regime-segment ' + seg.regime.replace(/[^a-z-]/g,'');
     div.style.left = leftPct; div.style.width = widthPct;
+    const segTip = `<b>${seg.regime.toUpperCase()}</b><br>${fmtAxisDate(seg.start)} → ${fmtAxisDate(seg.end)}`;
+    div.addEventListener('mouseenter', e => showTip(e, segTip));
+    div.addEventListener('mouseleave', hideTip);
     bar.appendChild(div);
-
-    const lbl = document.createElement('div');
-    lbl.className = 'regime-seg-label';
-    lbl.style.left = leftPct; lbl.textContent = seg.regime.toUpperCase();
-    bar.appendChild(lbl);
   });
 
   if (regime.segments.length === 1) {
@@ -735,6 +746,7 @@ async function refresh() {
     renderRegimeStats(sigStats);
     renderOpenPositions(posData.positions);
     renderTradeHistory(histData.trades);
+    _lastRefresh = Date.now();
 
   } catch (err) {
     console.error('Refresh error:', err);
