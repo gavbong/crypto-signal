@@ -189,36 +189,62 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
 
 
 def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
-                  timeframe: str) -> Optional[dict]:
-    zones = _find_sd_zones(df)
+                  timeframe: str, df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
+    """
+    Fires when 15m price is APPROACHING (not inside) a supply/demand zone.
+    Uses 1H zones when available — structurally more significant, wider, and price
+    respects them longer. Falls back to 15m zones if df_1h is absent.
+    Entry triggers when price is within 1.5× ATR of the zone boundary and the last
+    3 candles confirm price is moving toward it.
+    """
+    zone_df = df_1h if (df_1h is not None and len(df_1h) >= 30) else df
+    zones = _find_sd_zones(zone_df)
     if not zones:
         return None
 
-    # Cap at 3 most recent live zones per side
     demand_zones = [z for z in zones if z["zone_type"] == "demand" and not z["mitigated"]][-3:]
     supply_zones = [z for z in zones if z["zone_type"] == "supply" and not z["mitigated"]][-3:]
+    if not demand_zones and not supply_zones:
+        return None
 
     close_now = df["close"].iloc[-1]
 
-    # Check mitigation by current candle BEFORE checking entry
-    for zone in demand_zones:
-        if close_now < zone["bottom"]:
-            zone["mitigated"] = True
-    for zone in supply_zones:
-        if close_now > zone["top"]:
-            zone["mitigated"] = True
+    # ATR from 15m candles for proximity threshold
+    c = cfg()["signals"]
+    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+    atr = atr_series.iloc[-1]
+    if pd.isna(atr):
+        return None
+    proximity = 1.5 * atr
 
-    # In trending regimes, only trade with the trend — don't counter-trend on S/D zones
+    # Approach direction: count how many of the last 3 closes are falling vs rising
+    falling = rising = 0
+    if len(df) >= 4:
+        recent = df["close"].iloc[-4:-1]
+        for i in range(1, len(recent)):
+            if recent.iloc[i] < recent.iloc[i - 1]:
+                falling += 1
+            elif recent.iloc[i] > recent.iloc[i - 1]:
+                rising += 1
+
+    # Only trade with the trend in directional regimes
     allow_long  = regime.label != "trending-down"
     allow_short = regime.label != "trending-up"
 
     if allow_long:
         for zone in demand_zones:
-            if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+            # Price above zone and falling toward it
+            if (close_now > zone["top"]
+                    and close_now <= zone["top"] + proximity
+                    and falling >= 2):
                 return _signal(pair, "long", "supply_demand", regime, df, timeframe)
+
     if allow_short:
         for zone in supply_zones:
-            if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+            # Price below zone and rising toward it
+            if (close_now < zone["bottom"]
+                    and close_now >= zone["bottom"] - proximity
+                    and rising >= 2):
                 return _signal(pair, "short", "supply_demand", regime, df, timeframe)
 
     return None
@@ -332,9 +358,12 @@ GENERATORS = {
 
 
 def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
-                 regime: RegimeResult, timeframe: str) -> Optional[dict]:
+                 regime: RegimeResult, timeframe: str,
+                 df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
     gen = GENERATORS.get(strategy)
     if gen is None:
         logger.warning(f"Unknown strategy: {strategy}")
         return None
+    if strategy == "supply_demand":
+        return gen(pair, df, regime, timeframe, df_1h=df_1h)
     return gen(pair, df, regime, timeframe)

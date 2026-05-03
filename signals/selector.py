@@ -23,7 +23,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "rsi_divergence":     "FIRE",
         "rsi_extreme":        "FIRE",
         "vol_breakout":       "SKIP",
-        "supply_demand":      "SKIP",  # structural zones don't apply in directionless chop
+        "supply_demand":      "FIRE",  # 1H zones + approach detection — replaces old zone-entry logic
         "liquidity_grab":     "FIRE",
     },
     "high-volatility": {
