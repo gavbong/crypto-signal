@@ -170,14 +170,25 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     pair      = signal["pair"]
     direction = signal["direction"]
 
-    # Regime confidence gate
+    # Regime confidence gates
     conf = signal.get("regime_confidence")
+    regime_label = signal.get("regime", "")
+
     if conf is not None and conf < MIN_REGIME_CONFIDENCE:
         logger.debug(
             f"Paper: signal {signal.get('id')} regime_confidence={conf:.3f} "
             f"below {MIN_REGIME_CONFIDENCE} — skipping"
         )
         return None
+
+    if conf is not None and "trending" in regime_label:
+        max_conf = cfg()["signals"].get("trending_max_confidence", 0.65)
+        if conf > max_conf:
+            logger.debug(
+                f"Paper: signal {signal.get('id')} {regime_label} conf={conf:.3f} "
+                f"> {max_conf} — extended move gate, skipping"
+            )
+            return None
 
     existing = conn.execute(
         "SELECT * FROM paper_positions WHERE pair=? AND exit_price IS NULL",
