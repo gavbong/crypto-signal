@@ -138,12 +138,13 @@ body{
 .mid-grid{display:grid;grid-template-columns:65fr 35fr;gap:12px;margin-bottom:12px}
 
 /* ── REGIME TIMELINE ─────────────────────────────────────────── */
-.regime-bar-wrap{position:relative;height:40px;margin-bottom:6px}
-.regime-segment{position:absolute;top:50%;transform:translateY(-50%);height:24px;border-radius:var(--radius-sm)}
-.regime-segment.choppy{background:rgba(240,165,0,0.07);border:1px solid rgba(240,165,0,0.22)}
-.regime-segment.trending-up{background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22)}
-.regime-segment.trending-down{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.22)}
-.regime-segment.high-vol{background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.22)}
+.regime-bar-wrap{position:relative;margin-bottom:6px}
+.regime-lane{position:relative;height:10px;margin-bottom:2px}
+.regime-segment{position:absolute;top:0;height:100%;border-radius:var(--radius-sm)}
+.regime-segment.choppy{background:rgba(240,165,0,0.18);border:1px solid rgba(240,165,0,0.35)}
+.regime-segment.trending-up{background:rgba(34,197,94,0.18);border:1px solid rgba(34,197,94,0.35)}
+.regime-segment.trending-down{background:rgba(239,68,68,0.18);border:1px solid rgba(239,68,68,0.35)}
+.regime-segment.high-volatility{background:rgba(59,130,246,0.18);border:1px solid rgba(59,130,246,0.35)}
 .regime-seg-label{
   position:absolute;top:50%;transform:translateY(-50%);
   font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;
@@ -561,30 +562,38 @@ function renderRegimeTimeline(regime, trades) {
   const endMs   = new Date(pe + 'T23:59:59Z').getTime();
   const totalMs = Math.max(endMs - startMs, 1);
 
-  regime.segments.forEach(seg => {
-    const segStart = new Date(seg.start + 'T00:00:00Z').getTime();
-    const segEnd   = new Date(seg.end   + 'T00:00:00Z').getTime();
-    const leftPct  = ((segStart - startMs) / totalMs * 100).toFixed(2) + '%';
-    const widthPct = ((segEnd - segStart) / totalMs * 100).toFixed(2) + '%';
-
-    const div = document.createElement('div');
-    div.className = 'regime-segment ' + seg.regime.replace(/[^a-z-]/g,'');
-    div.style.left = leftPct; div.style.width = widthPct;
-    const segTip = `<b>${seg.regime.toUpperCase()}</b><br>${fmtAxisDate(seg.start)} → ${fmtAxisDate(seg.end)}`;
-    div.addEventListener('mouseenter', e => showTip(e, segTip));
-    div.addEventListener('mouseleave', hideTip);
-    bar.appendChild(div);
+  // Each regime gets its own lane so they don't overlap
+  const activeSegs = regime.segments.filter(s => {
+    const segStart = new Date(s.start + 'T00:00:00Z').getTime();
+    const segEnd   = new Date(s.end   + 'T00:00:00Z').getTime();
+    return (segEnd - segStart) > 0 || s.signal_count > 0;
   });
 
-  if (regime.segments.length === 1) {
-    const ann = document.createElement('span');
-    ann.className = 'regime-annotation';
-    const days = Math.round((endMs - startMs) / 86400000);
-    ann.textContent = `Single regime · ${days}d`;
-    bar.appendChild(ann);
-  }
+  activeSegs.forEach(seg => {
+    const segStart = new Date(seg.start + 'T00:00:00Z').getTime();
+    const segEnd   = new Date(seg.end   + 'T23:59:59Z').getTime();
+    const leftPct  = ((segStart - startMs) / totalMs * 100).toFixed(2) + '%';
+    const widthPct = (Math.max((segEnd - segStart) / totalMs * 100, 2)).toFixed(2) + '%';
 
-  // Paper trade open events as dots on the timeline
+    const lane = document.createElement('div');
+    lane.className = 'regime-lane';
+
+    const div = document.createElement('div');
+    div.className = 'regime-segment ' + seg.regime;
+    div.style.left = leftPct; div.style.width = widthPct;
+    const segTip = `<b>${seg.regime.toUpperCase()}</b><br>${fmtAxisDate(seg.start)} → ${fmtAxisDate(seg.end)}<br>${seg.signal_count} signals`;
+    div.addEventListener('mouseenter', e => showTip(e, segTip));
+    div.addEventListener('mouseleave', hideTip);
+    lane.appendChild(div);
+    bar.appendChild(lane);
+  });
+
+  // Dot row — trade open events positioned on their own full-width lane
+  const dotLane = document.createElement('div');
+  dotLane.className = 'regime-lane';
+  dotLane.style.height = '14px';
+  dotLane.style.marginTop = '4px';
+
   const prevDots = {};
   trades.forEach(t => {
     if (!t.opened_at) return;
@@ -610,8 +619,9 @@ function renderRegimeTimeline(regime, trades) {
     dot.style.left = finalPct.toFixed(2) + '%';
     dot.addEventListener('mouseenter', e => showTip(e, tip));
     dot.addEventListener('mouseleave', hideTip);
-    bar.appendChild(dot);
+    dotLane.appendChild(dot);
   });
+  bar.appendChild(dotLane);
 
   const midMs = startMs + (endMs - startMs) / 2;
   const midDate = new Date(midMs).toISOString().slice(0,10);
@@ -630,6 +640,7 @@ function renderRegimeStats(stats) {
     {key:'choppy', label:'Choppy'},
     {key:'trending-up', label:'Trending ↑'},
     {key:'trending-down', label:'Trending ↓'},
+    {key:'high-volatility', label:'High-Vol'},
   ];
   grid.innerHTML = REGIMES.map(({key, label}) => {
     const r = stats.by_regime && stats.by_regime[key];
