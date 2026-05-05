@@ -417,6 +417,7 @@ let _lastRefresh = null;
 
 // ─── TOOLTIP ─────────────────────────────────────────────────────────────────
 const TIP = document.getElementById('tooltip');
+function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function showTip(e, html) {
   TIP.innerHTML = html;
   TIP.classList.add('visible');
@@ -581,7 +582,7 @@ function renderRegimeTimeline(regime, trades) {
     const div = document.createElement('div');
     div.className = 'regime-segment ' + seg.regime;
     div.style.left = leftPct; div.style.width = widthPct;
-    const segTip = `<b>${seg.regime.toUpperCase()}</b><br>${fmtAxisDate(seg.start)} → ${fmtAxisDate(seg.end)}<br>${seg.signal_count} signals`;
+    const segTip = `<b>${_esc(seg.regime).toUpperCase()}</b><br>${fmtAxisDate(seg.start)} → ${fmtAxisDate(seg.end)}<br>${_esc(seg.signal_count)} signals`;
     div.addEventListener('mouseenter', e => showTip(e, segTip));
     div.addEventListener('mouseleave', hideTip);
     lane.appendChild(div);

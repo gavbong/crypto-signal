@@ -209,9 +209,25 @@ def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
 
     close_now = df["close"].iloc[-1]
 
-    # ATR from 15m candles for proximity threshold
+    # Cross-check 1H zones against 15m price: if close_now has already breached a zone,
+    # the approach logic below will exclude it (close_now > zone["top"] fails for demand),
+    # but explicitly filter zones the 1H data missed due to intra-hour 15m moves.
+    if zone_df is not df:
+        for z in demand_zones:
+            if df["close"].iloc[-20:].min() < z["bottom"]:
+                z["mitigated"] = True
+        for z in supply_zones:
+            if df["close"].iloc[-20:].max() > z["top"]:
+                z["mitigated"] = True
+        demand_zones = [z for z in demand_zones if not z["mitigated"]]
+        supply_zones = [z for z in supply_zones if not z["mitigated"]]
+        if not demand_zones and not supply_zones:
+            return None
+
+    # ATR from zone_df so proximity window matches the scale of the zones.
+    # Using 15m ATR against 1H zones made the window 3-5x too narrow.
     c = cfg()["signals"]
-    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+    atr_series = ta.atr(zone_df["high"], zone_df["low"], zone_df["close"], length=c["atr_period"])
     atr = atr_series.iloc[-1]
     if pd.isna(atr):
         return None

@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -398,6 +399,7 @@ def create_app() -> Flask:
             "period_end": period["e"] if period else None,
         })
 
+    _migrate_paper_db()
     return app
 
 
@@ -406,14 +408,13 @@ def _migrate_paper_db():
         try:
             conn.execute("ALTER TABLE paper_positions ADD COLUMN last_price REAL")
             conn.commit()
-        except Exception:
+        except sqlite3.OperationalError:
             pass  # column already exists
 
 
 if __name__ == "__main__":
     dash_cfg = cfg().get("dashboard", {})
     init_db()
-    _migrate_paper_db()
     app = create_app()
     app.run(
         host=dash_cfg.get("host", "127.0.0.1"),
