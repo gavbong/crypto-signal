@@ -248,6 +248,14 @@ body{
   border-radius:var(--radius-sm);display:inline-flex;align-items:center;
 }
 .tbl-hdr-right{display:flex;align-items:center;gap:8px}
+.pg-btn{
+  font-family:var(--font-mono);font-size:14px;line-height:1;
+  padding:1px 7px;border:1px solid var(--border);border-radius:var(--radius-sm);
+  background:transparent;color:var(--muted);cursor:pointer;
+  transition:color 100ms,background 100ms;
+}
+.pg-btn:hover:not(:disabled){color:var(--text);background:var(--surface-up)}
+.pg-btn:disabled{opacity:0.25;cursor:not-allowed}
 @keyframes flash-bg{0%{background:rgba(240,165,0,0.15)}100%{background:transparent}}
 .flash{animation:flash-bg 150ms ease-out}
 
@@ -382,7 +390,12 @@ body{
   <div class="tbl-wrap">
     <div class="panel-hdr">
       <span class="panel-title">Trade History</span>
-      <span id="tbl-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">— trades</span>
+      <div class="tbl-hdr-right">
+        <span id="tbl-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">— trades</span>
+        <span id="tbl-page-info" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+        <button id="tbl-prev" class="pg-btn" onclick="changeTradePage(-1)" disabled>‹</button>
+        <button id="tbl-next" class="pg-btn" onclick="changeTradePage(1)" disabled>›</button>
+      </div>
     </div>
     <table class="signal-table">
       <thead>
@@ -406,6 +419,9 @@ body{
 const POLL_MS = 5000;
 let _lastTradeIds = new Set();
 let _lastRefresh = null;
+let _allTrades = [];
+let _tradePage = 0;
+const _TRADES_PER_PAGE = 10;
 
 // ─── CLOCK + REFRESH AGE ─────────────────────────────────────────────────────
 (function tick() {
@@ -719,10 +735,35 @@ function renderOpenPositions(positions) {
 
 // ─── TRADE HISTORY TABLE ─────────────────────────────────────────────────────
 function renderTradeHistory(trades) {
+  const prevIds = _lastTradeIds;
+  _lastTradeIds = new Set(trades.map(t => t.id));
+  _allTrades = trades;
+  _renderTradePage(prevIds);
+}
+
+function changeTradePage(delta) {
+  const totalPages = Math.max(1, Math.ceil(_allTrades.length / _TRADES_PER_PAGE));
+  _tradePage = Math.max(0, Math.min(_tradePage + delta, totalPages - 1));
+  _renderTradePage(_lastTradeIds);
+}
+
+function _renderTradePage(prevIds) {
+  const total = _allTrades.length;
+  const totalPages = Math.max(1, Math.ceil(total / _TRADES_PER_PAGE));
+  if (total > 0) _tradePage = Math.min(_tradePage, totalPages - 1);
+  const start = _tradePage * _TRADES_PER_PAGE;
+  const end = Math.min(start + _TRADES_PER_PAGE, total);
+  const pageTrades = _allTrades.slice(start, end);
+
+  document.getElementById('tbl-count').textContent = `${total} trade${total !== 1 ? 's' : ''}`;
+  document.getElementById('tbl-page-info').textContent = total > _TRADES_PER_PAGE
+    ? `${start + 1}–${end} of ${total}`
+    : '';
+  document.getElementById('tbl-prev').disabled = _tradePage === 0;
+  document.getElementById('tbl-next').disabled = _tradePage >= totalPages - 1 || total === 0;
+
   const tbody = document.getElementById('trades-tbody');
-  document.getElementById('tbl-count').textContent = `${trades.length} trade${trades.length !== 1 ? 's' : ''}`;
-  const newIds = new Set(trades.map(t => t.id));
-  tbody.innerHTML = trades.map(t => {
+  tbody.innerHTML = pageTrades.map(t => {
     const dc = t.direction === 'long' ? 'b-long' : 'b-short';
     const won = t.pnl_usdt > 0;
     const reasonLabel = {take_profit:'TP',stop_loss:'SL',signal_flip:'FLIP'}[t.exit_reason] || t.exit_reason || '—';
@@ -732,8 +773,8 @@ function renderTradeHistory(trades) {
     const pnl = t.pnl_usdt != null
       ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
-    const isNew = !_lastTradeIds.has(t.id);
-    return `<tr${isNew && _lastTradeIds.size > 0 ? ' class="flash"' : ''}>
+    const isNew = !prevIds.has(t.id);
+    return `<tr${isNew && prevIds.size > 0 ? ' class="flash"' : ''}>
       <td class="td-pair">${t.pair.replace('/USDT:USDT','/USDT')}</td>
       <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
       <td class="td-muted">${t.strategy || '—'}</td>
@@ -745,7 +786,6 @@ function renderTradeHistory(trades) {
       <td class="cell-r">${pnl}</td>
     </tr>`;
   }).join('');
-  _lastTradeIds = newIds;
 }
 
 // ─── MAIN REFRESH ────────────────────────────────────────────────────────────
