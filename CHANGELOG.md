@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0.1] - 2026-05-05
+
+### Fixed
+- `supply_demand`: proximity window now uses ATR from `zone_df` (1H when available) instead of 15m ATR — 15m ATR is 3-5x smaller than 1H zone scale, causing the strategy to near-never fire in production
+- `supply_demand`: cross-check 1H zones against the last 20 15m closes to catch intra-hour breaches that 1H data misses before evaluating approach conditions
+- `supply_demand`: per-regime RR ratios applied correctly (choppy 1.5×, trending 2.5×, high-vol 2.0×) — previously `rr_map` was duplicated in `signal_engine.py` with no guarantee of staying in sync; now `_calc_take_profit` from `signals.generator` is the single source
+- Dashboard: `_migrate_paper_db()` moved into `create_app()` so it runs under gunicorn/pytest app-factory, not only `__main__` — previously caused 500 on first API call after gunicorn restart
+- Dashboard: paper-DB migration catches `sqlite3.OperationalError` (column already exists) instead of bare `Exception`, preventing silent swallow of real errors
+- Dashboard: `seg.regime` and `seg.signal_count` escaped before `innerHTML` interpolation in regime timeline tooltip (XSS hardening)
+
+### Changed
+- Regime timeline bar uses stacked lanes — one lane per regime type — instead of a single overlapping bar; high-volatility regime segments now carry the `.high-volatility` CSS class and appear in the stats grid (QA fixes ISSUE-001/002/004)
+- Strategy selector: `supply_demand` fires in `choppy` regime only; removed from `trending-up`, `trending-down`, and `high-volatility` (17% win rate in volatile regimes)
+- Strategy selector: `macd_crossover` removed from `choppy` (whipsaws in sideways markets)
+- 14 new tests: `TestSupplyDemandApproach` (5 tests for approach-based entry logic, 1H zone preference, fallback), `TestCalcTakeProfit` (5 per-regime RR ratio assertions), fixed vacuous `if result is not None: assert` assertions in old supply/demand tests
+
 ## [1.1.0.0] - 2026-05-01
 
 ### Added

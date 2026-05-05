@@ -32,9 +32,16 @@ def _calc_stop_loss(df: pd.DataFrame, direction: str, regime_label: str = "") ->
     return round(entry - atr * mult, 8) if direction == "long" else round(entry + atr * mult, 8)
 
 
-def _calc_take_profit(entry: float, stop: float, direction: str) -> float:
+def _calc_take_profit(entry: float, stop: float, direction: str, regime_label: str = "") -> float:
     risk = abs(entry - stop)
-    rr = cfg()["signals"]["rr_ratio"]
+    c = cfg()["signals"]
+    rr_map = {
+        "choppy":       c.get("rr_ratio_choppy",   c["rr_ratio"]),
+        "trending-up":  c.get("rr_ratio_trending",  c["rr_ratio"]),
+        "trending-down": c.get("rr_ratio_trending", c["rr_ratio"]),
+        "high-volatility": c.get("rr_ratio_high_vol", c["rr_ratio"]),
+    }
+    rr = rr_map.get(regime_label, c["rr_ratio"])
     return round(entry + risk * rr, 8) if direction == "long" else round(entry - risk * rr, 8)
 
 
@@ -45,7 +52,7 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
     if stop is None:
         logger.warning(f"ATR is NaN for {pair} — skipping stop-loss")
         return None
-    take_profit = _calc_take_profit(entry, stop, direction)
+    take_profit = _calc_take_profit(entry, stop, direction, regime.label)
     return {
         "pair": pair,
         "direction": direction,
@@ -182,36 +189,78 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
 
 
 def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
-                  timeframe: str) -> Optional[dict]:
-    zones = _find_sd_zones(df)
+                  timeframe: str, df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
+    """
+    Fires when 15m price is APPROACHING (not inside) a supply/demand zone.
+    Uses 1H zones when available — structurally more significant, wider, and price
+    respects them longer. Falls back to 15m zones if df_1h is absent.
+    Entry triggers when price is within 1.5× ATR of the zone boundary and the last
+    3 candles confirm price is moving toward it.
+    """
+    zone_df = df_1h if (df_1h is not None and len(df_1h) >= 30) else df
+    zones = _find_sd_zones(zone_df)
     if not zones:
         return None
 
-    # Cap at 3 most recent live zones per side
     demand_zones = [z for z in zones if z["zone_type"] == "demand" and not z["mitigated"]][-3:]
     supply_zones = [z for z in zones if z["zone_type"] == "supply" and not z["mitigated"]][-3:]
+    if not demand_zones and not supply_zones:
+        return None
 
     close_now = df["close"].iloc[-1]
 
-    # Check mitigation by current candle BEFORE checking entry
-    for zone in demand_zones:
-        if close_now < zone["bottom"]:
-            zone["mitigated"] = True
-    for zone in supply_zones:
-        if close_now > zone["top"]:
-            zone["mitigated"] = True
+    # Cross-check 1H zones against 15m price: if close_now has already breached a zone,
+    # the approach logic below will exclude it (close_now > zone["top"] fails for demand),
+    # but explicitly filter zones the 1H data missed due to intra-hour 15m moves.
+    if zone_df is not df:
+        for z in demand_zones:
+            if df["close"].iloc[-20:].min() < z["bottom"]:
+                z["mitigated"] = True
+        for z in supply_zones:
+            if df["close"].iloc[-20:].max() > z["top"]:
+                z["mitigated"] = True
+        demand_zones = [z for z in demand_zones if not z["mitigated"]]
+        supply_zones = [z for z in supply_zones if not z["mitigated"]]
+        if not demand_zones and not supply_zones:
+            return None
 
-    # In trending regimes, only trade with the trend — don't counter-trend on S/D zones
+    # ATR from zone_df so proximity window matches the scale of the zones.
+    # Using 15m ATR against 1H zones made the window 3-5x too narrow.
+    c = cfg()["signals"]
+    atr_series = ta.atr(zone_df["high"], zone_df["low"], zone_df["close"], length=c["atr_period"])
+    atr = atr_series.iloc[-1]
+    if pd.isna(atr):
+        return None
+    proximity = 1.5 * atr
+
+    # Approach direction: count how many of the last 3 closes are falling vs rising
+    falling = rising = 0
+    if len(df) >= 4:
+        recent = df["close"].iloc[-4:-1]
+        for i in range(1, len(recent)):
+            if recent.iloc[i] < recent.iloc[i - 1]:
+                falling += 1
+            elif recent.iloc[i] > recent.iloc[i - 1]:
+                rising += 1
+
+    # Only trade with the trend in directional regimes
     allow_long  = regime.label != "trending-down"
     allow_short = regime.label != "trending-up"
 
     if allow_long:
         for zone in demand_zones:
-            if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+            # Price above zone and falling toward it
+            if (close_now > zone["top"]
+                    and close_now <= zone["top"] + proximity
+                    and falling >= 2):
                 return _signal(pair, "long", "supply_demand", regime, df, timeframe)
+
     if allow_short:
         for zone in supply_zones:
-            if not zone["mitigated"] and zone["bottom"] <= close_now <= zone["top"]:
+            # Price below zone and rising toward it
+            if (close_now < zone["bottom"]
+                    and close_now >= zone["bottom"] - proximity
+                    and rising >= 2):
                 return _signal(pair, "short", "supply_demand", regime, df, timeframe)
 
     return None
@@ -325,9 +374,12 @@ GENERATORS = {
 
 
 def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
-                 regime: RegimeResult, timeframe: str) -> Optional[dict]:
+                 regime: RegimeResult, timeframe: str,
+                 df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
     gen = GENERATORS.get(strategy)
     if gen is None:
         logger.warning(f"Unknown strategy: {strategy}")
         return None
+    if strategy == "supply_demand":
+        return gen(pair, df, regime, timeframe, df_1h=df_1h)
     return gen(pair, df, regime, timeframe)

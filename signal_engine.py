@@ -13,7 +13,7 @@ from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe, fetch_ticker_sa
 from db.schema import init_db, get_conn, log_signal, is_duplicate
 from regime.classifier import classify, RegimeResult, _to_df
 from signals.selector import active_strategies
-from signals.generator import run_strategy
+from signals.generator import run_strategy, _calc_take_profit
 from llm.commentary import generate_commentary
 from eval.outcomes import run_evaluation
 from alerts.telegram import send_signal_alert
@@ -33,9 +33,13 @@ def _market_session(utc_hour: int) -> str:
     return "Off-hours 🌙"
 
 
-def _build_regime_context(exchange, pairs: list, timeframe: str, limit: int) -> dict[str, RegimeResult]:
-    """Fetch 1h regime for all pairs. Returns dict[pair, RegimeResult] for MTF signal generation."""
+def _build_regime_context(
+    exchange, pairs: list, timeframe: str, limit: int
+) -> tuple[dict[str, RegimeResult], dict]:
+    """Fetch 1h regime for all pairs.
+    Returns (regimes, df_1h_map) — the 1h dataframes are reused by S/D zone detection."""
     context: dict[str, RegimeResult] = {}
+    df_1h_map: dict = {}
     for pair in pairs:
         ohlcv = fetch_ohlcv_safe(exchange, pair, timeframe, limit)
         if ohlcv is None or len(ohlcv) < 55:
@@ -43,13 +47,15 @@ def _build_regime_context(exchange, pairs: list, timeframe: str, limit: int) -> 
         try:
             result = classify(ohlcv)
             context[pair] = result
+            df_1h_map[pair] = _to_df(ohlcv)
         except ValueError:
             pass
-    return context
+    return context, df_1h_map
 
 
 def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
              dedup_window: int, regimes_1h: dict[str, RegimeResult],
+             df_1h_map: dict | None = None,
              shadow_mode: bool = True) -> list[dict]:
     """One signal engine cycle. Uses pre-built 1h regimes; fetches 15m candles for indicators."""
     fired = []
@@ -90,23 +96,23 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
         else:
             logger.warning(f"{pair}: ticker fetch failed, using candle close as entry price")
 
+        df_1h = (df_1h_map or {}).get(pair)
+
         for strategy in strategies:
-            signal = run_strategy(strategy, pair, df, regime, timeframe)
+            signal = run_strategy(strategy, pair, df, regime, timeframe, df_1h=df_1h)
             if signal is None:
                 continue
 
-            # Reanchor entry/stop/TP to live market price
+            # Reanchor entry/stop/TP to live market price using per-regime RR
             if live_price is not None:
-                candle_entry = signal["entry_price"]
-                risk = abs(candle_entry - signal["suggested_stop_loss"])
-                rr = cfg()["signals"]["rr_ratio"]
+                risk = abs(signal["entry_price"] - signal["suggested_stop_loss"])
+                live_stop = (round(live_price - risk, 8) if signal["direction"] == "long"
+                             else round(live_price + risk, 8))
                 signal["entry_price"] = round(live_price, 8)
-                if signal["direction"] == "long":
-                    signal["suggested_stop_loss"] = round(live_price - risk, 8)
-                    signal["suggested_take_profit"] = round(live_price + risk * rr, 8)
-                else:
-                    signal["suggested_stop_loss"] = round(live_price + risk, 8)
-                    signal["suggested_take_profit"] = round(live_price - risk * rr, 8)
+                signal["suggested_stop_loss"] = live_stop
+                signal["suggested_take_profit"] = _calc_take_profit(
+                    live_price, live_stop, signal["direction"], regime.label
+                )
 
             # Deduplication check
             if is_duplicate(conn, pair, signal["direction"], strategy,
@@ -149,11 +155,11 @@ def signal_job(exchange, pairs: list, timeframe: str, limit: int,
                dedup_window: int, shadow_mode: bool) -> None:
     c = cfg()
     with get_conn() as conn:
-        regimes_1h = _build_regime_context(
+        regimes_1h, df_1h_map = _build_regime_context(
             exchange, pairs, c["regime_timeframe"], c["regime_limit"]
         )
         fired = run_once(exchange, conn, pairs, timeframe, limit, dedup_window,
-                         regimes_1h, shadow_mode)
+                         regimes_1h, df_1h_map, shadow_mode)
         if not fired:
             logger.debug(f"No signals this run at {datetime.now(timezone.utc).isoformat()}")
 

@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 from regime.classifier import RegimeResult, _to_df
-from signals.generator import ema_9_21_crossover, rsi_divergence, vol_breakout, _calc_stop_loss
+from signals.generator import ema_9_21_crossover, rsi_divergence, vol_breakout, _calc_stop_loss, _calc_take_profit
 
 
 def _make_regime(label="trending-up", conf=0.8, age=5, stable=True):
@@ -70,6 +70,53 @@ class TestRsiDivergence:
         if result is not None:
             assert result["strategy"] == "rsi_divergence"
             assert result["direction"] in ("long", "short")
+
+
+class TestCalcTakeProfit:
+    """Verify per-regime RR ratios are applied by _calc_take_profit."""
+
+    def test_choppy_uses_lower_rr(self):
+        from utils.config import get as cfg
+        c = cfg()["signals"]
+        entry, stop = 100.0, 98.0  # risk = 2.0
+        tp_choppy = _calc_take_profit(entry, stop, "long", "choppy")
+        tp_default = _calc_take_profit(entry, stop, "long", "")
+        rr_choppy = c.get("rr_ratio_choppy", c["rr_ratio"])
+        rr_default = c["rr_ratio"]
+        assert abs(tp_choppy - (entry + 2.0 * rr_choppy)) < 1e-6
+        assert rr_choppy < rr_default, "choppy RR should be lower (tighter target)"
+
+    def test_trending_uses_higher_rr(self):
+        from utils.config import get as cfg
+        c = cfg()["signals"]
+        entry, stop = 100.0, 98.0
+        tp_trending = _calc_take_profit(entry, stop, "long", "trending-up")
+        rr_trending = c.get("rr_ratio_trending", c["rr_ratio"])
+        assert abs(tp_trending - (entry + 2.0 * rr_trending)) < 1e-6
+
+    def test_high_vol_rr_between_choppy_and_trending(self):
+        from utils.config import get as cfg
+        c = cfg()["signals"]
+        entry, stop = 100.0, 98.0
+        tp_hv = _calc_take_profit(entry, stop, "long", "high-volatility")
+        rr_hv = c.get("rr_ratio_high_vol", c["rr_ratio"])
+        rr_choppy = c.get("rr_ratio_choppy", c["rr_ratio"])
+        rr_trending = c.get("rr_ratio_trending", c["rr_ratio"])
+        assert rr_choppy <= rr_hv <= rr_trending, "high-vol RR should be between choppy and trending"
+        assert abs(tp_hv - (entry + 2.0 * rr_hv)) < 1e-6
+
+    def test_short_direction_tp_below_entry(self):
+        entry, stop = 100.0, 102.0
+        for regime in ("choppy", "trending-down", "high-volatility", ""):
+            tp = _calc_take_profit(entry, stop, "short", regime)
+            assert tp < entry, f"Short TP must be below entry for regime={regime!r}"
+
+    def test_unknown_regime_uses_default_rr(self):
+        from utils.config import get as cfg
+        c = cfg()["signals"]
+        entry, stop = 100.0, 98.0
+        tp = _calc_take_profit(entry, stop, "long", "nonexistent-regime")
+        assert abs(tp - (entry + 2.0 * c["rr_ratio"])) < 1e-6
 
 
 class TestVolBreakout:
