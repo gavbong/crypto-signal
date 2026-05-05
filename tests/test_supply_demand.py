@@ -172,31 +172,28 @@ class TestSupplyDemandApproach:
         assert result is None, "Should not fire when price is rising away from demand zone"
 
     def test_1h_zones_preferred_over_15m(self):
-        """When df_1h with 30+ candles is supplied, it is used for zone detection."""
+        """1H zone enables detection that flat 15m alone misses."""
         df_15m = _make_df_with_atr(60, price=110.0, atr_target=2.0)
-        # 15m has NO impulse — no zones
+        # 15m has NO impulse → no zones → should not fire
+        result_without = supply_demand("BTC/USDT:USDT", df_15m.copy(), _make_regime("choppy"), "15m")
+        assert result_without is None, "15m-only (no zones) must return None"
+
+        # 1H has demand zone: open=100, close=108 → zone [100, 108]
         df_1h = _make_df_with_atr(60, price=110.0, atr_target=2.0)
-        # 1H has a demand zone at idx=20: [100, 108]
         df_1h = df_1h.copy()
         df_1h.iloc[20, df_1h.columns.get_loc("open")] = 100.0
         df_1h.iloc[20, df_1h.columns.get_loc("close")] = 108.0
         df_1h.iloc[20, df_1h.columns.get_loc("high")] = 108.5
         df_1h.iloc[20, df_1h.columns.get_loc("low")] = 99.8
-        # 15m current price approaching the 1H zone
+        # 15m last candle: 108.5 — above zone top (108), within proximity (≈3.0), falling
         for i, p in enumerate([111.0, 110.0, 109.0, 108.5], start=-4):
             df_15m.iloc[i, df_15m.columns.get_loc("close")] = p
             df_15m.iloc[i, df_15m.columns.get_loc("open")] = p + 0.3
             df_15m.iloc[i, df_15m.columns.get_loc("high")] = p + 0.8
             df_15m.iloc[i, df_15m.columns.get_loc("low")] = p - 0.5
-        regime = _make_regime("choppy")
-        # With df_1h → uses 1H zones (has a zone) → may fire
-        result_with_1h = supply_demand("BTC/USDT:USDT", df_15m, regime, "15m", df_1h=df_1h)
-        # Without df_1h → uses 15m zones (no zones) → None
-        result_without = supply_demand("BTC/USDT:USDT", df_15m, regime, "15m")
-        # 1H zones should enable detection that 15m alone would miss
-        assert result_without is None, "15m-only should find no zones (flat 15m df)"
-        # result_with_1h may or may not fire depending on exact ATR; just verify no crash
-        assert result_with_1h is None or isinstance(result_with_1h, dict)
+        result_with_1h = supply_demand("BTC/USDT:USDT", df_15m, _make_regime("choppy"), "15m", df_1h=df_1h)
+        assert result_with_1h is not None, "1H zone should trigger long signal on approaching 15m price"
+        assert result_with_1h["direction"] == "long"
 
     def test_df_1h_too_short_falls_back_to_15m(self):
         """If df_1h has fewer than 30 rows, fall back to 15m for zone detection."""
@@ -209,31 +206,29 @@ class TestSupplyDemandApproach:
 
 
 class TestSupplyDemand:
-    def test_price_entering_demand_zone_fires_long(self):
+    def test_price_inside_demand_zone_does_not_fire(self):
+        """New approach logic: fires when APPROACHING from outside, not when inside zone."""
         df = _make_flat_df(60, price=100.0)
         df = _inject_bullish_impulse(df, idx=20, magnitude=8.0)
-        # Set current price (last candle) inside the demand zone [100, 108]
+        # Price inside the demand zone [100, 108] — not approaching from above
         df = df.copy()
         df.iloc[-1, df.columns.get_loc("close")] = 103.0
         df.iloc[-1, df.columns.get_loc("open")] = 102.0
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
-        if result is not None:
-            assert result["direction"] == "long"
-            assert result["strategy"] == "supply_demand"
+        assert result is None, "Inside-zone price should not fire under approach-based logic"
 
-    def test_price_entering_supply_zone_fires_short(self):
+    def test_price_inside_supply_zone_does_not_fire(self):
+        """New approach logic: fires when APPROACHING from outside, not when inside zone."""
         df = _make_flat_df(60, price=100.0)
         df = _inject_bearish_impulse(df, idx=20, magnitude=8.0)
-        # Set current price inside supply zone [92, 100]
+        # Price inside supply zone [92, 100] — not approaching from below
         df = df.copy()
         df.iloc[-1, df.columns.get_loc("close")] = 96.0
         df.iloc[-1, df.columns.get_loc("open")] = 97.0
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
-        if result is not None:
-            assert result["direction"] == "short"
-            assert result["strategy"] == "supply_demand"
+        assert result is None, "Inside-zone price should not fire under approach-based logic"
 
     def test_no_active_zones_returns_none(self):
         """Flat market with no impulse → no zones → None."""
