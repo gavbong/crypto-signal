@@ -1,0 +1,17 @@
+.env
+*.pyc
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+signals.db
+*.db
+*.db-shm
+*.db-wal
+logs/
+notebooks/*_executed.ipynb
+.coverage
+htmlcov/
+.gstack/
+analysis/
