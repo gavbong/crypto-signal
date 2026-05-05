@@ -13,3 +13,4 @@ logs/
 notebooks/*_executed.ipynb
 .coverage
 htmlcov/
+.gstack/

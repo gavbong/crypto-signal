@@ -41,7 +41,11 @@ signals:
   atr_stop_multiplier: 1.5
   atr_stop_multiplier_choppy: 2.0      # wider stop for mean-reversion plays
   atr_stop_multiplier_high_vol: 2.5    # wider stop in high-volatility regime
-  rr_ratio: 2.0                        # take-profit = entry + risk * rr_ratio
+  trending_max_confidence: 0.65        # skip trending signals above this — high confidence = extended move, late entry
+  rr_ratio: 2.0                        # default take-profit = entry + risk * rr_ratio
+  rr_ratio_choppy: 1.5                 # mean-reversion plays: closer TP, price oscillates shorter
+  rr_ratio_trending: 2.5              # trend-following: sustained moves justify wider target
+  rr_ratio_high_vol: 2.0              # volatile but uncertain direction: keep at default
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
 
 deduplication:

@@ -94,7 +94,14 @@ def send_signal_alert(signal: dict) -> bool:
         if resp.ok:
             logger.debug(f"Telegram alert sent for {signal['pair']} {signal['direction']}")
             return True
-        logger.warning(f"Telegram API error {resp.status_code}: {resp.text[:200]}")
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        new_id = body.get("parameters", {}).get("migrate_to_chat_id")
+        if new_id:
+            logger.error(
+                f"Telegram: group upgraded to supergroup — update TELEGRAM_CHAT_ID to {new_id} in .env"
+            )
+        else:
+            logger.warning(f"Telegram API error {resp.status_code}: {resp.text[:200]}")
     except requests.RequestException as e:
         logger.warning(f"Telegram request failed: {e}")
     return False

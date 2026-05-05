@@ -86,6 +86,8 @@ body{
 }
 .header-right{margin-left:auto;display:flex;align-items:center;gap:12px}
 .header-ts{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.refresh-age{font-family:var(--font-mono);font-size:10px;color:var(--muted);opacity:0.6;transition:opacity 200ms}
+.refresh-age.fresh{opacity:1;color:var(--long)}
 
 /* ── MAIN ────────────────────────────────────────────────────── */
 .main{margin-left:52px;margin-top:52px;padding:16px 20px 32px;max-width:calc(1440px - 52px)}
@@ -136,12 +138,13 @@ body{
 .mid-grid{display:grid;grid-template-columns:65fr 35fr;gap:12px;margin-bottom:12px}
 
 /* ── REGIME TIMELINE ─────────────────────────────────────────── */
-.regime-bar-wrap{position:relative;height:40px;margin-bottom:6px}
-.regime-segment{position:absolute;top:50%;transform:translateY(-50%);height:24px;border-radius:var(--radius-sm)}
-.regime-segment.choppy{background:rgba(240,165,0,0.07);border:1px solid rgba(240,165,0,0.22)}
-.regime-segment.trending-up{background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.22)}
-.regime-segment.trending-down{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.22)}
-.regime-segment.high-vol{background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.22)}
+.regime-bar-wrap{position:relative;margin-bottom:6px}
+.regime-lane{position:relative;height:10px;margin-bottom:2px}
+.regime-segment{position:absolute;top:0;height:100%;border-radius:var(--radius-sm)}
+.regime-segment.choppy{background:rgba(240,165,0,0.18);border:1px solid rgba(240,165,0,0.35)}
+.regime-segment.trending-up{background:rgba(34,197,94,0.18);border:1px solid rgba(34,197,94,0.35)}
+.regime-segment.trending-down{background:rgba(239,68,68,0.18);border:1px solid rgba(239,68,68,0.35)}
+.regime-segment.high-volatility{background:rgba(59,130,246,0.18);border:1px solid rgba(59,130,246,0.35)}
 .regime-seg-label{
   position:absolute;top:50%;transform:translateY(-50%);
   font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;
@@ -162,7 +165,7 @@ body{
 .regime-axis{display:flex;justify-content:space-between;margin-top:4px}
 .regime-axis span{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
 .regime-annotation{display:block;font-family:var(--font-mono);font-size:9px;color:var(--muted);text-align:center;margin-top:4px;opacity:0.6}
-.regime-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.regime-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}
 .regime-stat{background:var(--surface-up);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
 .rs-label{font-family:var(--font-ui);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.07em;color:var(--muted);margin-bottom:5px}
 .rs-val{font-family:var(--font-mono);font-size:17px;font-weight:500;color:var(--accent)}
@@ -226,7 +229,7 @@ body{
   font-family:var(--font-ui);font-size:10px;font-weight:500;
   text-transform:uppercase;letter-spacing:0.08em;color:var(--muted);
   padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);
-  white-space:nowrap;background:var(--surface);position:sticky;top:104px;
+  white-space:nowrap;background:var(--surface);
 }
 .signal-table th.r{text-align:right}
 .signal-table td{font-size:12px;padding:7px 12px;border-bottom:1px solid rgba(31,35,48,0.6);vertical-align:middle;white-space:nowrap}
@@ -298,6 +301,7 @@ body{
     <span class="pair-chip">—</span>
   </div>
   <div class="header-right">
+    <span class="refresh-age" id="refresh-age"></span>
     <span class="header-ts" id="hdr-ts">—</span>
   </div>
 </header>
@@ -310,7 +314,7 @@ body{
 
   <div class="stats-grid">
     <div class="stat-card">
-      <div class="stat-label">Balance</div>
+      <div class="stat-label">Equity</div>
       <div class="stat-value" id="stat-balance">—</div>
       <div class="stat-sub" id="stat-balance-sub">Initial 1,000 USDT</div>
     </div>
@@ -374,7 +378,7 @@ body{
     <table class="signal-table">
       <thead>
         <tr>
-          <th>Pair</th><th>Dir</th><th>Strategy</th><th>Opened</th>
+          <th>Pair</th><th>Dir</th><th>Strategy</th><th>Opened</th><th>Closed</th>
           <th>Entry</th><th>Exit</th><th>Reason</th>
           <th class="r">P&amp;L</th>
         </tr>
@@ -392,17 +396,28 @@ body{
 
 const POLL_MS = 5000;
 let _lastTradeIds = new Set();
+let _lastRefresh = null;
 
-// ─── CLOCK ───────────────────────────────────────────────────────────────────
+// ─── CLOCK + REFRESH AGE ─────────────────────────────────────────────────────
 (function tick() {
   const el = document.getElementById('hdr-ts');
   const d = new Date();
   el.textContent = d.toISOString().slice(0,19).replace('T',' ') + ' UTC';
+
+  const ageEl = document.getElementById('refresh-age');
+  if (ageEl && _lastRefresh) {
+    const secs = Math.round((Date.now() - _lastRefresh) / 1000);
+    ageEl.textContent = '↻ ' + (secs < 2 ? 'just now' : secs + 's ago');
+    if (secs < 3) { ageEl.classList.add('fresh'); }
+    else { ageEl.classList.remove('fresh'); }
+  }
+
   setTimeout(tick, 1000);
 })();
 
 // ─── TOOLTIP ─────────────────────────────────────────────────────────────────
 const TIP = document.getElementById('tooltip');
+function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function showTip(e, html) {
   TIP.innerHTML = html;
   TIP.classList.add('visible');
@@ -424,6 +439,11 @@ function fmt(p) {
 function fmtDate(iso) {
   if (!iso) return '—';
   return iso.slice(0,10);
+}
+
+function fmtDT(iso) {
+  if (!iso) return '—';
+  return iso.slice(5,16).replace('T',' ');
 }
 
 function fmtDateTime(iso) {
@@ -475,14 +495,19 @@ function renderHealth(health) {
 
 // ─── PAPER STAT CARDS ────────────────────────────────────────────────────────
 function renderPaperStats(stats) {
-  const balance = stats.balance_usdt ?? 0;
+  const equity = stats.equity_usdt ?? stats.balance_usdt ?? 0;
   const initial = stats.initial_balance ?? 1000;
-  const pnl = balance - initial;
+  const balance = stats.balance_usdt ?? 0;
+  const unrealized = stats.unrealized_pnl ?? 0;
+  const equityDelta = equity - initial;
   const balEl = document.getElementById('stat-balance');
-  balEl.innerHTML = balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '<span class="stat-unit"> USDT</span>';
-  balEl.className = 'stat-value ' + (balance >= initial ? 'green' : 'red');
+  balEl.innerHTML = equity.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + '<span class="stat-unit"> USDT</span>';
+  balEl.className = 'stat-value ' + (equity >= initial ? 'green' : 'red');
+  const unrealStr = unrealized !== 0
+    ? ` · unreal: ${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(2)}`
+    : '';
   document.getElementById('stat-balance-sub').textContent =
-    `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)} USDT vs ${initial.toLocaleString()} initial`;
+    `${equityDelta >= 0 ? '+' : ''}${equityDelta.toFixed(2)} vs initial${unrealStr}`;
 
   const realized = stats.realized_pnl ?? 0;
   const realEl = document.getElementById('stat-realized');
@@ -535,35 +560,41 @@ function renderRegimeTimeline(regime, trades) {
   }
 
   const startMs = new Date(ps + 'T00:00:00Z').getTime();
-  const endMs   = new Date(pe + 'T00:00:00Z').getTime();
+  const endMs   = new Date(pe + 'T23:59:59Z').getTime();
   const totalMs = Math.max(endMs - startMs, 1);
 
-  regime.segments.forEach(seg => {
-    const segStart = new Date(seg.start + 'T00:00:00Z').getTime();
-    const segEnd   = new Date(seg.end   + 'T00:00:00Z').getTime();
-    const leftPct  = ((segStart - startMs) / totalMs * 100).toFixed(2) + '%';
-    const widthPct = ((segEnd - segStart) / totalMs * 100).toFixed(2) + '%';
-
-    const div = document.createElement('div');
-    div.className = 'regime-segment ' + seg.regime.replace(/[^a-z-]/g,'');
-    div.style.left = leftPct; div.style.width = widthPct;
-    bar.appendChild(div);
-
-    const lbl = document.createElement('div');
-    lbl.className = 'regime-seg-label';
-    lbl.style.left = leftPct; lbl.textContent = seg.regime.toUpperCase();
-    bar.appendChild(lbl);
+  // Each regime gets its own lane so they don't overlap
+  const activeSegs = regime.segments.filter(s => {
+    const segStart = new Date(s.start + 'T00:00:00Z').getTime();
+    const segEnd   = new Date(s.end   + 'T00:00:00Z').getTime();
+    return (segEnd - segStart) > 0 || s.signal_count > 0;
   });
 
-  if (regime.segments.length === 1) {
-    const ann = document.createElement('span');
-    ann.className = 'regime-annotation';
-    const days = Math.round((endMs - startMs) / 86400000);
-    ann.textContent = `Single regime · ${days}d`;
-    bar.appendChild(ann);
-  }
+  activeSegs.forEach(seg => {
+    const segStart = new Date(seg.start + 'T00:00:00Z').getTime();
+    const segEnd   = new Date(seg.end   + 'T23:59:59Z').getTime();
+    const leftPct  = ((segStart - startMs) / totalMs * 100).toFixed(2) + '%';
+    const widthPct = (Math.max((segEnd - segStart) / totalMs * 100, 2)).toFixed(2) + '%';
 
-  // Paper trade open events as dots on the timeline
+    const lane = document.createElement('div');
+    lane.className = 'regime-lane';
+
+    const div = document.createElement('div');
+    div.className = 'regime-segment ' + seg.regime;
+    div.style.left = leftPct; div.style.width = widthPct;
+    const segTip = `<b>${_esc(seg.regime).toUpperCase()}</b><br>${fmtAxisDate(seg.start)} → ${fmtAxisDate(seg.end)}<br>${_esc(seg.signal_count)} signals`;
+    div.addEventListener('mouseenter', e => showTip(e, segTip));
+    div.addEventListener('mouseleave', hideTip);
+    lane.appendChild(div);
+    bar.appendChild(lane);
+  });
+
+  // Dot row — trade open events positioned on their own full-width lane
+  const dotLane = document.createElement('div');
+  dotLane.className = 'regime-lane';
+  dotLane.style.height = '14px';
+  dotLane.style.marginTop = '4px';
+
   const prevDots = {};
   trades.forEach(t => {
     if (!t.opened_at) return;
@@ -589,8 +620,9 @@ function renderRegimeTimeline(regime, trades) {
     dot.style.left = finalPct.toFixed(2) + '%';
     dot.addEventListener('mouseenter', e => showTip(e, tip));
     dot.addEventListener('mouseleave', hideTip);
-    bar.appendChild(dot);
+    dotLane.appendChild(dot);
   });
+  bar.appendChild(dotLane);
 
   const midMs = startMs + (endMs - startMs) / 2;
   const midDate = new Date(midMs).toISOString().slice(0,10);
@@ -609,6 +641,7 @@ function renderRegimeStats(stats) {
     {key:'choppy', label:'Choppy'},
     {key:'trending-up', label:'Trending ↑'},
     {key:'trending-down', label:'Trending ↓'},
+    {key:'high-volatility', label:'High-Vol'},
   ];
   grid.innerHTML = REGIMES.map(({key, label}) => {
     const r = stats.by_regime && stats.by_regime[key];
@@ -641,6 +674,15 @@ function renderOpenPositions(positions) {
   body.innerHTML = positions.map((p, i) => {
     const dc = p.direction === 'long' ? 'b-long' : 'b-short';
     const sep = i < positions.length - 1;
+    const haslive = p.last_price != null;
+    const upnl = p.unrealized_pnl;
+    const upnlCls = upnl == null ? '' : upnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const upnlStr = upnl != null
+      ? `<span class="${upnlCls}">${upnl >= 0 ? '+' : ''}${upnl.toFixed(2)} USDT</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const notionalStr = p.notional_usdt != null
+      ? `<span style="color:var(--muted)">${p.notional_usdt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} USDT</span>`
+      : '';
     return `<div style="margin-bottom:${sep?'12px':'0'};padding-bottom:${sep?'12px':'0'};border-bottom:${sep?'1px solid var(--border)':'none'}">
       <div class="sig-meta" style="margin-bottom:8px">
         <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
@@ -653,6 +695,11 @@ function renderOpenPositions(positions) {
         <div class="price-row"><span class="price-lbl">Stop</span><span class="price-val pv-stop">${fmt(p.stop_loss)}</span></div>
         <div class="price-row"><span class="price-lbl">Target</span><span class="price-val pv-target">${fmt(p.take_profit)}</span></div>
       </div>
+      ${haslive ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11px">
+        <span style="color:var(--muted)">Live <span style="font-family:var(--font-mono);color:var(--fg)">${fmt(p.last_price)}</span></span>
+        <span>Unrealized ${upnlStr}</span>
+        <span>Notional ${notionalStr}</span>
+      </div>` : ''}
       <div class="sig-footer">
         <span>${p.contracts} contracts · ${p.strategy || '—'}</span>
         <span>${p.margin_usdt != null ? p.margin_usdt.toFixed(2) + ' USDT margin' : '—'}</span>
@@ -681,7 +728,8 @@ function renderTradeHistory(trades) {
       <td class="td-pair">${t.pair.replace('/USDT:USDT','/USDT')}</td>
       <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
       <td class="td-muted">${t.strategy || '—'}</td>
-      <td class="td-date">${fmtDate(t.opened_at)}</td>
+      <td class="td-date">${fmtDT(t.opened_at)}</td>
+      <td class="td-date">${fmtDT(t.closed_at)}</td>
       <td class="td-mono">${fmt(t.entry_price)}</td>
       <td class="td-mono">${fmt(t.exit_price)}</td>
       <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
@@ -699,7 +747,7 @@ async function refresh() {
       fetch('/api/paper/positions'),
       fetch('/api/paper/history'),
       fetch('/api/health'),
-      fetch('/api/regime?filter=all'),
+      fetch('/api/regime?filter=live'),
       fetch('/api/stats?filter=live'),
     ]);
     const [paperStats, posData, histData, health, regime, sigStats] = await Promise.all([
@@ -716,6 +764,7 @@ async function refresh() {
     renderRegimeStats(sigStats);
     renderOpenPositions(posData.positions);
     renderTradeHistory(histData.trades);
+    _lastRefresh = Date.now();
 
   } catch (err) {
     console.error('Refresh error:', err);

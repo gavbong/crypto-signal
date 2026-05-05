@@ -21,7 +21,7 @@ from db.schema import get_conn
 # ── Constants ────────────────────────────────────────────────────────────────
 
 INITIAL_BALANCE       = 1_000.0
-LEVERAGE              = 10       # 10x: liquidation requires ~10% adverse move, stops fire first
+LEVERAGE              = 20       # 20x: liquidation requires ~5% adverse move, stops fire first
 RISK_PCT              = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
 MIN_REGIME_CONFIDENCE = 0.20     # skip signals where regime classification is very uncertain
 
@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     closed_at   TIMESTAMP,
     exit_price  REAL,
     exit_reason TEXT,
-    pnl_usdt    REAL
+    pnl_usdt    REAL,
+    last_price  REAL
 );
 
 CREATE TABLE IF NOT EXISTS paper_daily_pnl (
@@ -83,6 +84,12 @@ CREATE TABLE IF NOT EXISTS paper_state (
 
 def init_paper_db(conn) -> None:
     conn.executescript(_SCHEMA)
+    # Migrate: add last_price column to existing tables
+    try:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN last_price REAL")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
     for key, default in [("last_signal_id", "0"), ("day_number", "0")]:
         conn.execute(
             "INSERT OR IGNORE INTO paper_state (key, value) VALUES (?, ?)",
@@ -163,14 +170,25 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     pair      = signal["pair"]
     direction = signal["direction"]
 
-    # Regime confidence gate
+    # Regime confidence gates
     conf = signal.get("regime_confidence")
+    regime_label = signal.get("regime", "")
+
     if conf is not None and conf < MIN_REGIME_CONFIDENCE:
         logger.debug(
             f"Paper: signal {signal.get('id')} regime_confidence={conf:.3f} "
             f"below {MIN_REGIME_CONFIDENCE} — skipping"
         )
         return None
+
+    if conf is not None and "trending" in regime_label:
+        max_conf = cfg()["signals"].get("trending_max_confidence", 0.65)
+        if conf > max_conf:
+            logger.debug(
+                f"Paper: signal {signal.get('id')} {regime_label} conf={conf:.3f} "
+                f"> {max_conf} — extended move gate, skipping"
+            )
+            return None
 
     existing = conn.execute(
         "SELECT * FROM paper_positions WHERE pair=? AND exit_price IS NULL",
@@ -287,6 +305,8 @@ def check_positions(conn, exchange) -> int:
             logger.warning(f"Paper: no ticker for {pos['pair']} — skipping position check")
             continue
 
+        conn.execute("UPDATE paper_positions SET last_price=? WHERE id=?", (live, pos["id"]))
+
         if pos["direction"] == "long":
             if live <= pos["stop_loss"]:
                 close_position(conn, pos, live, "stop_loss")
@@ -301,6 +321,7 @@ def check_positions(conn, exchange) -> int:
             elif live <= pos["take_profit"]:
                 close_position(conn, pos, live, "take_profit")
                 closed += 1
+    conn.commit()
     return closed
 
 
