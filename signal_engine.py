@@ -15,8 +15,10 @@ from regime.classifier import classify, RegimeResult, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy, _calc_take_profit
 from llm.commentary import generate_commentary
+from apscheduler.triggers.cron import CronTrigger
 from eval.outcomes import run_evaluation
 from alerts.telegram import send_signal_alert
+from strategy_advisor import run_strategy_review
 
 
 
@@ -170,6 +172,15 @@ def eval_job(exchange) -> None:
         logger.info(f"Outcome evaluation complete | resolved={result['resolved']}")
 
 
+def review_job() -> None:
+    try:
+        rows = run_strategy_review()
+        disable_count = sum(1 for r in rows if r["status"] == "DISABLE")
+        logger.info(f"Strategy review complete | pairs={len(rows)} disable={disable_count}")
+    except Exception as e:
+        logger.error(f"Strategy review failed: {e}")
+
+
 def main() -> None:
     import os
     os.makedirs("logs", exist_ok=True)
@@ -211,6 +222,15 @@ def main() -> None:
         args=[exchange],
         next_run_time=datetime.now(timezone.utc),
     )
+
+    scheduler.add_job(
+        review_job,
+        CronTrigger(hour=6, minute=0, timezone="UTC"),
+        misfire_grace_time=3600,
+    )
+
+    # Run once at startup so the first deployment always has fresh review data
+    review_job()
 
     try:
         scheduler.start()
