@@ -255,6 +255,7 @@ body{
 .legend-row{display:flex;gap:14px;align-items:center}
 .legend-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
 .legend-dot{width:8px;height:8px;border-radius:9999px;flex-shrink:0}
+.legend-swatch{width:14px;height:6px;border-radius:2px;flex-shrink:0}
 
 /* ── TOOLTIP ─────────────────────────────────────────────────── */
 .tooltip{
@@ -340,10 +341,18 @@ body{
     <div class="panel">
       <div class="panel-hdr">
         <span class="panel-title" id="regime-panel-title">Regime Timeline</span>
-        <div class="legend-row">
-          <span class="legend-item"><span class="legend-dot" style="background:var(--long)"></span>LONG</span>
-          <span class="legend-item"><span class="legend-dot" style="background:var(--short)"></span>SHORT</span>
-          <span class="legend-item"><span class="legend-dot" style="background:var(--stopped)"></span>STOP</span>
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+          <div class="legend-row">
+            <span class="legend-item"><span class="legend-swatch" style="background:rgba(240,165,0,0.35);border:1px solid rgba(240,165,0,0.5)"></span>Choppy</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:rgba(34,197,94,0.35);border:1px solid rgba(34,197,94,0.5)"></span>Trend ↑</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:rgba(239,68,68,0.35);border:1px solid rgba(239,68,68,0.5)"></span>Trend ↓</span>
+            <span class="legend-item"><span class="legend-swatch" style="background:rgba(59,130,246,0.35);border:1px solid rgba(59,130,246,0.5)"></span>Hi-Vol</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-item"><span class="legend-dot" style="background:var(--long)"></span>Long</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--short)"></span>Short</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--stopped)"></span>Stopped</span>
+          </div>
         </div>
       </div>
       <div class="panel-body">
