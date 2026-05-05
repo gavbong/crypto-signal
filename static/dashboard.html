@@ -387,6 +387,23 @@ body{
 
   </div>
 
+  <div class="panel" style="margin-bottom:12px" id="health-panel">
+    <div class="panel-hdr">
+      <span class="panel-title">Strategy Health</span>
+      <span id="health-panel-date" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+    </div>
+    <div class="panel-body" id="health-panel-body">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    </div>
+    <div id="health-drill" style="display:none;padding:10px 14px;border-top:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span id="health-drill-title" style="font-family:var(--font-ui);font-size:12px;color:var(--text);font-weight:600"></span>
+        <button onclick="closeHealthDrill()" style="font-family:var(--font-ui);font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;padding:2px 6px">✕ close</button>
+      </div>
+      <div id="health-drill-body"></div>
+    </div>
+  </div>
+
   <div class="panel" style="margin-bottom:12px">
     <div class="panel-hdr">
       <span class="panel-title">Strategy Performance</span>
@@ -743,6 +760,113 @@ function renderOpenPositions(positions) {
   }).join('');
 }
 
+// ─── STRATEGY HEALTH ─────────────────────────────────────────────────────────
+let _healthRows = [];
+let _allSignals = [];
+
+function renderStrategyHealth(data, signals) {
+  _healthRows = (data && data.rows) ? data.rows : [];
+  _allSignals = signals || [];
+  const body = document.getElementById('health-panel-body');
+  const dateEl = document.getElementById('health-panel-date');
+
+  if (!_healthRows.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No review data yet — runs daily at 06:00 UTC.</span>';
+    dateEl.textContent = '';
+    return;
+  }
+
+  dateEl.textContent = data.date ? `as of ${data.date}` : '';
+
+  const STATUS_ORDER = {DISABLE: 0, CAUTION: 1, WATCH: 2, HEALTHY: 3, 'N/A': 4};
+  const active = _healthRows.filter(r => r.status !== 'N/A')
+                             .sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9));
+
+  body.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;padding:2px 0">${
+    active.map(r => {
+      const label = r.strategy.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+      const regLabel = r.regime.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+
+      let border, statusColor, body;
+      if (r.status === 'DISABLE') {
+        border = 'var(--short)';
+        statusColor = 'var(--short)';
+        const wr = r.win_rate != null ? (r.win_rate * 100).toFixed(1) + '%' : '—';
+        const be = r.breakeven != null ? (r.breakeven * 100).toFixed(1) + '%' : '—';
+        body = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--short);margin-bottom:2px">${wr} WR (need ${be})</div>
+                <div style="font-family:var(--font-ui);font-size:10px;color:var(--muted)">n=${r.n} · net ${r.net_r != null ? r.net_r.toFixed(2) : '—'}R</div>`;
+      } else if (r.status === 'CAUTION') {
+        border = 'var(--accent)';
+        statusColor = 'var(--accent)';
+        const wr = r.win_rate != null ? (r.win_rate * 100).toFixed(1) + '%' : '—';
+        body = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--accent);margin-bottom:2px">${wr} WR</div>
+                <div style="font-family:var(--font-ui);font-size:10px;color:var(--muted)">low confidence (n=${r.n})</div>`;
+      } else if (r.status === 'HEALTHY') {
+        border = 'var(--long)';
+        statusColor = 'var(--long)';
+        const wr = r.win_rate != null ? (r.win_rate * 100).toFixed(1) + '%' : '—';
+        body = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--long);margin-bottom:2px">${wr} WR</div>
+                <div style="font-family:var(--font-ui);font-size:10px;color:var(--muted)">n=${r.n} · net ${r.net_r != null ? r.net_r.toFixed(2) : '—'}R</div>`;
+      } else {
+        border = 'var(--border)';
+        statusColor = 'var(--muted)';
+        body = `<div style="font-family:var(--font-ui);font-size:11px;color:var(--muted)">Watching (n=${r.n})</div>`;
+      }
+
+      return `<div onclick="openHealthDrill('${r.strategy}','${r.regime}')"
+                style="background:var(--surface-up);border:1px solid ${border};border-radius:4px;
+                       padding:10px 12px;cursor:pointer;transition:opacity 0.15s"
+                onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+          <span style="font-family:var(--font-ui);font-size:11px;font-weight:600;color:var(--text)">${label}</span>
+          <span style="font-family:var(--font-ui);font-size:9px;font-weight:700;letter-spacing:0.05em;color:${statusColor}">${r.status}</span>
+        </div>
+        <div style="font-family:var(--font-ui);font-size:10px;color:var(--muted);margin-bottom:6px">${regLabel}</div>
+        ${body}
+      </div>`;
+    }).join('')
+  }</div>`;
+}
+
+function openHealthDrill(strategy, regime) {
+  const drill = document.getElementById('health-drill');
+  const title = document.getElementById('health-drill-title');
+  const drillBody = document.getElementById('health-drill-body');
+
+  const label = strategy.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+  const regLabel = regime.replace(/-/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+  title.textContent = `${label} / ${regLabel} — last resolved signals`;
+
+  const relevant = _allSignals
+    .filter(s => s.strategy === strategy && s.regime === regime && s.outcome)
+    .slice(0, 10);
+
+  if (!relevant.length) {
+    drillBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No resolved signals for this pair yet.</span>';
+  } else {
+    drillBody.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px">${
+      relevant.map(s => {
+        const won = s.outcome === 'win' || s.outcome === 'tp_hit';
+        const cls = won ? 'color:var(--long)' : 'color:var(--short)';
+        const pnl = s.pnl_r != null ? (s.pnl_r >= 0 ? '+' : '') + s.pnl_r.toFixed(2) + 'R' : '—';
+        return `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 8px 4px 0;color:var(--muted)">${fmtDT(s.fired_at)}</td>
+          <td style="padding:4px 8px"><span class="badge ${s.direction === 'long' ? 'b-long' : 'b-short'}">${s.direction.toUpperCase()}</span></td>
+          <td style="padding:4px 8px">${s.pair.replace('/USDT:USDT','/USDT')}</td>
+          <td style="padding:4px 0;${cls};font-weight:600">${s.outcome.toUpperCase()}</td>
+          <td style="padding:4px 0 4px 8px;${cls}">${pnl}</td>
+        </tr>`;
+      }).join('')
+    }</table>`;
+  }
+
+  drill.style.display = 'block';
+}
+
+function closeHealthDrill() {
+  document.getElementById('health-drill').style.display = 'none';
+}
+
 // ─── STRATEGY PERFORMANCE ────────────────────────────────────────────────────
 function renderStrategyStats(trades) {
   const body = document.getElementById('strategy-panel-body');
@@ -840,17 +964,20 @@ function _renderTradePage(prevIds) {
 // ─── MAIN REFRESH ────────────────────────────────────────────────────────────
 async function refresh() {
   try {
-    const [paperStatsRes, posRes, histRes, healthRes, regimeRes, sigStatsRes] = await Promise.all([
+    const [paperStatsRes, posRes, histRes, healthRes, regimeRes, sigStatsRes, analysisRes, signalsRes] = await Promise.all([
       fetch('/api/paper/stats'),
       fetch('/api/paper/positions'),
       fetch('/api/paper/history'),
       fetch('/api/health'),
       fetch('/api/regime?filter=live'),
       fetch('/api/stats?filter=live'),
+      fetch('/api/analysis/latest'),
+      fetch('/api/signals?filter=all'),
     ]);
-    const [paperStats, posData, histData, health, regime, sigStats] = await Promise.all([
+    const [paperStats, posData, histData, health, regime, sigStats, analysisData, signalsData] = await Promise.all([
       paperStatsRes.json(), posRes.json(), histRes.json(),
       healthRes.json(), regimeRes.json(), sigStatsRes.json(),
+      analysisRes.json(), signalsRes.json(),
     ]);
 
     const allTrades = [...posData.positions, ...histData.trades];
@@ -861,6 +988,7 @@ async function refresh() {
     renderRegimeTimeline(regime, allTrades);
     renderRegimeStats(sigStats);
     renderOpenPositions(posData.positions);
+    renderStrategyHealth(analysisData, signalsData.signals);
     renderStrategyStats(histData.trades);
     renderTradeHistory(histData.trades);
     _lastRefresh = Date.now();

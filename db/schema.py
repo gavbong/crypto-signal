@@ -49,6 +49,9 @@ def init_db(path: Path | None = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_signals_commentary_pending
             ON signals (commentary_status, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_signals_advisor
+            ON signals (outcome, fired_at, strategy, regime);
         """)
         # Migrations: add columns introduced after initial schema
         for migration in [

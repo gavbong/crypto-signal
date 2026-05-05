@@ -72,6 +72,27 @@ def _format_message(signal: dict) -> str:
     return "\n".join(lines)
 
 
+def send_telegram(text: str) -> bool:
+    """Send a plain-text message to Telegram. Never raises."""
+    creds = _credentials()
+    if creds is None:
+        logger.debug("Telegram not configured — skipping alert")
+        return False
+    token, chat_id = creds
+    try:
+        resp = requests.post(
+            _SEND_URL.format(token=token),
+            json={"chat_id": chat_id, "text": text},
+            timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            return True
+        logger.warning(f"Telegram API error {resp.status_code}: {resp.text[:200]}")
+    except requests.RequestException as e:
+        logger.warning(f"Telegram request failed: {e}")
+    return False
+
+
 def send_signal_alert(signal: dict) -> bool:
     """
     Send a signal alert to Telegram. Returns True on success, False on skip/error.

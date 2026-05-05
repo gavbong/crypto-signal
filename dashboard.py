@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -53,7 +54,7 @@ def create_app() -> Flask:
         with get_conn() as conn:
             if shadow is None:
                 rows = conn.execute(
-                    """SELECT id, pair, direction, regime, entry_price,
+                    """SELECT id, pair, direction, strategy, regime, entry_price,
                               suggested_stop_loss, suggested_take_profit,
                               fired_at, outcome, outcome_price, pnl_r,
                               llm_commentary, shadow_mode
@@ -62,7 +63,7 @@ def create_app() -> Flask:
                 total = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
             else:
                 rows = conn.execute(
-                    """SELECT id, pair, direction, regime, entry_price,
+                    """SELECT id, pair, direction, strategy, regime, entry_price,
                               suggested_stop_loss, suggested_take_profit,
                               fired_at, outcome, outcome_price, pnl_r,
                               llm_commentary, shadow_mode
@@ -80,6 +81,7 @@ def create_app() -> Flask:
                     "id": r["id"],
                     "pair": r["pair"],
                     "direction": r["direction"],
+                    "strategy": r["strategy"],
                     "regime": r["regime"],
                     "entry_price": r["entry_price"],
                     "suggested_stop_loss": r["suggested_stop_loss"],
@@ -398,6 +400,18 @@ def create_app() -> Flask:
             "period_start": period["s"] if period else None,
             "period_end": period["e"] if period else None,
         })
+
+    @app.route("/api/analysis/latest")
+    def api_analysis_latest():
+        _auth()
+        analysis_dir = Path(__file__).parent / "analysis"
+        if not analysis_dir.exists():
+            return jsonify({"date": None, "rows": []})
+        files = sorted(analysis_dir.glob("review-*.json"), reverse=True)
+        if not files:
+            return jsonify({"date": None, "rows": []})
+        data = json.loads(files[0].read_text())
+        return jsonify(data)
 
     _migrate_paper_db()
     return app
