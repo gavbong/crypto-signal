@@ -387,6 +387,16 @@ body{
 
   </div>
 
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Strategy Performance</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">closed trades</span>
+    </div>
+    <div class="panel-body" id="strategy-panel-body">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No closed trades yet.</span>
+    </div>
+  </div>
+
   <div class="tbl-wrap">
     <div class="panel-hdr">
       <span class="panel-title">Trade History</span>
@@ -733,6 +743,45 @@ function renderOpenPositions(positions) {
   }).join('');
 }
 
+// ─── STRATEGY PERFORMANCE ────────────────────────────────────────────────────
+function renderStrategyStats(trades) {
+  const body = document.getElementById('strategy-panel-body');
+  if (!trades.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No closed trades yet.</span>';
+    return;
+  }
+  const byStrategy = {};
+  trades.forEach(t => {
+    const s = t.strategy || 'unknown';
+    if (!byStrategy[s]) byStrategy[s] = {wins:0,losses:0,total:0,net:0};
+    byStrategy[s].total++;
+    if (t.pnl_usdt != null) {
+      byStrategy[s].net += t.pnl_usdt;
+      if (t.pnl_usdt > 0) byStrategy[s].wins++; else byStrategy[s].losses++;
+    }
+  });
+  const rows = Object.entries(byStrategy).sort((a,b) => b[1].total - a[1].total);
+  body.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">${
+    rows.map(([name, s]) => {
+      const wr = s.total > 0 ? (s.wins / s.total * 100).toFixed(1) + '%' : '—';
+      const pnlCls = s.net >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const pnlStr = (s.net >= 0 ? '+' : '') + s.net.toFixed(2);
+      const label = name.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+      return `<div class="regime-stat">
+        <div class="rs-label">${label}</div>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+          <span style="font-family:var(--font-mono);font-size:15px;font-weight:500;color:var(--text)">${s.total} trades</span>
+          <span style="font-family:var(--font-mono);font-size:13px;color:var(--accent)">${wr}</span>
+        </div>
+        <div class="rs-sub" style="display:flex;justify-content:space-between">
+          <span>${s.wins}W · ${s.losses}L</span>
+          <span class="${pnlCls}" style="font-family:var(--font-mono);font-size:11px">${pnlStr}</span>
+        </div>
+      </div>`;
+    }).join('')
+  }</div>`;
+}
+
 // ─── TRADE HISTORY TABLE ─────────────────────────────────────────────────────
 function renderTradeHistory(trades) {
   const prevIds = _lastTradeIds;
@@ -812,6 +861,7 @@ async function refresh() {
     renderRegimeTimeline(regime, allTrades);
     renderRegimeStats(sigStats);
     renderOpenPositions(posData.positions);
+    renderStrategyStats(histData.trades);
     renderTradeHistory(histData.trades);
     _lastRefresh = Date.now();
 
