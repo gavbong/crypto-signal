@@ -29,7 +29,7 @@ def fetch_ohlcv_safe(
             time.sleep(wait)
         except ccxt.NetworkError as e:
             wait = 2 ** attempt
-            logger.warning(f"Network error on {pair}: {e}, waiting {wait}s")
+            logger.warning(f"Network error on {pair}: {str(e)[:200]}, waiting {wait}s")
             time.sleep(wait)
         except ccxt.ExchangeError as e:
             logger.error(f"Exchange error on {pair}: {e}")
