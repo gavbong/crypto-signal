@@ -99,6 +99,11 @@ def run_strategy_review() -> list[dict]:
         else:
             status = "DISABLE"
 
+        # WR above breakeven but net_r/trade is negative means actual losses exceed
+        # assumed RR (slippage, partial fills, early stops). Demote to CAUTION.
+        if status == "HEALTHY" and n > 0 and (net_r / n) < -0.1:
+            status = "CAUTION"
+
         rows.append({
             "strategy": s,
             "regime": r,

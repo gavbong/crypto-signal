@@ -302,7 +302,7 @@ def create_app() -> Flask:
                           contracts, margin_usdt, exit_price, exit_reason, pnl_usdt,
                           opened_at, closed_at
                    FROM paper_positions WHERE exit_price IS NOT NULL
-                   ORDER BY closed_at DESC LIMIT 50"""
+                   ORDER BY closed_at DESC"""
             ).fetchall()
         return jsonify({
             "trades": [

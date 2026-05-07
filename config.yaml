@@ -2,8 +2,8 @@ pairs:
   - BTC/USDT:USDT
   - ETH/USDT:USDT
   - SOL/USDT:USDT
-  - BNB/USDT:USDT
-  - ZEC/USDT:USDT
+  - UKOIL/USDT:USDT
+  - XAUT/USDT:USDT
 
 shadow_mode: false             # true = log only, false = live alerts
 

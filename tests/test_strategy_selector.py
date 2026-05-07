@@ -7,11 +7,11 @@ ALL_STRATEGIES = (
 
 
 class TestActiveStrategies:
-    def test_trending_up_fires_ema_and_macd(self):
+    def test_trending_up_fires_ema_and_vol(self):
         active = active_strategies("trending-up")
         assert "ema_9_21_crossover" in active
-        assert "macd_crossover" in active
         assert "vol_breakout" in active       # consolidation-then-breakout continuation
+        assert "macd_crossover" not in active  # n=28, net_r=-3.53R — lagging, entries too late
         assert "supply_demand" not in active  # requires faster reaction than 15-min polling
         assert "rsi_divergence" not in active
         assert "liquidity_grab" not in active
@@ -27,9 +27,9 @@ class TestActiveStrategies:
     def test_choppy_fires_rsi_and_liq(self):
         active = active_strategies("choppy")
         assert "rsi_divergence" in active
-        assert "rsi_extreme" in active
         assert "liquidity_grab" in active
         assert "supply_demand" in active       # 1H zones + approach detection
+        assert "rsi_extreme" not in active     # WR 37.5% < BE 40%, net_r=-5.28R — false reversals
         assert "macd_crossover" not in active  # lagging crossover whipsaws in sideways markets
         assert "ema_9_21_crossover" not in active
         assert "vol_breakout" not in active
