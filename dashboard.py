@@ -342,6 +342,12 @@ def create_app() -> Flask:
             ]
         })
 
+    @app.route("/api/config/pairs")
+    def api_config_pairs():
+        _auth()
+        pairs = cfg().get("pairs", [])
+        return jsonify({"pairs": [p.split(":")[0] for p in pairs]})
+
     @app.route("/api/health")
     def api_health():
         _auth()

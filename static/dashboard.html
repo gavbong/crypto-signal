@@ -998,15 +998,23 @@ async function refresh() {
   }
 }
 
-// ─── PAIR CHIPS FROM OPEN POSITIONS ──────────────────────────────────────────
+// ─── PAIR CHIPS FROM CONFIG ───────────────────────────────────────────────────
 (async function loadPairs() {
   try {
-    const r = await fetch('/api/paper/history');
-    if (!r.ok) return;
+    const r = await fetch('/api/config/pairs');
+    if (!r.ok) throw new Error();
     const data = await r.json();
-    const pairs = [...new Set(data.trades.map(t => t.pair))];
-    if (pairs.length) renderPairChips(pairs);
-  } catch (_) {}
+    if (data.pairs?.length) renderPairChips(data.pairs);
+  } catch (_) {
+    // fallback: derive from trade history if config endpoint unavailable
+    try {
+      const r2 = await fetch('/api/paper/history');
+      if (!r2.ok) return;
+      const data2 = await r2.json();
+      const pairs = [...new Set(data2.trades.map(t => t.pair.split(':')[0]))];
+      if (pairs.length) renderPairChips(pairs);
+    } catch (_2) {}
+  }
 })();
 
 refresh();
