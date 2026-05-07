@@ -1,7 +1,7 @@
 REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "trending-up": {
         "ema_9_21_crossover": "FIRE",
-        "macd_crossover":     "FIRE",
+        "macd_crossover":     "SKIP",  # n=28, net_r=-3.53R, lagging indicator — entries too late into move
         "rsi_divergence":     "SKIP",
         "rsi_extreme":        "SKIP",
         "vol_breakout":       "FIRE",  # consolidation-then-breakout continuation
@@ -21,7 +21,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "ema_9_21_crossover": "SKIP",
         "macd_crossover":     "SKIP",  # lagging crossover whipsaws in sideways markets
         "rsi_divergence":     "FIRE",
-        "rsi_extreme":        "FIRE",
+        "rsi_extreme":        "SKIP",  # WR 37.5% < BE 40%, net_r=-5.28R — false reversals in ranging markets
         "vol_breakout":       "SKIP",
         "supply_demand":      "FIRE",  # 1H zones + approach detection — replaces old zone-entry logic
         "liquidity_grab":     "FIRE",
