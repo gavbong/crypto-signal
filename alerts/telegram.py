@@ -36,6 +36,17 @@ def _copy_credentials() -> tuple[str, str] | None:
     return token, chat_id
 
 
+def _copy_extra_chat_ids() -> list[str]:
+    """Returns additional chat IDs to broadcast copy alerts to (e.g. COPY_TELEGRAM_CHAT_ID_2)."""
+    ids = []
+    for i in range(2, 10):
+        val = os.environ.get(f"COPY_TELEGRAM_CHAT_ID_{i}", "")
+        if _is_placeholder(val):
+            break
+        ids.append(val)
+    return ids
+
+
 def _format_message(signal: dict) -> str:
     direction = signal["direction"].upper()
     colour = "🟢" if direction == "LONG" else "🔴"
@@ -143,24 +154,28 @@ def send_signal_alert(signal: dict) -> bool:
 # ── Copy trader alerts (separate bot) ─────────────────────────────────────────
 
 def _send_copy(text: str) -> bool:
-    """Send a copy trader alert. Never raises."""
+    """Send a copy trader alert to all configured copy channels. Never raises."""
     creds = _copy_credentials()
     if creds is None:
         logger.debug("Copy Telegram not configured — skipping copy alert")
         return False
-    token, chat_id = creds
-    try:
-        resp = requests.post(
-            _SEND_URL.format(token=token),
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=_TIMEOUT,
-        )
-        if resp.ok:
-            return True
-        logger.warning(f"Copy Telegram API error {resp.status_code}: {resp.text[:200]}")
-    except requests.RequestException as e:
-        logger.warning(f"Copy Telegram request failed: {e}")
-    return False
+    token, primary_chat_id = creds
+    all_chat_ids = [primary_chat_id] + _copy_extra_chat_ids()
+    success = False
+    for chat_id in all_chat_ids:
+        try:
+            resp = requests.post(
+                _SEND_URL.format(token=token),
+                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+                timeout=_TIMEOUT,
+            )
+            if resp.ok:
+                success = True
+            else:
+                logger.warning(f"Copy Telegram API error {resp.status_code} (chat {chat_id[:6]}…): {resp.text[:200]}")
+        except requests.RequestException as e:
+            logger.warning(f"Copy Telegram request failed (chat {chat_id[:6]}…): {e}")
+    return success
 
 
 def send_copy_open_alert(
