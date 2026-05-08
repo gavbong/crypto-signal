@@ -417,7 +417,8 @@ body{
   <div class="tbl-wrap">
     <div class="panel-hdr">
       <span class="panel-title">Trade History</span>
-      <div class="tbl-hdr-right">
+      <div class="tbl-hdr-right" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <div id="exc-filter-chips" style="display:flex;gap:4px"></div>
         <span id="tbl-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">— trades</span>
         <span id="tbl-page-info" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
         <button id="tbl-prev" class="pg-btn" onclick="changeTradePage(-1)" disabled>‹</button>
@@ -427,7 +428,7 @@ body{
     <table class="signal-table">
       <thead>
         <tr>
-          <th>Pair</th><th>Dir</th><th>Strategy</th><th>Opened</th><th>Closed</th>
+          <th>Pair</th><th>Exch</th><th>Dir</th><th>Strategy</th><th>Opened</th><th>Closed</th>
           <th>Entry</th><th>Exit</th><th>Reason</th>
           <th class="r">P&amp;L</th>
         </tr>
@@ -447,8 +448,10 @@ const POLL_MS = 5000;
 let _lastTradeIds = new Set();
 let _lastRefresh = null;
 let _allTrades = [];
+let _allPositions = [];
 let _tradePage = 0;
 const _TRADES_PER_PAGE = 10;
+let _exchFilter = null; // null = all exchanges
 
 // ─── CLOCK + REFRESH AGE ─────────────────────────────────────────────────────
 (function tick() {
@@ -479,6 +482,18 @@ document.addEventListener('mousemove', e => {
   TIP.style.left = e.clientX + 'px';
   TIP.style.top  = (e.clientY - 8) + 'px';
 });
+
+// ─── PAIR + EXCHANGE FORMAT ───────────────────────────────────────────────────
+function fmtPair(p) {
+  if (!p) return '—';
+  return p.replace('/USDT:USDT', '/USDT').replace('/USDC:USDC', '/USDC');
+}
+
+const EXC_LABEL = {mexc:'MEXC', binance:'BINANCE', okx:'OKX', hyperliquid:'HL'};
+function excBadge(exc) {
+  const label = EXC_LABEL[exc] || (exc || 'MEXC').toUpperCase();
+  return `<span style="font-family:var(--font-mono);font-size:9px;font-weight:500;color:var(--muted);background:var(--surface-up);border:1px solid var(--border);border-radius:2px;padding:1px 4px;letter-spacing:0.04em">${label}</span>`;
+}
 
 // ─── PRICE FORMAT ────────────────────────────────────────────────────────────
 function fmt(p) {
@@ -523,9 +538,13 @@ function fmtDuration(openedAt, closedAt) {
 function renderPairChips(pairs) {
   const el = document.getElementById('pair-chips');
   if (!pairs || pairs.length === 0) return;
-  el.innerHTML = pairs.map(p => {
-    const label = p.replace('/USDT:USDT','').replace('/USDT','') + '/USDT';
-    return `<span class="pair-chip">${label}</span>`;
+  // pairs is now [{pair, exchange}] or legacy string[]
+  el.innerHTML = pairs.map(item => {
+    const p = typeof item === 'string' ? item : item.pair;
+    const exc = typeof item === 'object' ? item.exchange : null;
+    const label = fmtPair(p);
+    const excTag = exc ? ` <span style="font-size:9px;color:var(--muted);opacity:0.6">${EXC_LABEL[exc]||exc.toUpperCase()}</span>` : '';
+    return `<span class="pair-chip">${label}${excTag}</span>`;
   }).join('');
 }
 
@@ -590,7 +609,7 @@ function renderDotMatrix(trades) {
     const pnl = t.pnl_usdt != null ? `${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)} USDT` : '—';
     const reason = (t.exit_reason || '—').toUpperCase().replace('_',' ');
     return `<div class="dot ${cls}"
-      data-tip="<b>${t.pair.replace('/USDT:USDT','/USDT')}</b> ${t.direction.toUpperCase()} ${fmtDate(t.closed_at)}<br>${reason} ${pnl}">
+      data-tip="<b>${fmtPair(t.pair)}</b> ${t.direction.toUpperCase()} ${fmtDate(t.closed_at)}<br>${reason} ${pnl}">
     </div>`;
   }).join('');
   c.querySelectorAll('.dot').forEach(d => {
@@ -665,7 +684,7 @@ function renderRegimeTimeline(regime, trades) {
     const cls = isOpen ? 'open' : (won ? t.direction : (t.exit_reason === 'stop_loss' ? 'stopped' : 'short'));
     const pnl = t.pnl_usdt != null ? `${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)} USDT` : '';
     const reason = isOpen ? 'OPEN' : (t.exit_reason || '—').toUpperCase().replace('_',' ');
-    const tip = `<b>${t.pair.replace('/USDT:USDT','/USDT')}</b> ${t.direction.toUpperCase()}<br>${fmtDate(t.opened_at)}<br>${reason}${pnl ? ' ' + pnl : ''}`;
+    const tip = `<b>${fmtPair(t.pair)}</b> ${t.direction.toUpperCase()}<br>${fmtDate(t.opened_at)}<br>${reason}${pnl ? ' ' + pnl : ''}`;
 
     const dot = document.createElement('div');
     dot.className = 'sig-dot ' + cls;
@@ -714,7 +733,8 @@ function renderRegimeStats(stats) {
 }
 
 // ─── OPEN POSITIONS ───────────────────────────────────────────────────────────
-function renderOpenPositions(positions) {
+function renderOpenPositions(positions, isFiltered) {
+  if (!isFiltered) _allPositions = positions;
   const body = document.getElementById('positions-panel-body');
   if (positions.length === 0) {
     body.innerHTML = `<div class="sig-empty">
@@ -738,7 +758,8 @@ function renderOpenPositions(positions) {
     return `<div style="margin-bottom:${sep?'12px':'0'};padding-bottom:${sep?'12px':'0'};border-bottom:${sep?'1px solid var(--border)':'none'}">
       <div class="sig-meta" style="margin-bottom:8px">
         <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
-        <span class="sig-pair">${p.pair.replace('/USDT:USDT','/USDT')}</span>
+        <span class="sig-pair">${fmtPair(p.pair)}</span>
+        ${excBadge(p.exchange || 'mexc')}
         <span class="badge b-regime">${p.regime || '—'}</span>
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--muted)">${fmtDuration(p.opened_at, null)}</span>
       </div>
@@ -852,7 +873,7 @@ function openHealthDrill(strategy, regime) {
         return `<tr style="border-bottom:1px solid var(--border)">
           <td style="padding:4px 8px 4px 0;color:var(--muted)">${fmtDT(s.fired_at)}</td>
           <td style="padding:4px 8px"><span class="badge ${s.direction === 'long' ? 'b-long' : 'b-short'}">${s.direction.toUpperCase()}</span></td>
-          <td style="padding:4px 8px">${s.pair.replace('/USDT:USDT','/USDT')}</td>
+          <td style="padding:4px 8px">${fmtPair(s.pair)}</td>
           <td style="padding:4px 0;${cls};font-weight:600">${s.outcome.toUpperCase()}</td>
           <td style="padding:4px 0 4px 8px;${cls}">${pnl}</td>
         </tr>`;
@@ -906,27 +927,61 @@ function renderStrategyStats(trades) {
   }</div>`;
 }
 
+// ─── EXCHANGE FILTER CHIPS ───────────────────────────────────────────────────
+function renderExcFilterChips(trades, positions) {
+  const exchanges = [...new Set([
+    ...trades.map(t => t.exchange || 'mexc'),
+    ...positions.map(p => p.exchange || 'mexc'),
+  ])].sort();
+  if (exchanges.length <= 1) return; // no point showing filter for single exchange
+  const el = document.getElementById('exc-filter-chips');
+  const chips = [null, ...exchanges];
+  el.innerHTML = chips.map(exc => {
+    const active = _exchFilter === exc;
+    const label = exc === null ? 'All' : (EXC_LABEL[exc] || exc.toUpperCase());
+    return `<span onclick="setExcFilter(${exc === null ? 'null' : `'${exc}'`})"
+      style="font-family:var(--font-mono);font-size:9px;font-weight:500;cursor:pointer;
+             padding:2px 6px;border-radius:2px;letter-spacing:0.04em;
+             background:${active ? 'var(--accent-dim)' : 'var(--surface-up)'};
+             color:${active ? 'var(--accent)' : 'var(--muted)'};
+             border:1px solid ${active ? 'rgba(240,165,0,0.3)' : 'var(--border)'};
+             transition:all 0.1s">${label}</span>`;
+  }).join('');
+}
+
+function setExcFilter(exc) {
+  _exchFilter = exc;
+  _tradePage = 0;
+  const filtered = _exchFilter ? _allTrades.filter(t => (t.exchange || 'mexc') === _exchFilter) : _allTrades;
+  _renderTradePage(_lastTradeIds, filtered);
+  renderOpenPositions(_exchFilter ? _allPositions.filter(p => (p.exchange || 'mexc') === _exchFilter) : _allPositions);
+  renderExcFilterChips(_allTrades, _allPositions);
+}
+
 // ─── TRADE HISTORY TABLE ─────────────────────────────────────────────────────
 function renderTradeHistory(trades) {
   const prevIds = _lastTradeIds;
   _lastTradeIds = new Set(trades.map(t => t.id));
   _allTrades = trades;
-  _renderTradePage(prevIds);
+  const filtered = _exchFilter ? trades.filter(t => (t.exchange || 'mexc') === _exchFilter) : trades;
+  _renderTradePage(prevIds, filtered);
 }
 
 function changeTradePage(delta) {
-  const totalPages = Math.max(1, Math.ceil(_allTrades.length / _TRADES_PER_PAGE));
+  const filtered = _exchFilter ? _allTrades.filter(t => (t.exchange || 'mexc') === _exchFilter) : _allTrades;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / _TRADES_PER_PAGE));
   _tradePage = Math.max(0, Math.min(_tradePage + delta, totalPages - 1));
-  _renderTradePage(_lastTradeIds);
+  _renderTradePage(_lastTradeIds, filtered);
 }
 
-function _renderTradePage(prevIds) {
-  const total = _allTrades.length;
+function _renderTradePage(prevIds, tradesOverride) {
+  const trades = tradesOverride !== undefined ? tradesOverride : _allTrades;
+  const total = trades.length;
   const totalPages = Math.max(1, Math.ceil(total / _TRADES_PER_PAGE));
   if (total > 0) _tradePage = Math.min(_tradePage, totalPages - 1);
   const start = _tradePage * _TRADES_PER_PAGE;
   const end = Math.min(start + _TRADES_PER_PAGE, total);
-  const pageTrades = _allTrades.slice(start, end);
+  const pageTrades = trades.slice(start, end);
 
   document.getElementById('tbl-count').textContent = `${total} trade${total !== 1 ? 's' : ''}`;
   document.getElementById('tbl-page-info').textContent = total > _TRADES_PER_PAGE
@@ -948,7 +1003,8 @@ function _renderTradePage(prevIds) {
       : '<span style="color:var(--muted)">—</span>';
     const isNew = !prevIds.has(t.id);
     return `<tr${isNew && prevIds.size > 0 ? ' class="flash"' : ''}>
-      <td class="td-pair">${t.pair.replace('/USDT:USDT','/USDT')}</td>
+      <td class="td-pair">${fmtPair(t.pair)}</td>
+      <td style="padding:7px 8px">${excBadge(t.exchange || 'mexc')}</td>
       <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
       <td class="td-muted">${t.strategy || '—'}</td>
       <td class="td-date">${fmtDT(t.opened_at)}</td>
@@ -991,6 +1047,7 @@ async function refresh() {
     renderStrategyHealth(analysisData, signalsData.signals);
     renderStrategyStats(histData.trades);
     renderTradeHistory(histData.trades);
+    renderExcFilterChips(histData.trades, posData.positions);
     _lastRefresh = Date.now();
 
   } catch (err) {
@@ -1004,7 +1061,7 @@ async function refresh() {
     const r = await fetch('/api/config/pairs');
     if (!r.ok) throw new Error();
     const data = await r.json();
-    if (data.pairs?.length) renderPairChips(data.pairs);
+    if (data.pairs?.length) renderPairChips(data.pairs);  // [{pair, exchange}]
   } catch (_) {
     // fallback: derive from trade history if config endpoint unavailable
     try {
