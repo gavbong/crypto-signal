@@ -1523,7 +1523,7 @@ function renderPolyFeed(positions) {
     const oc = p.outcome === 'YES' ? 'yes' : 'no';
     const wallet = fmtWallet(p.trader_wallet);
     const pnl = p.pnl_usdt != null
-      ? `<span class="${p.pnl_usdt >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.pnl_usdt >= 0 ? '+' : ''}$${Math.abs(p.pnl_usdt).toFixed(2)}</span>`
+      ? `<span class="${p.pnl_usdt >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.pnl_usdt >= 0 ? '+' : '-'}$${Math.abs(p.pnl_usdt).toFixed(2)}</span>`
       : '';
     const catBadge = p.category ? `<span class="badge b-regime" style="margin-left:4px">${p.category}</span>` : '';
     return `<div class="poly-feed-row">
