@@ -117,10 +117,12 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
                     live_price, live_stop, signal["direction"], regime.label
                 )
 
-            # Deduplication check (per-exchange — each exchange fires independently)
-            if is_duplicate(conn, pair, signal["direction"], strategy,
-                            regime.label, dedup_window, exchange=exchange_id):
-                logger.debug(f"Duplicate suppressed: {pair} {signal['direction']} {strategy} {regime.label}")
+            # Deduplication check: cross-exchange, keyed on base asset
+            # BTC/USDT:USDT and BTC/USDC:USDC both reduce to "BTC" — only 1 signal per token
+            base_asset = pair.split("/")[0]
+            if is_duplicate(conn, base_asset, signal["direction"], strategy,
+                            regime.label, dedup_window):
+                logger.debug(f"Duplicate suppressed: {base_asset} {signal['direction']} {strategy} {regime.label}")
                 continue
 
             # Serialize RegimeResult to plain dict for LLM commentary (JSON-safe)

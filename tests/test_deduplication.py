@@ -27,33 +27,33 @@ def _make_signal(pair="BTC/USDT:USDT", direction="long", strategy="ema_crossover
 class TestDeduplication:
     def test_no_prior_signal_not_duplicate(self, tmp_db):
         with get_conn(tmp_db) as conn:
-            assert is_duplicate(conn, "BTC/USDT:USDT", "long", "ema_crossover",
+            assert is_duplicate(conn, "BTC", "long", "ema_crossover",
                                  "trending-up", 3) is False
 
     def test_duplicate_within_window(self, tmp_db):
         with get_conn(tmp_db) as conn:
             fired = datetime.now(timezone.utc) - timedelta(hours=2)
             log_signal(conn, _make_signal(fired_at=fired))
-            assert is_duplicate(conn, "BTC/USDT:USDT", "long", "ema_crossover",
+            assert is_duplicate(conn, "BTC", "long", "ema_crossover",
                                  "trending-up", 3) is True
 
     def test_not_duplicate_after_window(self, tmp_db):
         with get_conn(tmp_db) as conn:
             fired = datetime.now(timezone.utc) - timedelta(hours=4)
             log_signal(conn, _make_signal(fired_at=fired))
-            assert is_duplicate(conn, "BTC/USDT:USDT", "long", "ema_crossover",
+            assert is_duplicate(conn, "BTC", "long", "ema_crossover",
                                  "trending-up", 3) is False
 
     def test_different_direction_not_duplicate(self, tmp_db):
         with get_conn(tmp_db) as conn:
             log_signal(conn, _make_signal(direction="long"))
-            assert is_duplicate(conn, "BTC/USDT:USDT", "short", "ema_crossover",
+            assert is_duplicate(conn, "BTC", "short", "ema_crossover",
                                  "trending-down", 3) is False
 
     def test_different_strategy_not_duplicate(self, tmp_db):
         with get_conn(tmp_db) as conn:
             log_signal(conn, _make_signal(strategy="ema_crossover"))
-            assert is_duplicate(conn, "BTC/USDT:USDT", "long", "rsi_divergence",
+            assert is_duplicate(conn, "BTC", "long", "rsi_divergence",
                                  "trending-up", 3) is False
 
     def test_regime_flip_allows_new_signal(self, tmp_db):
@@ -63,11 +63,27 @@ class TestDeduplication:
             log_signal(conn, _make_signal(strategy="ema_crossover", regime="trending-up",
                                           fired_at=fired))
             # Same pair+direction+strategy but different regime: should NOT be duplicate
-            assert is_duplicate(conn, "BTC/USDT:USDT", "long", "ema_crossover",
+            assert is_duplicate(conn, "BTC", "long", "ema_crossover",
                                  "choppy", 3) is False
 
     def test_different_pair_not_duplicate(self, tmp_db):
         with get_conn(tmp_db) as conn:
             log_signal(conn, _make_signal(pair="BTC/USDT:USDT"))
-            assert is_duplicate(conn, "ETH/USDT:USDT", "long", "ema_crossover",
+            assert is_duplicate(conn, "ETH", "long", "ema_crossover",
+                                 "trending-up", 3) is False
+
+    def test_cross_exchange_dedup_usdc_pair(self, tmp_db):
+        """BTC/USDC:USDC (Hyperliquid) and BTC/USDT:USDT (MEXC) share the same dedup bucket."""
+        with get_conn(tmp_db) as conn:
+            fired = datetime.now(timezone.utc) - timedelta(hours=1)
+            log_signal(conn, _make_signal(pair="BTC/USDT:USDT", fired_at=fired))
+            # Hyperliquid's USDC pair should be blocked by MEXC's USDT signal
+            assert is_duplicate(conn, "BTC", "long", "ema_crossover",
+                                 "trending-up", 3) is True
+
+    def test_cross_exchange_different_base_not_deduped(self, tmp_db):
+        """SOL signal does not suppress BTC signal."""
+        with get_conn(tmp_db) as conn:
+            log_signal(conn, _make_signal(pair="SOL/USDT:USDT"))
+            assert is_duplicate(conn, "BTC", "long", "ema_crossover",
                                  "trending-up", 3) is False
