@@ -57,6 +57,7 @@ def init_db(path: Path | None = None) -> None:
         for migration in [
             "ALTER TABLE signals ADD COLUMN suggested_take_profit REAL",
             "ALTER TABLE signals ADD COLUMN pnl_r REAL",
+            "ALTER TABLE signals ADD COLUMN exchange TEXT NOT NULL DEFAULT 'mexc'",
         ]:
             try:
                 conn.execute(migration)
@@ -82,8 +83,8 @@ def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
         """INSERT INTO signals
            (pair, direction, strategy, regime, regime_confidence, regime_age_candles,
             entry_price, suggested_stop_loss, suggested_take_profit, timeframe,
-            fired_at, shadow_mode, llm_commentary, commentary_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            fired_at, shadow_mode, llm_commentary, commentary_status, exchange)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             signal["pair"], signal["direction"], signal["strategy"],
             signal["regime"], signal["regime_confidence"], signal["regime_age_candles"],
@@ -91,6 +92,7 @@ def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
             signal.get("suggested_take_profit"),
             signal["timeframe"], signal["fired_at"], signal["shadow_mode"],
             signal.get("llm_commentary"), signal.get("commentary_status", "pending"),
+            signal.get("exchange", "mexc"),
         ),
     )
     conn.commit()

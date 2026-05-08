@@ -7,6 +7,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "vol_breakout":       "FIRE",  # consolidation-then-breakout continuation
         "supply_demand":      "SKIP",  # S/D zones require faster reaction than 15-min polling allows
         "liquidity_grab":     "SKIP",
+        "volume_spike":       "FIRE",  # institutional participation on trend continuation
     },
     "trending-down": {
         "ema_9_21_crossover": "FIRE",
@@ -16,6 +17,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "vol_breakout":       "FIRE",  # consolidation-then-breakdown continuation
         "supply_demand":      "SKIP",  # S/D zones require faster reaction than 15-min polling allows
         "liquidity_grab":     "SKIP",
+        "volume_spike":       "FIRE",  # institutional selling pressure on trend continuation
     },
     "choppy": {
         "ema_9_21_crossover": "SKIP",
@@ -25,6 +27,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "vol_breakout":       "SKIP",
         "supply_demand":      "FIRE",  # 1H zones + approach detection — replaces old zone-entry logic
         "liquidity_grab":     "FIRE",
+        "volume_spike":       "SKIP",  # spikes in choppy = noise, no trend to ride
     },
     "high-volatility": {
         "ema_9_21_crossover": "SKIP",
@@ -34,6 +37,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "vol_breakout":       "FIRE",
         "supply_demand":      "SKIP",  # removed entirely — 17% WR across all regimes
         "liquidity_grab":     "FIRE",
+        "volume_spike":       "SKIP",  # high-vol already captures spike energy via vol_breakout
     },
 }
 

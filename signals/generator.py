@@ -362,6 +362,36 @@ def rsi_extreme(pair: str, df: pd.DataFrame, regime: RegimeResult,
     return None
 
 
+def volume_spike(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                 timeframe: str) -> Optional[dict]:
+    """Fire when current candle volume is >= N× the rolling average, confirming trend direction.
+    Only active in trending regimes — volume spikes in ranging/choppy are noise."""
+    c = cfg()["signals"]
+    window = c.get("volume_avg_period", 20)
+    threshold = c.get("volume_spike_signal_multiplier", 2.0)
+
+    if len(df) < window + 2:
+        return None
+
+    avg_vol = df["volume"].iloc[-(window + 1):-1].mean()
+    if pd.isna(avg_vol) or avg_vol == 0:
+        return None
+
+    current_vol = df["volume"].iloc[-1]
+    if current_vol < avg_vol * threshold:
+        return None
+
+    curr = df.iloc[-1]
+    bullish = curr["close"] > curr["open"]
+    bearish = curr["close"] < curr["open"]
+
+    if regime.label == "trending-up" and bullish:
+        return _signal(pair, "long", "volume_spike", regime, df, timeframe)
+    if regime.label == "trending-down" and bearish:
+        return _signal(pair, "short", "volume_spike", regime, df, timeframe)
+    return None
+
+
 GENERATORS = {
     "ema_9_21_crossover": ema_9_21_crossover,
     "macd_crossover":     macd_crossover,
@@ -370,6 +400,7 @@ GENERATORS = {
     "rsi_extreme":        rsi_extreme,
     "supply_demand":      supply_demand,
     "liquidity_grab":     liquidity_grab,
+    "volume_spike":       volume_spike,
 }
 
 

@@ -1,9 +1,30 @@
-pairs:
-  - BTC/USDT:USDT
-  - ETH/USDT:USDT
-  - SOL/USDT:USDT
-  - UKOIL/USDT:USDT
-  - XAUT/USDT:USDT
+exchanges:
+  mexc:
+    enabled: true
+    pairs:
+      - BTC/USDT:USDT
+      - ETH/USDT:USDT
+      - SOL/USDT:USDT
+      - UKOIL/USDT:USDT
+      - XAUT/USDT:USDT
+  binance:
+    enabled: false
+    pairs:
+      - BTC/USDT:USDT
+      - ETH/USDT:USDT
+      - SOL/USDT:USDT
+  okx:
+    enabled: false
+    pairs:
+      - BTC/USDT:USDT
+      - ETH/USDT:USDT
+      - SOL/USDT:USDT
+  hyperliquid:
+    enabled: false
+    pairs:
+      - BTC/USDC:USDC
+      - ETH/USDC:USDC
+      - SOL/USDC:USDC
 
 shadow_mode: false             # true = log only, false = live alerts
 
@@ -26,7 +47,8 @@ regime:
   stability_min_match: 3         # how many must agree for label to be stable
 
 signals:
-  volume_spike_multiplier: 1.5   # volume > avg * this = spike confirmed
+  volume_spike_multiplier: 1.5   # vol_breakout gate: volume > avg * this = spike confirmed
+  volume_spike_signal_multiplier: 2.0  # volume_spike strategy: stricter — institutional participation threshold
   volume_avg_period: 20
   rsi_period: 14
   rsi_divergence_lookback: 10    # candles to look back for divergence

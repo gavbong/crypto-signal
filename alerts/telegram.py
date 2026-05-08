@@ -51,8 +51,10 @@ def _format_message(signal: dict) -> str:
     session = signal.get("market_session", "")
     session_line = f"<b>Session </b>  {session}" if session else ""
 
+    exchange = signal.get("exchange", "mexc").upper()
+
     lines = [
-        f"{colour} <b>{direction}</b>  {pair}  <code>[{mode}]</code>",
+        f"{colour} <b>{direction}</b>  {pair}  <code>[{exchange}]</code>  <code>[{mode}]</code>",
         f"",
         f"<b>Strategy</b>  {strategy}",
         f"<b>Regime  </b>  {regime}  <i>(conf {confidence:.0%})</i>",

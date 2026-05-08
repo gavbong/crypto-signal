@@ -1,14 +1,34 @@
+import os
 import time
 import ccxt
 from loguru import logger
 from typing import Optional
 
 
+_EXCHANGE_CLASSES = {
+    "mexc":        ("mexc",       {"defaultType": "swap"}),
+    "binance":     ("binance",    {"defaultType": "future"}),
+    "okx":         ("okx",        {"defaultType": "swap"}),
+    "hyperliquid": ("hyperliquid", {}),
+}
+
+
+def make_exchange(exchange_id: str) -> ccxt.Exchange:
+    """Create a CCXT exchange instance for public market data (OHLCV, ticker).
+    No credentials attached — avoids permissions issues for read-only data."""
+    entry = _EXCHANGE_CLASSES.get(exchange_id)
+    if entry is None:
+        raise ValueError(f"Unknown exchange: {exchange_id}")
+    cls_name, extra_opts = entry
+    cls = getattr(ccxt, cls_name)
+    opts: dict = {"enableRateLimit": True}
+    if extra_opts:
+        opts["options"] = extra_opts
+    return cls(opts)
+
+
 def _make_exchange(api_key: str, secret: str) -> ccxt.mexc:
-    # Signal engine only reads public market data (candles, ticker) — no credentials needed.
-    # Attaching credentials triggers private endpoint calls that fail if the key lacks
-    # futures permissions, breaking even public data fetches.
-    return ccxt.mexc({"options": {"defaultType": "swap"}, "enableRateLimit": True})
+    return make_exchange("mexc")
 
 
 def fetch_ohlcv_safe(
