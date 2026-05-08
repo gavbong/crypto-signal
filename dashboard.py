@@ -694,7 +694,7 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT id, trader_wallet, market_id, market_title, category,
                           outcome, shares, entry_price, current_price, cost_basis,
-                          pnl_usdt, exit_price, exit_reason, opened_at, closed_at
+                          pnl_usdt, exit_price, exit_reason, end_date, opened_at, closed_at
                    FROM poly_positions ORDER BY opened_at DESC LIMIT 200"""
             ).fetchall()
 
@@ -721,6 +721,7 @@ def create_app() -> Flask:
                     "pnl_usdt": _unrealized(r),
                     "exit_price": r["exit_price"],
                     "exit_reason": r["exit_reason"],
+                    "end_date": r["end_date"],
                     "opened_at": _normalize_ts(r["opened_at"]),
                     "closed_at": _normalize_ts(r["closed_at"]),
                     "open": r["closed_at"] is None,

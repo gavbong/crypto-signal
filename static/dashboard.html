@@ -1320,6 +1320,18 @@ function setPageContext(view) {
 })();
 
 // ─── COPY TRADER ──────────────────────────────────────────────────────────────
+function fmtExpiry(endDate) {
+  if (!endDate) return '';
+  const end = new Date(endDate);
+  const diff = end - Date.now();
+  if (diff <= 0) return '<span style="color:var(--short);font-size:10px">expired</span>';
+  const days = Math.floor(diff / 86400000);
+  const hrs  = Math.floor((diff % 86400000) / 3600000);
+  const color = days <= 1 ? 'var(--short)' : days <= 7 ? 'var(--amber)' : 'var(--muted)';
+  const label = days > 30 ? `${Math.floor(days/30)}mo` : days > 0 ? `${days}d ${hrs}h` : `${hrs}h`;
+  return `<span style="font-family:var(--font-mono);font-size:10px;color:${color}" title="Expires ${end.toLocaleDateString()}">⏱ ${label}</span>`;
+}
+
 function fmtWallet(w, platform) {
   if (!w) return '—';
   const short = w.slice(0,6) + '…' + w.slice(-4);
@@ -1548,6 +1560,8 @@ function renderPolyFeed(positions) {
       ? `<span class="${p.pnl_usdt >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.pnl_usdt >= 0 ? '+' : '-'}$${Math.abs(p.pnl_usdt).toFixed(2)}</span>`
       : '';
     const catBadge = p.category ? `<span class="badge b-regime" style="margin-left:4px">${p.category}</span>` : '';
+    const prob = Math.round((p.entry_price ?? 0) * 100);
+    const expiry = fmtExpiry(p.end_date);
     return `<div class="poly-feed-row">
       <span class="poly-outcome ${oc}">${p.outcome}</span>
       <div style="flex:1;min-width:0">
@@ -1555,7 +1569,8 @@ function renderPolyFeed(positions) {
         <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
           <span class="copy-wallet">${wallet}</span>
           ${catBadge}
-          <span class="poly-meta">$${(p.entry_price??0).toFixed(2)} · ${(p.shares??0).toFixed(0)}sh · $${(p.cost_basis??0).toFixed(2)}</span>
+          <span class="poly-meta"><span title="implied probability at entry">${prob}%</span> · ${(p.shares??0).toFixed(0)} shares · <span title="total cost">$${(p.cost_basis??0).toFixed(2)}</span></span>
+          ${expiry}
           ${pnl}
         </div>
       </div>
