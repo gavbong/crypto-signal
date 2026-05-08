@@ -56,29 +56,27 @@ def create_app() -> Flask:
     def api_signals():
         _auth()
         shadow = _shadow_param(request.args.get("filter", "live"))
+        exchange_filter = request.args.get("exchange")
         with get_conn() as conn:
-            if shadow is None:
-                rows = conn.execute(
-                    """SELECT id, pair, direction, strategy, regime, entry_price,
-                              suggested_stop_loss, suggested_take_profit,
-                              fired_at, outcome, outcome_price, pnl_r,
-                              llm_commentary, shadow_mode
-                       FROM signals ORDER BY fired_at DESC LIMIT 100"""
-                ).fetchall()
-                total = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
-            else:
-                rows = conn.execute(
-                    """SELECT id, pair, direction, strategy, regime, entry_price,
-                              suggested_stop_loss, suggested_take_profit,
-                              fired_at, outcome, outcome_price, pnl_r,
-                              llm_commentary, shadow_mode
-                       FROM signals WHERE shadow_mode=?
-                       ORDER BY fired_at DESC LIMIT 100""",
-                    (shadow,),
-                ).fetchall()
-                total = conn.execute(
-                    "SELECT COUNT(*) FROM signals WHERE shadow_mode=?", (shadow,)
-                ).fetchone()[0]
+            where_parts, params = [], []
+            if shadow is not None:
+                where_parts.append("shadow_mode=?")
+                params.append(shadow)
+            if exchange_filter:
+                where_parts.append("exchange=?")
+                params.append(exchange_filter)
+            where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+            rows = conn.execute(
+                f"""SELECT id, pair, direction, strategy, regime, entry_price,
+                          suggested_stop_loss, suggested_take_profit,
+                          fired_at, outcome, outcome_price, pnl_r,
+                          llm_commentary, shadow_mode, exchange
+                   FROM signals {where} ORDER BY fired_at DESC LIMIT 100""",
+                params,
+            ).fetchall()
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM signals {where}", params
+            ).fetchone()[0]
 
         return jsonify({
             "signals": [
@@ -97,6 +95,7 @@ def create_app() -> Flask:
                     "pnl_r": r["pnl_r"],
                     "llm_commentary": r["llm_commentary"],
                     "shadow_mode": bool(r["shadow_mode"]),
+                    "exchange": r["exchange"] or "mexc",
                 }
                 for r in rows
             ],
@@ -270,7 +269,7 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT id, pair, direction, strategy, regime,
                           entry_price, contracts, margin_usdt, stop_loss, take_profit,
-                          opened_at, last_price
+                          opened_at, last_price, exchange
                    FROM paper_positions WHERE exit_price IS NULL ORDER BY opened_at DESC"""
             ).fetchall()
 
@@ -293,6 +292,7 @@ def create_app() -> Flask:
                     "last_price": r["last_price"],
                     "unrealized_pnl": _unrealized(r),
                     "notional_usdt": round(r["contracts"] * r["last_price"], 2) if r["last_price"] else None,
+                    "exchange": r["exchange"] or "mexc",
                 }
                 for r in rows
             ]
@@ -305,7 +305,7 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT id, pair, direction, strategy, regime, entry_price,
                           contracts, margin_usdt, exit_price, exit_reason, pnl_usdt,
-                          opened_at, closed_at
+                          opened_at, closed_at, exchange
                    FROM paper_positions WHERE exit_price IS NOT NULL
                    ORDER BY closed_at DESC"""
             ).fetchall()
@@ -319,6 +319,7 @@ def create_app() -> Flask:
                     "exit_reason": r["exit_reason"], "pnl_usdt": r["pnl_usdt"],
                     "opened_at": _normalize_ts(r["opened_at"]),
                     "closed_at": _normalize_ts(r["closed_at"]),
+                    "exchange": r["exchange"] or "mexc",
                 }
                 for r in rows
             ]
@@ -350,8 +351,17 @@ def create_app() -> Flask:
     @app.route("/api/config/pairs")
     def api_config_pairs():
         _auth()
-        pairs = cfg().get("pairs", [])
-        return jsonify({"pairs": [p.split(":")[0] for p in pairs]})
+        exchanges = cfg().get("exchanges", {})
+        seen, result = set(), []
+        for exc_id, exc_cfg in exchanges.items():
+            if not exc_cfg.get("enabled", False):
+                continue
+            for p in exc_cfg.get("pairs", []):
+                base = p.split(":")[0]
+                if base not in seen:
+                    seen.add(base)
+                    result.append({"pair": base, "exchange": exc_id})
+        return jsonify({"pairs": result})
 
     @app.route("/api/health")
     def api_health():
@@ -430,11 +440,15 @@ def create_app() -> Flask:
 
 def _migrate_paper_db():
     with get_conn() as conn:
-        try:
-            conn.execute("ALTER TABLE paper_positions ADD COLUMN last_price REAL")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        for migration in [
+            "ALTER TABLE paper_positions ADD COLUMN last_price REAL",
+            "ALTER TABLE paper_positions ADD COLUMN exchange TEXT NOT NULL DEFAULT 'mexc'",
+        ]:
+            try:
+                conn.execute(migration)
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 if __name__ == "__main__":
