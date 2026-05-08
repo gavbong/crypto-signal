@@ -22,6 +22,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from utils.config import get as cfg
 from db.schema import get_conn
+from alerts.telegram import send_copy_open_alert, send_copy_close_alert
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
@@ -249,10 +250,12 @@ def _copy_open(
     )
     _adjust_copy_balance(conn, -margin_usdt)
     conn.commit()
+    balance_after = get_copy_balance(conn)
     logger.info(
         f"Copy OPEN  {wallet[:10]}… {coin} {pos['side'].upper()} "
         f"@ {entry} margin=${margin_usdt:.0f} contracts={contracts:.6f}"
     )
+    send_copy_open_alert(wallet, coin, pos["side"], margin_usdt, entry, balance_after)
 
 
 def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) -> None:
@@ -286,10 +289,16 @@ def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) ->
     )
     _adjust_copy_balance(conn, margin + pnl)
     conn.commit()
+    balance_after = get_copy_balance(conn)
     outcome = "WIN" if pnl >= 0 else "LOSS"
     logger.info(
         f"Copy CLOSE {wallet[:10]}… {coin} {row['direction'].upper()} "
         f"exit={exit_price} reason={reason} pnl={pnl:+.2f} [{outcome}]"
+    )
+    send_copy_close_alert(
+        wallet, coin, row["direction"],
+        row["entry_price"], exit_price,
+        pnl, margin, reason, balance_after,
     )
 
 
