@@ -183,6 +183,68 @@ def send_copy_open_alert(
     return _send_copy(text)
 
 
+# ── Polymarket alerts (same bot as copy trader) ────────────────────────────────
+
+def send_poly_open_alert(
+    wallet: str, market_title: str, outcome: str,
+    shares: float, entry_price: float, cost_basis: float,
+    balance_after: float, category: str, convergent: dict | None,
+) -> bool:
+    colour = "🟢" if outcome == "YES" else "🔴"
+    short_wallet = wallet[:6] + "…" + wallet[-4:]
+    title_display = (market_title[:60] + "…") if len(market_title) > 60 else market_title
+    text = (
+        f"{colour} <b>POLY {outcome}</b>  [{title_display}]\n"
+        f"\n"
+        f"<b>Trader  </b>  <code>{short_wallet}</code>\n"
+        f"<b>Entry   </b>  <code>${entry_price:.2f}</code>\n"
+        f"<b>Shares  </b>  <code>{shares:.0f}</code>\n"
+        f"<b>Cost    </b>  <code>${cost_basis:.2f}</code>\n"
+        f"<b>Balance </b>  <code>${balance_after:,.2f}</code> remaining\n"
+    )
+    if convergent:
+        pair = convergent.get("pair", "")
+        direction = convergent.get("direction", "").upper()
+        strategy = convergent.get("strategy", "")
+        text += f"\n⚡ <i>Convergent signal: {direction} {pair} [{strategy}]</i>\n"
+    text += f"\n<i>shadow · Polymarket [{category}]</i>"
+    return _send_copy(text)
+
+
+def send_poly_close_alert(
+    wallet: str, market_title: str, outcome: str,
+    entry_price: float, exit_price: float, pnl: float,
+    cost_basis: float, reason: str, balance_after: float, category: str,
+) -> bool:
+    if reason == "resolved_win":
+        icon, label = "✅", "RESOLVED WIN"
+    elif reason == "resolved_loss":
+        icon, label = "❌", "RESOLVED LOSS"
+    elif reason == "voided":
+        icon, label = "⚫", "VOIDED"
+    else:
+        icon, label = "🛑", "CLOSED"
+
+    pnl_pct  = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+    pnl_sign = "+" if pnl >= 0 else ""
+    short_wallet  = wallet[:6] + "…" + wallet[-4:]
+    title_display = (market_title[:60] + "…") if len(market_title) > 60 else market_title
+
+    text = (
+        f"{icon} <b>POLY {label}</b>  [{title_display}]\n"
+        f"\n"
+        f"<b>Trader  </b>  <code>{short_wallet}</code>\n"
+        f"<b>Side    </b>  {outcome}\n"
+        f"<b>Entry   </b>  <code>${entry_price:.2f}</code> → <code>${exit_price:.2f}</code>\n"
+        f"<b>PnL     </b>  <code>{pnl_sign}${abs(pnl):,.2f}</code>  "
+        f"<i>({pnl_sign}{pnl_pct:.0f}%)</i>\n"
+        f"<b>Balance </b>  <code>${balance_after:,.2f}</code>\n"
+        f"\n"
+        f"<i>shadow · Polymarket [{category}]</i>"
+    )
+    return _send_copy(text)
+
+
 def send_copy_close_alert(
     wallet: str, coin: str, direction: str,
     entry_price: float, exit_price: float,

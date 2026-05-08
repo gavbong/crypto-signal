@@ -286,6 +286,24 @@ body{
 .copy-wallet{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
 .copy-chart-wrap{padding:14px 16px}
 .copy-chart-svg{width:100%;height:100px;overflow:visible}
+/* ── Polymarket tab ── */
+.poly-feed-row{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(31,35,48,0.6)}
+.poly-feed-row:last-child{border-bottom:none}
+.poly-feed-row:hover{background:rgba(26,29,38,0.4)}
+.poly-outcome{font-family:var(--font-ui);font-size:10px;font-weight:700;letter-spacing:.05em;min-width:28px;padding-top:1px}
+.poly-outcome.yes{color:var(--long)}
+.poly-outcome.no{color:var(--short)}
+.poly-title{font-family:var(--font-ui);font-size:12px;color:var(--text);line-height:1.4;flex:1}
+.poly-meta{font-family:var(--font-mono);font-size:10px;color:var(--muted);white-space:nowrap;padding-top:2px}
+.poly-convergent{font-family:var(--font-ui);font-size:9px;font-weight:600;letter-spacing:.04em;color:var(--accent);background:var(--accent-dim);border:1px solid rgba(240,165,0,0.3);border-radius:2px;padding:1px 5px;margin-top:4px;display:inline-block}
+.poly-consensus-tbl{width:100%;border-collapse:collapse}
+.poly-consensus-tbl th{font-family:var(--font-ui);font-size:10px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);text-align:left}
+.poly-consensus-tbl th.r{text-align:right}
+.poly-consensus-tbl td{font-size:12px;padding:8px 12px;border-bottom:1px solid rgba(31,35,48,0.6);vertical-align:middle}
+.poly-consensus-tbl td.r{text-align:right;font-family:var(--font-mono)}
+.poly-consensus-tbl tr:last-child td{border-bottom:none}
+.poly-consensus-tbl tbody tr:hover td{background:rgba(26,29,38,0.5)}
+.poly-consensus-highlight{background:rgba(240,165,0,0.06)}
 </style>
 </head>
 <body>
@@ -305,6 +323,9 @@ body{
   </button>
   <button class="nav-btn" data-view="copy" title="Copy Trader">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="5.5" r="3"/><circle cx="10.5" cy="10.5" r="3"/><line x1="8" y1="5.5" x2="13" y2="5.5"/><line x1="3" y1="10.5" x2="8" y2="10.5"/></svg>
+  </button>
+  <button class="nav-btn" data-view="polymarket" title="Polymarket">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 2 Q11 8 8 14"/><path d="M8 2 Q5 8 8 14"/><line x1="2.5" y1="6" x2="13.5" y2="6"/><line x1="2.5" y1="10" x2="13.5" y2="10"/></svg>
   </button>
   <button class="nav-btn" title="Backtest">
     <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="10" width="2" height="5" rx=".5" fill="currentColor"/><rect x="5" y="7" width="2" height="8" rx=".5" fill="currentColor"/><rect x="9" y="4" width="2" height="11" rx=".5" fill="currentColor"/><rect x="13" y="2" width="2" height="13" rx=".5" fill="currentColor" opacity=".35"/></svg>
@@ -549,6 +570,86 @@ body{
   </div>
 
 </div><!-- /view-copy -->
+
+<!-- ── POLYMARKET VIEW ──────────────────────────────────────────────── -->
+<div id="view-polymarket" class="view">
+
+  <div class="stats-row-hdr">
+    <span class="stats-row-title">Polymarket</span>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">shadow mode · follows top prediction market traders</span>
+  </div>
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Balance</div>
+      <div class="stat-value" id="poly-stat-balance">—</div>
+      <div class="stat-sub" id="poly-stat-balance-sub">Initial 10,000 USDT</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="poly-stat-realized">—</div>
+      <div class="stat-sub" id="poly-stat-realized-sub">— resolved</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value" id="poly-stat-winrate">—</div>
+      <div class="stat-sub" id="poly-stat-winrate-sub">—W · —L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open Bets</div>
+      <div class="stat-value amber" id="poly-stat-open">—</div>
+      <div class="stat-sub" id="poly-stat-open-sub">across all traders</div>
+    </div>
+  </div>
+
+  <div class="panels-grid">
+
+    <!-- Activity feed (last 48h) -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Recent Bets</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="poly-feed-sub">last 48h</span>
+      </div>
+      <div id="poly-feed-body" style="max-height:320px;overflow-y:auto">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
+      </div>
+    </div>
+
+    <!-- Consensus table -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Consensus</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">≥ 2 traders on same side</span>
+      </div>
+      <div id="poly-consensus-body" style="padding:0">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Convergence panel -->
+  <div class="panel" id="poly-convergence-panel" style="margin-top:12px;display:none">
+    <div class="panel-hdr">
+      <span class="panel-title">⚡ Convergent Signals</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent)">Polymarket + engine signal firing within 24h</span>
+    </div>
+    <div id="poly-convergence-body" style="padding:14px 16px">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    </div>
+  </div>
+
+  <!-- Traders table -->
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Tracked Traders</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">top N by 30d PnL · refreshes weekly</span>
+    </div>
+    <div class="panel-body" id="poly-traders-body">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    </div>
+  </div>
+
+</div><!-- /view-polymarket -->
 
 </main>
 
@@ -1200,6 +1301,7 @@ setInterval(refresh, POLL_MS);
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
       document.getElementById('view-' + view).classList.add('active');
       if (view === 'copy') refreshCopy();
+      if (view === 'polymarket') refreshPoly();
     });
   });
 })();
@@ -1375,6 +1477,166 @@ function renderCopyAccount(acc) {
     const ret = acc.total_return_pct ?? 0;
     retEl.textContent = (ret >= 0 ? '+' : '') + ret.toFixed(2) + '% total return';
     retEl.style.color = color(ret);
+  }
+}
+
+// ─── POLYMARKET ───────────────────────────────────────────────────────────────
+
+function renderPolyAccount(acc) {
+  const fmtD = v => '$' + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  const color = v => v > 0 ? 'var(--long)' : v < 0 ? 'var(--short)' : '';
+
+  const bal = acc.balance ?? 0;
+  const balEl = document.getElementById('poly-stat-balance');
+  if (balEl) { balEl.textContent = fmtD(bal); }
+  const balSub = document.getElementById('poly-stat-balance-sub');
+  if (balSub) balSub.textContent = 'Initial ' + fmtD(acc.initial_balance ?? 10000);
+
+  const r = acc.realized_pnl ?? 0;
+  const realEl = document.getElementById('poly-stat-realized');
+  const realSub = document.getElementById('poly-stat-realized-sub');
+  if (realEl) { realEl.textContent = (r >= 0 ? '+' : '') + fmtD(r); realEl.style.color = color(r); }
+  if (realSub) realSub.textContent = (acc.wins + acc.losses) + ' resolved';
+
+  const wrEl = document.getElementById('poly-stat-winrate');
+  const wrSub = document.getElementById('poly-stat-winrate-sub');
+  const total = (acc.wins ?? 0) + (acc.losses ?? 0);
+  if (wrEl) wrEl.textContent = total > 0 ? (acc.win_rate * 100).toFixed(0) + '%' : '—';
+  if (wrSub) wrSub.textContent = `${acc.wins ?? 0}W · ${acc.losses ?? 0}L`;
+
+  const openEl = document.getElementById('poly-stat-open');
+  if (openEl) openEl.textContent = acc.open_count ?? 0;
+}
+
+function renderPolyFeed(positions) {
+  const body = document.getElementById('poly-feed-body');
+  const sub  = document.getElementById('poly-feed-sub');
+  const cutoff = Date.now() - 48 * 3600 * 1000;
+  const recent = positions.filter(p => p.open && new Date(p.opened_at).getTime() > cutoff)
+                          .sort((a,b) => new Date(b.opened_at) - new Date(a.opened_at));
+  if (sub) sub.textContent = `last 48h · ${recent.length} bet${recent.length !== 1 ? 's' : ''}`;
+  if (!recent.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No new bets in the last 48h.</span>';
+    return;
+  }
+  body.innerHTML = recent.map(p => {
+    const oc = p.outcome === 'YES' ? 'yes' : 'no';
+    const wallet = fmtWallet(p.trader_wallet);
+    const pnl = p.pnl_usdt != null
+      ? `<span class="${p.pnl_usdt >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.pnl_usdt >= 0 ? '+' : ''}$${Math.abs(p.pnl_usdt).toFixed(2)}</span>`
+      : '';
+    const catBadge = p.category ? `<span class="badge b-regime" style="margin-left:4px">${p.category}</span>` : '';
+    return `<div class="poly-feed-row">
+      <span class="poly-outcome ${oc}">${p.outcome}</span>
+      <div style="flex:1;min-width:0">
+        <div class="poly-title">${p.market_title || '—'}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+          <span class="copy-wallet">${wallet}</span>
+          ${catBadge}
+          <span class="poly-meta">$${(p.entry_price??0).toFixed(2)} · ${(p.shares??0).toFixed(0)}sh · $${(p.cost_basis??0).toFixed(2)}</span>
+          ${pnl}
+        </div>
+      </div>
+      <div class="poly-meta">${fmtDT(p.opened_at)}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderPolyConsensus(rows) {
+  const body = document.getElementById('poly-consensus-body');
+  if (!rows.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No consensus yet — need ≥2 traders on same side.</span>';
+    return;
+  }
+  body.innerHTML = `<table class="poly-consensus-tbl">
+    <thead><tr>
+      <th>Market</th><th>Side</th><th class="r">Traders</th>
+      <th class="r">Avg Entry</th><th class="r">Exposure</th>
+    </tr></thead>
+    <tbody>${rows.map(r => {
+      const oc = r.outcome === 'YES' ? 'yes' : 'no';
+      const isStrong = r.trader_count >= 3;
+      return `<tr class="${isStrong ? 'poly-consensus-highlight' : ''}">
+        <td style="font-size:11px;max-width:240px;white-space:normal">${r.market_title || r.market_id}</td>
+        <td><span class="poly-outcome ${oc}">${r.outcome}</span></td>
+        <td class="r td-mono">${r.trader_count}</td>
+        <td class="r td-mono">$${(r.avg_entry??0).toFixed(2)}</td>
+        <td class="r td-mono">$${(r.total_exposure??0).toFixed(2)}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+function renderPolyConvergence(items) {
+  const panel = document.getElementById('poly-convergence-panel');
+  const body  = document.getElementById('poly-convergence-body');
+  if (!items.length) { if (panel) panel.style.display = 'none'; return; }
+  if (panel) panel.style.display = 'block';
+  body.innerHTML = items.map(c => {
+    const oc = c.outcome === 'YES' ? 'yes' : 'no';
+    return `<div class="poly-feed-row" style="border-bottom:1px solid rgba(240,165,0,0.2);background:rgba(240,165,0,0.04)">
+      <span class="poly-outcome ${oc}">${c.outcome}</span>
+      <div style="flex:1;min-width:0">
+        <div class="poly-title">${c.market_title}</div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:3px">
+          <span class="copy-wallet">${fmtWallet(c.trader_wallet)}</span>
+          <span class="poly-meta">$${(c.entry_price??0).toFixed(2)}</span>
+          <span class="poly-convergent">⚡ ${c.signal_direction?.toUpperCase()} ${c.signal_pair} [${c.signal_strategy}]</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderPolyTraders(traders) {
+  const body = document.getElementById('poly-traders-body');
+  if (!traders.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No traders tracked yet — leaderboard refreshes weekly.</span>';
+    return;
+  }
+  body.innerHTML = `<table class="copy-tbl" style="width:100%">
+    <thead><tr>
+      <th>Wallet</th><th>Alias</th><th class="r">30d PnL</th>
+      <th class="r">Win Rate</th><th class="r">Copy PnL</th>
+      <th>Since</th><th>Status</th>
+    </tr></thead>
+    <tbody>${traders.map(t => {
+      const wr = t.trade_count > 0 ? (t.win_rate * 100).toFixed(0) + '%' : '—';
+      const cpnl = t.copy_pnl || 0;
+      const cpnlColor = cpnl > 0 ? 'var(--long)' : cpnl < 0 ? 'var(--short)' : 'var(--muted)';
+      const cpnlStr = cpnl === 0 ? '—' : (cpnl > 0 ? '+' : '') + '$' + Math.abs(cpnl).toFixed(2);
+      return `<tr>
+        <td><span class="copy-wallet">${fmtWallet(t.wallet)}</span></td>
+        <td style="font-size:12px">${t.alias || '<span style="color:var(--muted)">—</span>'}</td>
+        <td class="r td-mono" style="color:var(--long)">+$${(t.pnl_30d||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td class="r td-mono">${wr}</td>
+        <td class="r td-mono" style="color:${cpnlColor}">${cpnlStr}</td>
+        <td class="td-date">${t.tracked_since ? fmtDT(t.tracked_since) : '—'}</td>
+        <td><span class="badge ${t.active ? 'b-live' : 'b-regime'}">${t.active ? 'Active' : 'Inactive'}</span></td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+async function refreshPoly() {
+  try {
+    const [accRes, tradersRes, posRes, consRes, convRes] = await Promise.all([
+      fetch('/api/poly/account'),
+      fetch('/api/poly/traders'),
+      fetch('/api/poly/positions'),
+      fetch('/api/poly/consensus'),
+      fetch('/api/poly/convergence'),
+    ]);
+    const [acc, traders, pos, cons, conv] = await Promise.all([
+      accRes.json(), tradersRes.json(), posRes.json(), consRes.json(), convRes.json(),
+    ]);
+    renderPolyAccount(acc);
+    renderPolyFeed(pos.positions || []);
+    renderPolyConsensus(cons.consensus || []);
+    renderPolyConvergence(conv.convergence || []);
+    renderPolyTraders(traders.traders || []);
+  } catch (err) {
+    console.error('Poly refresh error:', err);
   }
 }
 

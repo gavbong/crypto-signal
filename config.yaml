@@ -98,3 +98,12 @@ copy_trader:
   stop_loss_pct: 0.20           # auto-close copy position if it loses >20% of margin
   max_concurrent_positions: 15  # hard cap across all tracked traders
   min_pnl_30d: 100000           # only follow traders with >$100K 30d PnL
+
+polymarket_trader:
+  enabled: true
+  top_n: 10                    # wider than HL (5) because PM traders specialise by category
+  initial_balance: 10000
+  position_size_pct: 0.05
+  max_concurrent_positions: 20
+  min_pnl_30d: 50000
+  volume_floor: 10000          # filter single-market outliers
