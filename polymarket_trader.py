@@ -208,7 +208,7 @@ def fetch_poly_positions(wallet: str) -> list[dict] | None:
             continue
         size      = float(item.get("size") or item.get("amount") or 0)
         avg_price = float(item.get("avgPrice") or item.get("avg_price") or 0)
-        if size <= 0 or avg_price <= 0:
+        if size <= 0 or avg_price < 0.01:
             continue
         title = str(item.get("title") or item.get("question") or "")[:200]
         tags  = item.get("tags") or []

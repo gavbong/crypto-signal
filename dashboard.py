@@ -624,7 +624,8 @@ def create_app() -> Flask:
             ).fetchall()
             unrealized = conn.execute(
                 """SELECT COALESCE(SUM(shares*(current_price-entry_price)),0)
-                   FROM poly_positions WHERE closed_at IS NULL AND current_price IS NOT NULL"""
+                   FROM poly_positions
+                   WHERE closed_at IS NULL AND current_price IS NOT NULL AND entry_price >= 0.01"""
             ).fetchone()[0]
 
         if not acc:
