@@ -3,13 +3,12 @@
 # Usage: ./scripts/deploy.sh root@<server-ip>
 set -euo pipefail
 
-SERVER="${1:-}"
+SERVER="${1:-root@46.62.219.155}"
 INSTALL_DIR="/opt/mexc-signal-engine"
+SSH_KEY="$HOME/.ssh/id_ed25519"
 
-if [ -z "$SERVER" ]; then
-    echo "Usage: $0 root@<server-ip>"
-    exit 1
-fi
+SSH="ssh -i $SSH_KEY"
+SCP="scp -i $SSH_KEY"
 
 echo "=== Deploying to $SERVER ==="
 
@@ -18,13 +17,13 @@ if [ -f ".env" ]; then
     read -rp "Sync local .env to server? [y/N]: " SYNC_ENV
     if [[ "$SYNC_ENV" =~ ^[Yy]$ ]]; then
         echo "  Uploading .env..."
-        scp .env "$SERVER:$INSTALL_DIR/.env"
-        ssh "$SERVER" "chmod 600 $INSTALL_DIR/.env && chown mexc:mexc $INSTALL_DIR/.env"
+        $SCP .env "$SERVER:$INSTALL_DIR/.env"
+        $SSH "$SERVER" "chmod 600 $INSTALL_DIR/.env && chown mexc:mexc $INSTALL_DIR/.env"
     fi
 fi
 
 # Pull latest code and restart
-ssh "$SERVER" bash <<REMOTE
+$SSH "$SERVER" bash <<REMOTE
 set -euo pipefail
 echo "  Pulling latest code..."
 git -C $INSTALL_DIR pull --ff-only
@@ -52,4 +51,4 @@ REMOTE
 
 echo ""
 echo "=== Deploy complete ==="
-echo "To view dashboard: ssh -L 5000:localhost:5000 $SERVER"
+echo "To view dashboard: ssh -i $SSH_KEY -L 5000:localhost:5000 $SERVER"
