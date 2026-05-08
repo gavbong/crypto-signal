@@ -10,7 +10,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from utils.config import env, get as cfg
 from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe, fetch_ticker_safe
-from db.schema import init_db, get_conn, log_signal, is_duplicate
+from db.schema import init_db, get_conn, log_signal, is_duplicate, log_regime
 from regime.classifier import classify, RegimeResult, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy, _calc_take_profit
@@ -164,6 +164,9 @@ def signal_job(exchange, pairs: list, timeframe: str, limit: int,
                          regimes_1h, df_1h_map, shadow_mode)
         if not fired:
             logger.debug(f"No signals this run at {datetime.now(timezone.utc).isoformat()}")
+        for pair, regime in regimes_1h.items():
+            log_regime(conn, pair, regime.label, regime.confidence,
+                       regime.age_candles, regime.stable)
 
 
 def eval_job(exchange) -> None:
