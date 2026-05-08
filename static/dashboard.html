@@ -66,6 +66,8 @@ body{
 .header.stale{border-top:2px solid var(--short)}
 .header-brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
 .brand-title{font-family:var(--font-display);font-weight:600;font-size:15px;letter-spacing:-0.01em;color:var(--text)}
+.page-context{font-family:var(--font-ui);font-size:11px;font-weight:500;color:var(--muted);letter-spacing:0.03em;text-transform:uppercase;display:none}
+.page-context.visible{display:inline}
 .live-badge{
   display:flex;align-items:center;gap:5px;
   font-family:var(--font-ui);font-size:10px;font-weight:500;
@@ -340,6 +342,7 @@ body{
     <div class="live-badge live" id="live-badge"><span class="live-dot"></span><span id="live-label">LIVE</span></div>
     <div class="vsep"></div>
     <span class="brand-title">MEXC Signal Engine</span>
+    <span class="page-context" id="page-context"></span>
   </div>
   <div class="vsep"></div>
   <div class="pair-chips" id="pair-chips">
@@ -1292,6 +1295,13 @@ refresh();
 setInterval(refresh, POLL_MS);
 
 // ─── VIEW SWITCHING ───────────────────────────────────────────────────────────
+const PAGE_LABELS = { dashboard: null, copy: 'Copy Trader', polymarket: 'Polymarket' };
+function setPageContext(view) {
+  const el = document.getElementById('page-context');
+  const label = PAGE_LABELS[view];
+  if (label) { el.textContent = '/ ' + label; el.classList.add('visible'); }
+  else { el.textContent = ''; el.classList.remove('visible'); }
+}
 (function setupNav() {
   document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1300,6 +1310,7 @@ setInterval(refresh, POLL_MS);
       const view = btn.dataset.view;
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
       document.getElementById('view-' + view).classList.add('active');
+      setPageContext(view);
       if (view === 'copy') refreshCopy();
       if (view === 'polymarket') refreshPoly();
     });
