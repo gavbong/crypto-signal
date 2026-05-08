@@ -97,6 +97,16 @@ def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
     return cur.lastrowid
 
 
+def log_regime(conn: sqlite3.Connection, pair: str, regime: str,
+               confidence: float, age_candles: int, stable: bool) -> None:
+    conn.execute(
+        """INSERT INTO regime_log (pair, regime, confidence, age_candles, stable)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pair, regime, confidence, age_candles, int(stable)),
+    )
+    conn.commit()
+
+
 def is_duplicate(conn: sqlite3.Connection, pair: str, direction: str,
                  strategy: str, regime: str, window_hours: int) -> bool:
     from datetime import datetime, timedelta, timezone
