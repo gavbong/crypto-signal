@@ -1,20 +1,25 @@
-## Deploy Configuration (configured by /setup-deploy)
-- Platform: local (runs on this machine)
-- Production URL: http://127.0.0.1:5000
-- Deploy workflow: manual — pull latest code, restart processes
+## Deploy Configuration
+- Platform: Hetzner CX22 — root@<YOUR_SERVER_IP>
+- Install dir: /opt/mexc-signal-engine
+- Production URL: http://localhost:5000 (via SSH tunnel)
+- Deploy workflow: `bash scripts/deploy.sh` — git pull + pip install + systemctl restart
 - Project type: Python process (signal engine + dashboard + paper trader)
-- Post-deploy health check: http://127.0.0.1:5000/api/health
+- Post-deploy health check: http://localhost:5000/api/health
 
-### Processes
-- `python main.py` — signal engine (APScheduler, runs indefinitely)
-- `python dashboard.py` — Flask dashboard on port 5000
-- `python paper_trader.py` — paper trading simulator (APScheduler, runs indefinitely)
+### Processes (systemd, auto-restart)
+- `mexc-signal-engine` — signal_engine.py (APScheduler, runs indefinitely)
+- `mexc-dashboard`     — dashboard.py (Flask on 127.0.0.1:5000)
+- `mexc-paper-trader`  — paper_trader.py (APScheduler, runs indefinitely)
+
+### SSH access
+- Connect:   `ssh -i ~/.ssh/id_ed25519 root@<YOUR_SERVER_IP>`
+- Dashboard: `ssh -i ~/.ssh/id_ed25519 -L 5000:localhost:5000 root@<YOUR_SERVER_IP>`
+- Logs:      `journalctl -fu mexc-signal-engine`
 
 ### Custom deploy hooks
 - Pre-merge: none
-- Deploy trigger: manual restart of processes after pull
-- Deploy status: poll http://127.0.0.1:5000/api/health until 200
-- Health check: http://127.0.0.1:5000/api/health
+- Deploy trigger: `bash scripts/deploy.sh`
+- Health check: `curl http://localhost:5000/api/health`
 
 ## Design System
 Always read DESIGN.md before making any visual or UI decisions.
