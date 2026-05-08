@@ -9,6 +9,7 @@ Always shadow mode — no real execution.
 """
 import sys
 import re
+import json
 import requests
 from datetime import datetime, timezone
 from loguru import logger
@@ -19,7 +20,6 @@ from utils.config import get as cfg
 from db.schema import get_conn
 from alerts.telegram import send_poly_open_alert, send_poly_close_alert
 
-_PM_LEADERBOARD = "https://data-api.polymarket.com/leaderboard"
 _PM_POSITIONS   = "https://data-api.polymarket.com/positions"
 _GAMMA_MARKETS  = "https://gamma-api.polymarket.com/markets"
 _CLOB_MIDPOINTS = "https://clob.polymarket.com/midpoints"
@@ -118,30 +118,73 @@ def _adjust_poly_balance(conn, delta: float) -> None:
 
 # ── API helpers ────────────────────────────────────────────────────────────────
 
+_PM_LEADERBOARD_PAGE = "https://polymarket.com/leaderboard"
+_NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', re.DOTALL)
+
+
 def fetch_poly_leaderboard(top_n: int, min_pnl: float, volume_floor: float) -> list[dict]:
+    """
+    Scrapes __NEXT_DATA__ from polymarket.com/leaderboard — no auth needed.
+    Polymarket embeds the first-page leaderboard rows in the page HTML as JSON.
+    """
     try:
-        resp = requests.get(_PM_LEADERBOARD, params={"limit": 100, "order_by": "pnl"}, timeout=20)
+        resp = requests.get(
+            _PM_LEADERBOARD_PAGE,
+            headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            timeout=25,
+        )
         resp.raise_for_status()
-        rows = resp.json()
-        if isinstance(rows, dict):
-            rows = rows.get("data") or rows.get("leaderboard") or []
     except Exception as e:
-        logger.error(f"PM leaderboard fetch failed: {e}")
+        logger.error(f"PM leaderboard page fetch failed: {e}")
+        return []
+
+    m = _NEXT_DATA_RE.search(resp.text)
+    if not m:
+        logger.error("PM leaderboard: __NEXT_DATA__ not found in page HTML")
+        return []
+
+    try:
+        page_data = json.loads(m.group(1))
+    except Exception as e:
+        logger.error(f"PM leaderboard: __NEXT_DATA__ JSON parse failed: {e}")
+        return []
+
+    # Navigate: props.pageProps.dehydratedState.queries[n].state.data
+    rows = []
+    queries = (
+        page_data.get("props", {})
+                 .get("pageProps", {})
+                 .get("dehydratedState", {})
+                 .get("queries", [])
+    )
+    for q in queries:
+        candidates = q.get("state", {}).get("data", [])
+        if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict) \
+                and "proxyWallet" in candidates[0]:
+            rows = candidates
+            break
+
+    if not rows:
+        logger.error("PM leaderboard: leaderboard rows not found in __NEXT_DATA__")
         return []
 
     result = []
     for row in rows:
-        wallet = row.get("proxyWallet") or row.get("proxy_wallet") or row.get("address")
+        wallet = row.get("proxyWallet")
         if not wallet:
             continue
-        pnl = float(row.get("pnl") or row.get("pnl30d") or 0)
-        vol = float(row.get("volume") or row.get("volume30d") or 0)
+        pnl = float(row.get("pnl") or 0)
+        vol = float(row.get("volume") or row.get("amount") or 0)
         if pnl < min_pnl or vol < volume_floor:
             continue
-        alias = row.get("name") or row.get("displayName") or row.get("username")
+        alias = row.get("name") or row.get("pseudonym")
         result.append({"wallet": wallet, "pnl_30d": pnl, "volume_30d": vol, "alias": alias})
 
     result.sort(key=lambda r: r["pnl_30d"], reverse=True)
+    logger.info(f"PM leaderboard scraped: {len(rows)} total, {len(result)} qualify")
     return result[:top_n]
 
 
