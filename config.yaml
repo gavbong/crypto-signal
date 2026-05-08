@@ -20,7 +20,7 @@ exchanges:
       - ETH/USDT:USDT
       - SOL/USDT:USDT
   hyperliquid:
-    enabled: false
+    enabled: true
     pairs:
       - BTC/USDC:USDC
       - ETH/USDC:USDC
