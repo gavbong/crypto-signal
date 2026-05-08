@@ -8,13 +8,13 @@ exchanges:
       - UKOIL/USDT:USDT
       - XAUT/USDT:USDT
   binance:
-    enabled: false
+    enabled: true
     pairs:
       - BTC/USDT:USDT
       - ETH/USDT:USDT
       - SOL/USDT:USDT
   okx:
-    enabled: false
+    enabled: true
     pairs:
       - BTC/USDT:USDT
       - ETH/USDT:USDT
