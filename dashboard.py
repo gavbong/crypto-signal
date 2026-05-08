@@ -434,7 +434,122 @@ def create_app() -> Flask:
         data = json.loads(files[0].read_text())
         return jsonify(data)
 
+    # ── Copy Trader API ───────────────────────────────────────────────────────
+
+    @app.route("/api/copy/traders")
+    def api_copy_traders():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT wallet, alias, pnl_30d, tracked_since, last_refreshed, active
+                   FROM copy_traders ORDER BY pnl_30d DESC"""
+            ).fetchall()
+        return jsonify({
+            "traders": [
+                {
+                    "wallet": r["wallet"],
+                    "alias": r["alias"],
+                    "pnl_30d": r["pnl_30d"],
+                    "tracked_since": _normalize_ts(r["tracked_since"]),
+                    "last_refreshed": _normalize_ts(r["last_refreshed"]),
+                    "active": bool(r["active"]),
+                }
+                for r in rows
+            ]
+        })
+
+    @app.route("/api/copy/positions")
+    def api_copy_positions():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, trader_wallet, pair, direction, entry_price, last_price,
+                          contracts, margin_usdt, opened_at
+                   FROM copy_positions WHERE closed_at IS NULL ORDER BY opened_at DESC"""
+            ).fetchall()
+
+        def _unrealized(r):
+            if r["last_price"] is None:
+                return None
+            sign = 1 if r["direction"] == "long" else -1
+            return round((r["last_price"] - r["entry_price"]) * (r["contracts"] or 0.0) * sign, 4)
+
+        return jsonify({
+            "positions": [
+                {
+                    "id": r["id"],
+                    "trader_wallet": r["trader_wallet"],
+                    "pair": r["pair"],
+                    "direction": r["direction"],
+                    "entry_price": r["entry_price"],
+                    "last_price": r["last_price"],
+                    "contracts": r["contracts"],
+                    "margin_usdt": r["margin_usdt"],
+                    "unrealized_pnl": _unrealized(r),
+                    "opened_at": _normalize_ts(r["opened_at"]),
+                }
+                for r in rows
+            ]
+        })
+
+    @app.route("/api/copy/history")
+    def api_copy_history():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, trader_wallet, pair, direction, entry_price, exit_price,
+                          contracts, margin_usdt, pnl_usdt, opened_at, closed_at, exit_reason
+                   FROM copy_positions WHERE closed_at IS NOT NULL
+                   ORDER BY closed_at DESC LIMIT 200"""
+            ).fetchall()
+        return jsonify({
+            "trades": [
+                {
+                    "id": r["id"],
+                    "trader_wallet": r["trader_wallet"],
+                    "pair": r["pair"],
+                    "direction": r["direction"],
+                    "entry_price": r["entry_price"],
+                    "exit_price": r["exit_price"],
+                    "contracts": r["contracts"],
+                    "margin_usdt": r["margin_usdt"],
+                    "pnl_usdt": r["pnl_usdt"],
+                    "opened_at": _normalize_ts(r["opened_at"]),
+                    "closed_at": _normalize_ts(r["closed_at"]),
+                    "exit_reason": r["exit_reason"],
+                }
+                for r in rows
+            ]
+        })
+
+    @app.route("/api/copy/comparison")
+    def api_copy_comparison():
+        """Cumulative daily PnL for both copy trader and paper trader — feeds comparison chart."""
+        _auth()
+        with get_conn() as conn:
+            copy_rows = conn.execute(
+                "SELECT date, pnl_usdt FROM copy_daily_pnl ORDER BY date"
+            ).fetchall()
+            paper_rows = conn.execute(
+                """SELECT DATE(closed_at) as date, SUM(pnl_usdt) as pnl_usdt
+                   FROM paper_positions WHERE closed_at IS NOT NULL
+                   GROUP BY DATE(closed_at) ORDER BY date"""
+            ).fetchall()
+
+        def _cumulative(rows):
+            total, result = 0.0, []
+            for r in rows:
+                total += r["pnl_usdt"] or 0.0
+                result.append({"date": r["date"], "cumulative_pnl": round(total, 2)})
+            return result
+
+        return jsonify({
+            "copy": _cumulative(copy_rows),
+            "paper": _cumulative(paper_rows),
+        })
+
     _migrate_paper_db()
+    _migrate_copy_db()
     return app
 
 
@@ -449,6 +564,12 @@ def _migrate_paper_db():
                 conn.commit()
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+
+def _migrate_copy_db():
+    from copy_trader import init_copy_db
+    with get_conn() as conn:
+        init_copy_db(conn)
 
 
 if __name__ == "__main__":

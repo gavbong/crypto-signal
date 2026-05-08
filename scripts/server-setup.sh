@@ -74,10 +74,11 @@ echo "[6/7] Installing systemd services..."
 cp "$INSTALL_DIR/deploy/signal-engine.service"  /etc/systemd/system/mexc-signal-engine.service
 cp "$INSTALL_DIR/deploy/dashboard.service"      /etc/systemd/system/mexc-dashboard.service
 cp "$INSTALL_DIR/deploy/paper-trader.service"   /etc/systemd/system/mexc-paper-trader.service
+cp "$INSTALL_DIR/deploy/copy-trader.service"    /etc/systemd/system/mexc-copy-trader.service
 
 systemctl daemon-reload
-systemctl enable mexc-signal-engine mexc-dashboard mexc-paper-trader
-systemctl restart mexc-signal-engine mexc-dashboard mexc-paper-trader
+systemctl enable mexc-signal-engine mexc-dashboard mexc-paper-trader mexc-copy-trader
+systemctl restart mexc-signal-engine mexc-dashboard mexc-paper-trader mexc-copy-trader
 
 # ── 7. Firewall ────────────────────────────────────────────────────────────────
 echo "[7/7] Configuring firewall..."
@@ -92,13 +93,14 @@ echo ""
 echo "=== Setup complete! ==="
 echo ""
 echo "Service status:"
-systemctl is-active mexc-signal-engine mexc-dashboard mexc-paper-trader | paste - - - | \
-    awk '{print "  signal-engine: "$1"\n  dashboard:     "$2"\n  paper-trader:  "$3}'
+systemctl is-active mexc-signal-engine mexc-dashboard mexc-paper-trader mexc-copy-trader | paste - - - - | \
+    awk '{print "  signal-engine: "$1"\n  dashboard:     "$2"\n  paper-trader:  "$3"\n  copy-trader:   "$4}'
 echo ""
 echo "View logs:"
 echo "  journalctl -fu mexc-signal-engine"
 echo "  journalctl -fu mexc-dashboard"
 echo "  journalctl -fu mexc-paper-trader"
+echo "  journalctl -fu mexc-copy-trader"
 echo ""
 echo "Access dashboard (from your local machine):"
 echo "  ssh -L 5000:localhost:5000 root@$(hostname -I | awk '{print $1}')"

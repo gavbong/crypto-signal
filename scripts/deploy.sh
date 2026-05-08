@@ -32,13 +32,13 @@ echo "  Updating dependencies (if requirements.txt changed)..."
 $INSTALL_DIR/.venv/bin/pip install --quiet -r $INSTALL_DIR/requirements.txt
 
 echo "  Restarting services..."
-systemctl restart mexc-signal-engine mexc-dashboard mexc-paper-trader
+systemctl restart mexc-signal-engine mexc-dashboard mexc-paper-trader mexc-copy-trader
 
 sleep 3
 echo ""
 echo "Service status:"
-systemctl is-active mexc-signal-engine mexc-dashboard mexc-paper-trader | \
-    paste - - - | awk '{print "  signal-engine: "\$1"\\n  dashboard:     "\$2"\\n  paper-trader:  "\$3}'
+systemctl is-active mexc-signal-engine mexc-dashboard mexc-paper-trader mexc-copy-trader | \
+    paste - - - - | awk '{print "  signal-engine: "\$1"\\n  dashboard:     "\$2"\\n  paper-trader:  "\$3"\\n  copy-trader:   "\$4}'
 
 # Health check
 if curl -sf http://localhost:5000/api/health > /dev/null 2>&1; then

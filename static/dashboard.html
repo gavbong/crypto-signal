@@ -274,6 +274,18 @@ body{
   transform:translate(-50%,-110%);
 }
 .tooltip.visible{opacity:1}
+.view{display:none}
+.view.active{display:block}
+.copy-tbl{width:100%;border-collapse:collapse}
+.copy-tbl td{font-size:12px;padding:8px 12px;border-bottom:1px solid rgba(31,35,48,0.6);vertical-align:middle;white-space:nowrap}
+.copy-tbl tr:last-child td{border-bottom:none}
+.copy-tbl tbody tr:hover td{background:rgba(26,29,38,0.5)}
+.copy-tbl th{font-family:var(--font-ui);font-size:10px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);text-align:left}
+.copy-tbl th.r{text-align:right}
+.copy-tbl td.r{text-align:right}
+.copy-wallet{font-family:var(--font-mono);font-size:10px;color:var(--muted)}
+.copy-chart-wrap{padding:14px 16px}
+.copy-chart-svg{width:100%;height:100px;overflow:visible}
 </style>
 </head>
 <body>
@@ -285,11 +297,14 @@ body{
       <circle cx="11" cy="11" r="2.5" fill="#F0A500"/>
     </svg>
   </div>
-  <button class="nav-btn active" title="Dashboard">
+  <button class="nav-btn active" data-view="dashboard" title="Dashboard">
     <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/></svg>
   </button>
   <button class="nav-btn" title="Signals">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,10 5,6 8,9 12,4 15,7"/></svg>
+  </button>
+  <button class="nav-btn" data-view="copy" title="Copy Trader">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.5" cy="5.5" r="3"/><circle cx="10.5" cy="10.5" r="3"/><line x1="8" y1="5.5" x2="13" y2="5.5"/><line x1="3" y1="10.5" x2="8" y2="10.5"/></svg>
   </button>
   <button class="nav-btn" title="Backtest">
     <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="10" width="2" height="5" rx=".5" fill="currentColor"/><rect x="5" y="7" width="2" height="8" rx=".5" fill="currentColor"/><rect x="9" y="4" width="2" height="11" rx=".5" fill="currentColor"/><rect x="13" y="2" width="2" height="13" rx=".5" fill="currentColor" opacity=".35"/></svg>
@@ -316,6 +331,8 @@ body{
 </header>
 
 <main class="main">
+
+<div id="view-dashboard" class="view active">
 
   <div class="stats-row-hdr">
     <span class="stats-row-title">Paper Trading</span>
@@ -436,6 +453,79 @@ body{
       <tbody id="trades-tbody"></tbody>
     </table>
   </div>
+
+</div><!-- /view-dashboard -->
+
+<!-- ── COPY TRADER VIEW ─────────────────────────────────────────────── -->
+<div id="view-copy" class="view">
+
+  <div class="stats-row-hdr">
+    <span class="stats-row-title">Copy Trader</span>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">shadow mode · follows top Hyperliquid traders</span>
+  </div>
+
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Tracked Traders</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">auto-selected by 30d PnL · refreshes weekly</span>
+    </div>
+    <div class="panel-body" id="copy-traders-body">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    </div>
+  </div>
+
+  <div class="mid-grid">
+
+    <div class="panel" id="copy-positions-panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Open Copy Positions</span>
+        <span class="badge b-live"><span style="font-size:7px">●</span> Shadow</span>
+      </div>
+      <div id="copy-positions-body" style="padding:14px 16px">
+        <div class="sig-empty">
+          <span class="sig-empty-label">No open positions</span>
+          <span class="sig-empty-ts">waiting for tracked traders to open positions</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Performance vs Paper Trader</span>
+        <div class="legend-row">
+          <span class="legend-item"><span class="legend-dot" style="background:var(--accent)"></span>Copy</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--long)"></span>Paper</span>
+        </div>
+      </div>
+      <div class="panel-body" id="copy-chart-body">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Chart appears once copy trades close.</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Copy Trade History</span>
+      <span id="copy-hist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+    </div>
+    <div class="tbl-wrap" style="border:none">
+      <table class="copy-tbl">
+        <thead>
+          <tr>
+            <th>Trader</th><th>Pair</th><th>Dir</th>
+            <th class="r">Entry</th><th class="r">Exit</th>
+            <th>Reason</th><th class="r">PnL</th><th>Opened</th>
+          </tr>
+        </thead>
+        <tbody id="copy-history-tbody">
+          <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /view-copy -->
 
 </main>
 
@@ -1076,6 +1166,166 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, POLL_MS);
+
+// ─── VIEW SWITCHING ───────────────────────────────────────────────────────────
+(function setupNav() {
+  document.querySelectorAll('.nav-btn[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.nav-btn[data-view]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const view = btn.dataset.view;
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.getElementById('view-' + view).classList.add('active');
+      if (view === 'copy') refreshCopy();
+    });
+  });
+})();
+
+// ─── COPY TRADER ──────────────────────────────────────────────────────────────
+function fmtWallet(w) {
+  return w ? w.slice(0,6) + '…' + w.slice(-4) : '—';
+}
+
+function renderCopyTraders(traders) {
+  const body = document.getElementById('copy-traders-body');
+  if (!traders.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No traders tracked yet — leaderboard refreshes weekly.</span>';
+    return;
+  }
+  body.innerHTML = `<table class="copy-tbl" style="width:100%">
+    <thead><tr>
+      <th>Wallet</th><th>Alias</th><th class="r">30d PnL</th>
+      <th>Since</th><th>Status</th>
+    </tr></thead>
+    <tbody>${traders.map(t => `
+      <tr>
+        <td><span class="copy-wallet">${fmtWallet(t.wallet)}</span></td>
+        <td style="font-size:12px">${t.alias || '<span style="color:var(--muted)">—</span>'}</td>
+        <td class="r td-mono" style="color:var(--long)">+$${(t.pnl_30d||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td class="td-date">${t.tracked_since ? fmtDT(t.tracked_since) : '—'}</td>
+        <td><span class="badge ${t.active ? 'b-live' : 'b-regime'}">${t.active ? 'Active' : 'Inactive'}</span></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderCopyPositions(positions) {
+  const body = document.getElementById('copy-positions-body');
+  if (!positions.length) {
+    body.innerHTML = `<div class="sig-empty">
+      <span class="sig-empty-label">No open positions</span>
+      <span class="sig-empty-ts">waiting for tracked traders to open positions</span>
+    </div>`;
+    return;
+  }
+  body.innerHTML = positions.map(p => {
+    const dc = p.direction === 'long' ? 'b-long' : 'b-short';
+    const pnl = p.unrealized_pnl != null
+      ? `<span class="${p.unrealized_pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.unrealized_pnl >= 0 ? '+' : ''}${p.unrealized_pnl.toFixed(2)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    return `<div class="pos-row">
+      <div class="pos-pair">${fmtPair(p.pair)} <span class="copy-wallet">${fmtWallet(p.trader_wallet)}</span></div>
+      <div class="pos-meta">
+        <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
+        <span class="pos-entry">entry ${fmt(p.entry_price)}</span>
+        ${p.last_price != null ? `<span class="pos-live">now ${fmt(p.last_price)}</span>` : ''}
+      </div>
+      <div class="pos-pnl">${pnl}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderCopyHistory(trades) {
+  const tbody = document.getElementById('copy-history-tbody');
+  const count = document.getElementById('copy-hist-count');
+  count.textContent = trades.length ? `${trades.length} trade${trades.length !== 1 ? 's' : ''}` : '';
+  if (!trades.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trades.slice(0, 100).map(t => {
+    const dc = t.direction === 'long' ? 'b-long' : 'b-short';
+    const won = t.pnl_usdt > 0;
+    const reasonLabel = {trader_closed:'Closed',trader_reversed:'Reversed'}[t.exit_reason] || t.exit_reason || '—';
+    const reasonCls = won ? 'b-tp' : 'b-loss';
+    const pnl = t.pnl_usdt != null
+      ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    return `<tr>
+      <td><span class="copy-wallet">${fmtWallet(t.trader_wallet)}</span></td>
+      <td class="td-pair">${fmtPair(t.pair)}</td>
+      <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
+      <td class="r td-mono">${fmt(t.entry_price)}</td>
+      <td class="r td-mono">${fmt(t.exit_price)}</td>
+      <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
+      <td class="r">${pnl}</td>
+      <td class="td-date">${fmtDT(t.opened_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderCopyChart(copy, paper) {
+  const body = document.getElementById('copy-chart-body');
+  if (!copy.length && !paper.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Chart appears once copy trades close.</span>';
+    return;
+  }
+  const allDates = [...new Set([...copy.map(d => d.date), ...paper.map(d => d.date)])].sort();
+  if (!allDates.length) return;
+
+  const copyMap = Object.fromEntries(copy.map(d => [d.date, d.cumulative_pnl]));
+  const paperMap = Object.fromEntries(paper.map(d => [d.date, d.cumulative_pnl]));
+
+  const allVals = [...copy.map(d => d.cumulative_pnl), ...paper.map(d => d.cumulative_pnl), 0];
+  const minV = Math.min(...allVals);
+  const maxV = Math.max(...allVals);
+  const range = maxV - minV || 1;
+  const H = 90, W = 100;  // viewBox units
+
+  function toY(v) { return H - ((v - minV) / range) * H; }
+  function toX(i) { return (i / (allDates.length - 1 || 1)) * W; }
+
+  function buildPath(dataMap) {
+    const pts = allDates.map((d, i) => {
+      const v = dataMap[d] ?? null;
+      return v !== null ? `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(v).toFixed(1)}` : null;
+    }).filter(Boolean);
+    return pts.join(' ');
+  }
+
+  const zeroY = toY(0).toFixed(1);
+  body.innerHTML = `<div class="copy-chart-wrap">
+    <svg viewBox="0 0 ${W} ${H}" class="copy-chart-svg" preserveAspectRatio="none">
+      <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="rgba(240,165,0,0.15)" stroke-width="0.5"/>
+      ${paper.length ? `<path d="${buildPath(paperMap)}" fill="none" stroke="#22C55E" stroke-width="1.2" stroke-linejoin="round"/>` : ''}
+      ${copy.length ? `<path d="${buildPath(copyMap)}" fill="none" stroke="#F0A500" stroke-width="1.2" stroke-linejoin="round"/>` : ''}
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px">
+      <span>${allDates[0]||''}</span>
+      <span>${allDates[allDates.length-1]||''}</span>
+    </div>
+  </div>`;
+}
+
+async function refreshCopy() {
+  try {
+    const [tradersRes, posRes, histRes, cmpRes] = await Promise.all([
+      fetch('/api/copy/traders'),
+      fetch('/api/copy/positions'),
+      fetch('/api/copy/history'),
+      fetch('/api/copy/comparison'),
+    ]);
+    const [traders, pos, hist, cmp] = await Promise.all([
+      tradersRes.json(), posRes.json(), histRes.json(), cmpRes.json(),
+    ]);
+    renderCopyTraders(traders.traders || []);
+    renderCopyPositions(pos.positions || []);
+    renderCopyHistory(hist.trades || []);
+    renderCopyChart(cmp.copy || [], cmp.paper || []);
+  } catch (err) {
+    console.error('Copy refresh error:', err);
+  }
+}
 </script>
 </body>
 </html>
