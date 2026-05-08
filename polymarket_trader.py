@@ -20,9 +20,8 @@ from utils.config import get as cfg
 from db.schema import get_conn
 from alerts.telegram import send_poly_open_alert, send_poly_close_alert
 
-_PM_POSITIONS   = "https://data-api.polymarket.com/positions"
-_GAMMA_MARKETS  = "https://gamma-api.polymarket.com/markets"
-_CLOB_MIDPOINTS = "https://clob.polymarket.com/midpoints"
+_PM_POSITIONS  = "https://data-api.polymarket.com/positions"
+_GAMMA_MARKETS = "https://gamma-api.polymarket.com/markets"
 
 _CRYPTO   = {'crypto','bitcoin','btc','ethereum','eth','defi','solana','sol','xrp','bnb','doge'}
 _POLITICS = {'politics','election','trump','biden','congress','president','vote','senate','harris'}
@@ -261,30 +260,24 @@ def fetch_market_meta(market_id: str) -> dict | None:
     if resolution_price is not None:
         resolution_price = float(resolution_price)
 
+    best_bid = data.get("bestBid")
+    best_ask = data.get("bestAsk")
+    if best_bid is not None and best_ask is not None:
+        mid_price = round((float(best_bid) + float(best_ask)) / 2, 4)
+    elif resolution_price is not None:
+        mid_price = resolution_price
+    else:
+        mid_price = None
+
     return {
         "yes_token_id":    yes_token_id,
         "title":           title,
         "tags":            [str(t) for t in tags],
         "resolved":        resolved,
         "resolution_price": resolution_price,
+        "mid_price":       mid_price,
     }
 
-
-def fetch_bulk_prices(token_ids: list[str]) -> dict[str, float]:
-    if not token_ids:
-        return {}
-    try:
-        # Build URL directly — requests encodes commas as %2C which CLOB rejects
-        url  = f"{_CLOB_MIDPOINTS}?token_ids=" + ",".join(token_ids)
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        mid  = data.get("midpoints") if isinstance(data, dict) else data
-        if isinstance(mid, dict):
-            return {k: float(v) for k, v in mid.items()}
-    except Exception as e:
-        logger.warning(f"CLOB midpoints failed: {e}")
-    return {}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -486,24 +479,20 @@ def poll_positions_job() -> None:
     position_size_pct = float(c.get("position_size_pct", 0.05))
     max_concurrent    = int(c.get("max_concurrent_positions", 20))
 
-    # Load wallets and pre-fetch mid prices for all open positions
     with get_conn() as conn:
         wallet_rows = conn.execute("""
             SELECT wallet FROM poly_traders WHERE active=1
             UNION
             SELECT DISTINCT trader_wallet FROM poly_state WHERE side='open'
         """).fetchall()
-        token_rows = conn.execute(
-            "SELECT yes_token_id FROM poly_positions WHERE closed_at IS NULL AND yes_token_id IS NOT NULL"
-        ).fetchall()
 
-    wallets    = [r["wallet"] for r in wallet_rows]
-    token_ids  = list({r["yes_token_id"] for r in token_rows})
-    mid_prices = fetch_bulk_prices(token_ids)
-
+    wallets = [r["wallet"] for r in wallet_rows]
     if not wallets:
         logger.debug("No PM traders to poll")
         return
+
+    # Shared meta cache across all wallets (deduplicates Gamma API calls)
+    meta_cache: dict[str, dict] = {}
 
     for wallet in wallets:
         live = fetch_poly_positions(wallet)
@@ -523,26 +512,29 @@ def poll_positions_job() -> None:
             ).fetchall()
         previous = {(r["market_id"], r["outcome"]): r["side"] for r in prev_rows}
 
-        # ── Pre-fetch meta / resolution data (all HTTP outside DB) ───────────
+        # ── Pre-fetch Gamma meta for new + still-open markets (HTTP outside DB) ─
         new_keys = [k for k in current if k not in previous]
-        meta_cache: dict[str, dict] = {}
         for market_id, _ in new_keys:
             if market_id not in meta_cache:
                 meta = fetch_market_meta(market_id)
                 if meta:
                     meta_cache[market_id] = meta
 
-        # Check resolution for positions still held by trader
         still_open_markets = {
             market_id
             for (market_id, outcome), side in previous.items()
             if side == "open" and (market_id, outcome) in current
         }
-        resolution_cache: dict[str, dict] = {}
         for market_id in still_open_markets:
-            meta = meta_cache.get(market_id) or fetch_market_meta(market_id)
-            if meta and meta.get("resolved"):
-                resolution_cache[market_id] = meta
+            if market_id not in meta_cache:
+                meta = fetch_market_meta(market_id)
+                if meta:
+                    meta_cache[market_id] = meta
+
+        resolution_cache = {
+            mid: m for mid, m in meta_cache.items()
+            if mid in still_open_markets and m.get("resolved")
+        }
 
         # ── Apply diff ────────────────────────────────────────────────────────
         with get_conn() as conn:
@@ -556,18 +548,9 @@ def poll_positions_job() -> None:
             for (market_id, outcome), side in previous.items():
                 if side != "open" or (market_id, outcome) in current:
                     continue
-                tid_row = conn.execute(
-                    """SELECT yes_token_id FROM poly_positions
-                       WHERE trader_wallet=? AND market_id=? AND outcome=? AND closed_at IS NULL
-                       ORDER BY opened_at DESC LIMIT 1""",
-                    (wallet, market_id, outcome),
-                ).fetchone()
-                yes_price = (
-                    mid_prices.get(tid_row["yes_token_id"])
-                    if tid_row and tid_row["yes_token_id"] else None
-                )
-                if yes_price is not None:
-                    exit_price = yes_price if outcome == "YES" else 1.0 - yes_price
+                mid_price = meta_cache.get(market_id, {}).get("mid_price")
+                if mid_price is not None:
+                    exit_price = mid_price if outcome == "YES" else 1.0 - mid_price
                 else:
                     ep_row = conn.execute(
                         """SELECT entry_price FROM poly_positions
@@ -606,25 +589,20 @@ def poll_positions_job() -> None:
 
                 _close_position(conn, wallet, market_id, outcome, exit_price, reason)
 
-    # ── Bulk price update for all remaining open positions ────────────────────
+    # ── Update current_price for all open positions from cached Gamma prices ──
     with get_conn() as conn:
         open_pos = conn.execute(
-            "SELECT id, yes_token_id, outcome FROM poly_positions WHERE closed_at IS NULL AND yes_token_id IS NOT NULL"
+            "SELECT id, market_id, outcome FROM poly_positions WHERE closed_at IS NULL"
         ).fetchall()
-
-    if open_pos:
-        new_tids = list({r["yes_token_id"] for r in open_pos} - set(token_ids))
-        if new_tids:
-            mid_prices.update(fetch_bulk_prices(new_tids))
-        with get_conn() as conn:
-            for pos in open_pos:
-                yes_price = mid_prices.get(pos["yes_token_id"])
-                if yes_price is not None:
-                    cp = yes_price if pos["outcome"] == "YES" else 1.0 - yes_price
-                    conn.execute(
-                        "UPDATE poly_positions SET current_price=? WHERE id=?",
-                        (round(cp, 4), pos["id"]),
-                    )
+        updates = []
+        for pos in open_pos:
+            meta = meta_cache.get(pos["market_id"])
+            if meta and meta.get("mid_price") is not None:
+                mp = meta["mid_price"]
+                cp = mp if pos["outcome"] == "YES" else round(1.0 - mp, 4)
+                updates.append((cp, pos["id"]))
+        if updates:
+            conn.executemany("UPDATE poly_positions SET current_price=? WHERE id=?", updates)
             conn.commit()
 
     logger.debug(f"PM poll complete | traders={len(wallets)}")
