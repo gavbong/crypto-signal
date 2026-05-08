@@ -1,7 +1,10 @@
 """
-signal_engine.py — Phase 1a shadow mode signal generator.
+signal_engine.py — Multi-exchange signal generator.
 Runs every 15 minutes via APScheduler. Uses 1h candles for regime
 classification (MTF) and 15m candles for signal indicator calculation.
+
+Per cycle: collects candidates from all exchanges, picks the highest-confidence
+signal per (base_asset, direction, strategy, regime), then emits the winner.
 """
 import sys
 from datetime import datetime, timezone
@@ -55,16 +58,28 @@ def _build_regime_context(
     return context, df_1h_map
 
 
-def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
-             dedup_window: int, regimes_1h: dict[str, RegimeResult],
-             df_1h_map: dict | None = None,
-             shadow_mode: bool = True,
-             exchange_id: str = "mexc") -> list[dict]:
-    """One signal engine cycle. Uses pre-built 1h regimes; fetches 15m candles for indicators."""
-    fired = []
+def _collect_candidates(
+    exchange,
+    pairs: list,
+    timeframe: str,
+    limit: int,
+    regimes_1h: dict[str, RegimeResult],
+    df_1h_map: dict | None,
+    exchange_id: str,
+    shadow_mode: bool,
+) -> list[dict]:
+    """Collect potential signals from one exchange without emitting.
+    No dedup check, no LLM commentary, no alerts. Returns raw candidates
+    so signal_job can compare quality across exchanges before firing."""
+    candidates = []
+
+    regime_context_for_llm = {
+        p: {"regime": r.label, "confidence": r.confidence,
+            "age_candles": r.age_candles, "stable": r.stable}
+        for p, r in regimes_1h.items()
+    }
 
     for pair in pairs:
-        # Use 1h regime from pre-built MTF context
         regime = regimes_1h.get(pair)
         if regime is None:
             logger.warning(f"Skipping {pair}: no 1h regime available")
@@ -79,25 +94,22 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
             logger.debug(f"{pair}: no active strategies for regime {regime.label}")
             continue
 
-        # Fetch 15m candles for signal indicator calculation
         ohlcv = fetch_ohlcv_safe(exchange, pair, timeframe, limit)
         if ohlcv is None:
             logger.warning(f"Skipping {pair}: no 15m candle data")
             continue
-
         if len(ohlcv) < 55:
             logger.warning(f"Skipping {pair}: only {len(ohlcv)} candles (need 55)")
             continue
 
         df = _to_df(ohlcv)
 
-        # Fetch live price once per pair — candle close can be up to 14 min stale on 15m
         live_price: float | None = None
         ticker = fetch_ticker_safe(exchange, pair)
         if ticker and ticker.get("last"):
             live_price = float(ticker["last"])
         else:
-            logger.warning(f"{pair}: ticker fetch failed, using candle close as entry price")
+            logger.warning(f"{pair} [{exchange_id}]: ticker failed, using candle close")
 
         df_1h = (df_1h_map or {}).get(pair)
 
@@ -106,7 +118,6 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
             if signal is None:
                 continue
 
-            # Reanchor entry/stop/TP to live market price using per-regime RR
             if live_price is not None:
                 risk = abs(signal["entry_price"] - signal["suggested_stop_loss"])
                 live_stop = (round(live_price - risk, 8) if signal["direction"] == "long"
@@ -117,35 +128,85 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
                     live_price, live_stop, signal["direction"], regime.label
                 )
 
-            # Deduplication check: cross-exchange, keyed on base asset
-            # BTC/USDT:USDT and BTC/USDC:USDC both reduce to "BTC" — only 1 signal per token
-            base_asset = pair.split("/")[0]
-            if is_duplicate(conn, base_asset, signal["direction"], strategy,
-                            regime.label, dedup_window):
-                logger.debug(f"Duplicate suppressed: {base_asset} {signal['direction']} {strategy} {regime.label}")
+            signal["exchange"] = exchange_id
+            signal["shadow_mode"] = shadow_mode
+            signal["_regime_context"] = regime_context_for_llm
+            candidates.append(signal)
+
+    return candidates
+
+
+def _pick_best(candidates: list[dict]) -> list[dict]:
+    """For each (base_asset, direction, strategy, regime), keep the candidate
+    with the highest regime_confidence. Higher confidence = cleaner regime label
+    = better signal quality. Ties go to the first exchange in config order."""
+    best: dict[tuple, dict] = {}
+    for signal in candidates:
+        base_asset = signal["pair"].split("/")[0]
+        key = (base_asset, signal["direction"], signal["strategy"], signal["regime"])
+        existing = best.get(key)
+        if existing is None or signal["regime_confidence"] > existing["regime_confidence"]:
+            best[key] = signal
+    return list(best.values())
+
+
+def signal_job(exchanges_config: list, timeframe: str, limit: int,
+               dedup_window: int, shadow_mode: bool) -> None:
+    """exchanges_config: list of (exchange_id, exchange_obj, pairs).
+
+    Flow: collect candidates from all exchanges → pick best per (base_asset,
+    direction, strategy, regime) by regime confidence → dedup check → emit winners.
+    """
+    c = cfg()
+    with get_conn() as conn:
+        all_candidates: list[dict] = []
+
+        for exchange_id, exchange, pairs in exchanges_config:
+            regimes_1h, df_1h_map = _build_regime_context(
+                exchange, pairs, c["regime_timeframe"], c["regime_limit"]
+            )
+            candidates = _collect_candidates(
+                exchange, pairs, timeframe, limit,
+                regimes_1h, df_1h_map, exchange_id, shadow_mode,
+            )
+            all_candidates.extend(candidates)
+
+            for pair, regime in regimes_1h.items():
+                log_regime(conn, pair, regime.label, regime.confidence,
+                           regime.age_candles, regime.stable)
+
+        winners = _pick_best(all_candidates)
+        if not winners:
+            logger.debug(f"No signals at {datetime.now(timezone.utc).isoformat()}")
+            return
+
+        fired = []
+        for signal in winners:
+            base_asset = signal["pair"].split("/")[0]
+            if is_duplicate(conn, base_asset, signal["direction"],
+                            signal["strategy"], signal["regime"], dedup_window):
+                logger.debug(
+                    f"Duplicate suppressed: {base_asset} {signal['direction']} "
+                    f"{signal['strategy']} {signal['regime']}"
+                )
                 continue
 
-            # Serialize RegimeResult to plain dict for LLM commentary (JSON-safe)
-            regime_context_for_llm = {
-                p: {"regime": r.label, "confidence": r.confidence,
-                    "age_candles": r.age_candles, "stable": r.stable}
-                for p, r in regimes_1h.items()
-            }
-            commentary = generate_commentary(signal, regime_context_for_llm)
+            regime_context = signal.pop("_regime_context", {})
+            commentary = generate_commentary(signal, regime_context)
             signal["llm_commentary"] = commentary
             signal["commentary_status"] = "done" if commentary else "pending"
-
-            signal["shadow_mode"] = shadow_mode
-            signal["exchange"] = exchange_id
             signal["market_session"] = _market_session(datetime.now(timezone.utc).hour)
+
             signal_id = log_signal(conn, signal)
             signal["id"] = signal_id
 
             mode_str = "SHADOW" if shadow_mode else "LIVE"
             logger.info(
-                f"SIGNAL [{signal_id}] [{mode_str}] {pair} {signal['direction'].upper()} "
-                f"| strategy={strategy} regime={regime.label}({regime.confidence:.2f}) "
-                f"age={regime.age_candles}h | entry={signal['entry_price']} "
+                f"SIGNAL [{signal_id}] [{mode_str}] [{signal['exchange'].upper()}] "
+                f"{signal['pair']} {signal['direction'].upper()} "
+                f"| strategy={signal['strategy']} "
+                f"regime={signal['regime']}({signal['regime_confidence']:.2f}) "
+                f"age={signal['regime_age_candles']}h | entry={signal['entry_price']} "
                 f"stop={signal['suggested_stop_loss']}"
             )
             if commentary:
@@ -153,26 +214,6 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
 
             send_signal_alert(signal)
             fired.append(signal)
-
-    return fired
-
-
-def signal_job(exchanges_config: list, timeframe: str, limit: int,
-               dedup_window: int, shadow_mode: bool) -> None:
-    """exchanges_config: list of (exchange_id, exchange_obj, pairs)"""
-    c = cfg()
-    with get_conn() as conn:
-        for exchange_id, exchange, pairs in exchanges_config:
-            regimes_1h, df_1h_map = _build_regime_context(
-                exchange, pairs, c["regime_timeframe"], c["regime_limit"]
-            )
-            fired = run_once(exchange, conn, pairs, timeframe, limit, dedup_window,
-                             regimes_1h, df_1h_map, shadow_mode, exchange_id=exchange_id)
-            if not fired:
-                logger.debug(f"[{exchange_id}] No signals at {datetime.now(timezone.utc).isoformat()}")
-            for pair, regime in regimes_1h.items():
-                log_regime(conn, pair, regime.label, regime.confidence,
-                           regime.age_candles, regime.stable)
 
 
 def eval_job(exchange) -> None:
@@ -224,11 +265,13 @@ def main() -> None:
         logger.error("No exchanges enabled — check config.yaml")
         return
 
-    # Use the first exchange for outcome evaluation (price lookups)
     primary_exchange = exchanges_config[0][1]
 
     mode_label = "SHADOW" if shadow_mode else "LIVE"
-    logger.info(f"Signal engine starting | exchanges={[e[0] for e in exchanges_config]} timeframe={timeframe} mode={mode_label}")
+    logger.info(
+        f"Signal engine starting | exchanges={[e[0] for e in exchanges_config]} "
+        f"timeframe={timeframe} mode={mode_label}"
+    )
 
     scheduler = BlockingScheduler(timezone="UTC")
 
@@ -254,7 +297,6 @@ def main() -> None:
         misfire_grace_time=3600,
     )
 
-    # Run once at startup so the first deployment always has fresh review data
     review_job()
 
     try:
