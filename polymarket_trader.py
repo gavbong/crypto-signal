@@ -230,7 +230,7 @@ def fetch_poly_positions(wallet: str) -> list[dict] | None:
 
 def fetch_market_meta(market_id: str) -> dict | None:
     try:
-        resp = requests.get(_GAMMA_MARKETS, params={"id": market_id}, timeout=10)
+        resp = requests.get(_GAMMA_MARKETS, params={"conditionId": market_id}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, list):
