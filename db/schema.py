@@ -109,16 +109,18 @@ def log_regime(conn: sqlite3.Connection, pair: str, regime: str,
     conn.commit()
 
 
-def is_duplicate(conn: sqlite3.Connection, pair: str, direction: str,
-                 strategy: str, regime: str, window_hours: int,
-                 exchange: str = "mexc") -> bool:
+def is_duplicate(conn: sqlite3.Connection, base_asset: str, direction: str,
+                 strategy: str, regime: str, window_hours: int) -> bool:
+    """Check if any exchange has already fired this signal for this base asset recently.
+    Uses base_asset (e.g. 'BTC') so BTC/USDT:USDT and BTC/USDC:USDC share the same dedup bucket."""
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
     row = conn.execute(
         """SELECT 1 FROM signals
-           WHERE pair=? AND direction=? AND strategy=? AND regime=?
-             AND COALESCE(exchange, 'mexc')=? AND fired_at > ? LIMIT 1""",
-        (pair, direction, strategy, regime, exchange, cutoff),
+           WHERE SUBSTR(pair, 1, INSTR(pair, '/') - 1) = ?
+             AND direction=? AND strategy=? AND regime=?
+             AND fired_at > ? LIMIT 1""",
+        (base_asset, direction, strategy, regime, cutoff),
     ).fetchone()
     return row is not None
 
