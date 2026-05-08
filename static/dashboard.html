@@ -90,7 +90,7 @@ body{
 .refresh-age.fresh{opacity:1;color:var(--long)}
 
 /* ── MAIN ────────────────────────────────────────────────────── */
-.main{margin-left:52px;margin-top:52px;padding:16px 20px 32px;max-width:calc(1440px - 52px)}
+.main{margin-left:52px;margin-top:52px;padding:16px 20px 32px}
 
 /* ── SEGMENTED TOGGLE ────────────────────────────────────────── */
 .seg-toggle{display:flex;gap:2px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px}
@@ -105,7 +105,7 @@ body{
 /* ── STAT CARDS ──────────────────────────────────────────────── */
 .stats-row-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .stats-row-title{font-family:var(--font-ui);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:0.08em;color:var(--muted)}
-.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:12px}
 .stat-card{
   background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
   padding:16px 20px;display:flex;flex-direction:column;gap:6px;
