@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS poly_positions (
     exit_price      REAL,
     cost_basis      REAL NOT NULL,
     pnl_usdt        REAL,
+    end_date        TEXT,
     opened_at       TIMESTAMP NOT NULL,
     closed_at       TIMESTAMP,
     exit_reason     TEXT
@@ -269,6 +270,8 @@ def fetch_market_meta(market_id: str) -> dict | None:
     else:
         mid_price = None
 
+    end_date = data.get("endDate") or data.get("endDateIso")
+
     return {
         "yes_token_id":    yes_token_id,
         "title":           title,
@@ -276,6 +279,7 @@ def fetch_market_meta(market_id: str) -> dict | None:
         "resolved":        resolved,
         "resolution_price": resolution_price,
         "mid_price":       mid_price,
+        "end_date":        end_date,
     }
 
 
@@ -342,16 +346,17 @@ def _poly_open(
     title        = (meta and meta["title"]) or pos.get("title") or ""
     tags         = (meta and meta["tags"])  or pos.get("tags")  or []
     yes_token_id = (meta and meta["yes_token_id"]) or pos.get("yes_token_id")
+    end_date     = (meta and meta.get("end_date")) or None
     category     = classify_category(tags)
     now          = datetime.now(timezone.utc).isoformat()
 
     conn.execute(
         """INSERT INTO poly_positions
            (trader_wallet, market_id, yes_token_id, market_title, category,
-            outcome, shares, entry_price, current_price, cost_basis, opened_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            outcome, shares, entry_price, current_price, cost_basis, end_date, opened_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (wallet, market_id, yes_token_id, title, category,
-         outcome, shares, entry_price, entry_price, cost_basis, now),
+         outcome, shares, entry_price, entry_price, cost_basis, end_date, now),
     )
     conn.execute(
         """INSERT INTO poly_state (trader_wallet, market_id, outcome, side)
