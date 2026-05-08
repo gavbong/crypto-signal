@@ -274,11 +274,9 @@ def fetch_bulk_prices(token_ids: list[str]) -> dict[str, float]:
     if not token_ids:
         return {}
     try:
-        resp = requests.get(
-            _CLOB_MIDPOINTS,
-            params={"token_ids": ",".join(token_ids)},
-            timeout=10,
-        )
+        # Build URL directly — requests encodes commas as %2C which CLOB rejects
+        url  = f"{_CLOB_MIDPOINTS}?token_ids=" + ",".join(token_ids)
+        resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         mid  = data.get("midpoints") if isinstance(data, dict) else data
