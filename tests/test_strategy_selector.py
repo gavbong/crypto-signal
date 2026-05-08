@@ -24,9 +24,9 @@ class TestActiveStrategies:
         assert "supply_demand" not in active   # requires faster reaction than 15-min polling
         assert "rsi_divergence" not in active
 
-    def test_choppy_fires_liq_and_sd(self):
+    def test_choppy_fires_rsi_and_liq(self):
         active = active_strategies("choppy")
-        assert "rsi_divergence" not in active  # n=61, net_r=-5.95R — whipsaws in chop
+        assert "rsi_divergence" in active
         assert "liquidity_grab" in active
         assert "supply_demand" in active       # 1H zones + approach detection
         assert "rsi_extreme" not in active     # WR 37.5% < BE 40%, net_r=-5.28R — false reversals
@@ -51,13 +51,13 @@ class TestActiveStrategies:
 class TestActionFor:
     def test_skip_returns_skip(self):
         assert action_for("trending-up", "rsi_divergence") == "SKIP"
-        assert action_for("choppy", "rsi_divergence") == "SKIP"        # n=61, net_r=-5.95R
         assert action_for("choppy", "ema_9_21_crossover") == "SKIP"
         assert action_for("high-volatility", "ema_9_21_crossover") == "SKIP"
 
     def test_fire_returns_fire(self):
         assert action_for("trending-up", "ema_9_21_crossover") == "FIRE"
         assert action_for("trending-down", "ema_9_21_crossover") == "FIRE"
+        assert action_for("choppy", "rsi_divergence") == "FIRE"
         assert action_for("high-volatility", "vol_breakout") == "FIRE"
         assert action_for("trending-up", "vol_breakout") == "FIRE"   # new: trending breakout
         assert action_for("high-volatility", "liquidity_grab") == "FIRE"
