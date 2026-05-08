@@ -137,16 +137,15 @@ def _collect_candidates(
 
 
 def _pick_best(candidates: list[dict]) -> list[dict]:
-    """For each (base_asset, direction, strategy, regime), keep the candidate
-    with the highest regime_confidence. Higher confidence = cleaner regime label
-    = better signal quality. Ties go to the first exchange in config order."""
-    best: dict[tuple, dict] = {}
+    """For each base asset, keep the single candidate with the highest
+    regime_confidence. Prevents conflicting long/short signals for the same
+    token in the same cycle. Ties go to the first exchange in config order."""
+    best: dict[str, dict] = {}
     for signal in candidates:
         base_asset = signal["pair"].split("/")[0]
-        key = (base_asset, signal["direction"], signal["strategy"], signal["regime"])
-        existing = best.get(key)
+        existing = best.get(base_asset)
         if existing is None or signal["regime_confidence"] > existing["regime_confidence"]:
-            best[key] = signal
+            best[base_asset] = signal
     return list(best.values())
 
 
