@@ -89,3 +89,9 @@ dashboard:
   host: "127.0.0.1"
   port: 5000
   debug: false
+
+copy_trader:
+  enabled: true
+  top_n: 5
+  margin_usdt: 50
+  min_pnl_30d: 100000     # only follow traders with >$100K 30d PnL
