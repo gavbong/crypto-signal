@@ -47,6 +47,11 @@ def create_app() -> Flask:
     def index():
         return send_from_directory(str(_STATIC), "dashboard.html")
 
+    @app.route("/favicon.ico")
+    def favicon():
+        from flask import Response
+        return Response(status=204)
+
     @app.route("/api/signals")
     def api_signals():
         _auth()
