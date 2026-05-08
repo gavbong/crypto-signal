@@ -5,6 +5,10 @@ Weekly: refreshes top N traders by 30d PnL from HL leaderboard.
 Every 15 min: polls their open positions, shadow-copies opens/closes/reversals
 into copy_positions table for comparison against the paper trader.
 
+Budget: pool-based — each new position draws position_size_pct of current balance.
+Stop-loss: auto-closes any position that loses > stop_loss_pct of its margin.
+Max positions: hard cap via max_concurrent_positions.
+
 Always shadow mode — no real execution regardless of global config flag.
 Runs as 4th systemd service: mexc-copy-trader (starts at :07/:22/:37/:52).
 """
@@ -67,12 +71,43 @@ CREATE TABLE IF NOT EXISTS copy_daily_pnl (
     date     TEXT NOT NULL PRIMARY KEY,
     pnl_usdt REAL NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS copy_account (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    balance    REAL NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
 def init_copy_db(conn) -> None:
     conn.executescript(_SCHEMA)
     conn.commit()
+    # Seed initial balance if account row doesn't exist yet
+    if conn.execute("SELECT COUNT(*) FROM copy_account").fetchone()[0] == 0:
+        initial = float(cfg().get("copy_trader", {}).get("initial_balance", 10_000))
+        _set_copy_balance(conn, initial)
+        conn.commit()
+
+
+# ── Balance helpers ────────────────────────────────────────────────────────────
+
+def get_copy_balance(conn) -> float:
+    row = conn.execute("SELECT balance FROM copy_account WHERE id=1").fetchone()
+    return row["balance"] if row else 0.0
+
+
+def _set_copy_balance(conn, balance: float) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """INSERT INTO copy_account (id, balance, updated_at) VALUES (1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET balance=excluded.balance, updated_at=excluded.updated_at""",
+        (round(balance, 4), now),
+    )
+
+
+def _adjust_copy_balance(conn, delta: float) -> None:
+    _set_copy_balance(conn, get_copy_balance(conn) + delta)
 
 
 # ── HL API helpers ─────────────────────────────────────────────────────────────
@@ -185,7 +220,23 @@ def save_copy_state(conn, wallet: str, positions: dict) -> None:
     conn.commit()
 
 
-def _copy_open(conn, wallet: str, coin: str, pos: dict, margin_usdt: float) -> None:
+def _copy_open(
+    conn, wallet: str, coin: str, pos: dict,
+    position_size_pct: float, max_concurrent: int,
+) -> None:
+    open_count = conn.execute(
+        "SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NULL"
+    ).fetchone()[0]
+    if open_count >= max_concurrent:
+        logger.warning(f"Max concurrent positions ({max_concurrent}) reached — skipping {coin}")
+        return
+
+    balance = get_copy_balance(conn)
+    margin_usdt = round(balance * position_size_pct, 2)
+    if margin_usdt < 1.0:
+        logger.warning(f"Insufficient balance ({balance:.2f}) to open {coin}")
+        return
+
     entry = pos["entryPx"]
     contracts = (margin_usdt / entry) if entry > 0 else 0.0
     now = datetime.now(timezone.utc).isoformat()
@@ -196,17 +247,18 @@ def _copy_open(conn, wallet: str, coin: str, pos: dict, margin_usdt: float) -> N
         (wallet, _coin_to_pair(coin), pos["side"], entry, entry,
          round(contracts, 8), margin_usdt, now),
     )
+    _adjust_copy_balance(conn, -margin_usdt)
     conn.commit()
     logger.info(
         f"Copy OPEN  {wallet[:10]}… {coin} {pos['side'].upper()} "
-        f"@ {entry} contracts={contracts:.6f}"
+        f"@ {entry} margin=${margin_usdt:.0f} contracts={contracts:.6f}"
     )
 
 
 def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) -> None:
     pair = _coin_to_pair(coin)
     row = conn.execute(
-        """SELECT id, direction, entry_price, contracts
+        """SELECT id, direction, entry_price, contracts, margin_usdt
            FROM copy_positions
            WHERE trader_wallet=? AND pair=? AND closed_at IS NULL
            ORDER BY opened_at DESC LIMIT 1""",
@@ -217,6 +269,7 @@ def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) ->
 
     direction_sign = 1 if row["direction"] == "long" else -1
     pnl = (exit_price - row["entry_price"]) * (row["contracts"] or 0.0) * direction_sign
+    margin = row["margin_usdt"] or 0.0
     now = datetime.now(timezone.utc).isoformat()
 
     conn.execute(
@@ -231,6 +284,7 @@ def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) ->
            ON CONFLICT(date) DO UPDATE SET pnl_usdt = pnl_usdt + excluded.pnl_usdt""",
         (today, round(pnl, 4)),
     )
+    _adjust_copy_balance(conn, margin + pnl)
     conn.commit()
     outcome = "WIN" if pnl >= 0 else "LOSS"
     logger.info(
@@ -283,7 +337,9 @@ def refresh_leaderboard_job() -> None:
 
 def poll_positions_job() -> None:
     c = cfg().get("copy_trader", {})
-    margin_usdt = float(c.get("margin_usdt", 50.0))
+    position_size_pct = float(c.get("position_size_pct", 0.05))
+    stop_loss_pct     = float(c.get("stop_loss_pct", 0.20))
+    max_concurrent    = int(c.get("max_concurrent_positions", 15))
 
     mids = fetch_all_mids()
     if not mids:
@@ -291,7 +347,6 @@ def poll_positions_job() -> None:
         return
 
     with get_conn() as conn:
-        # Poll active traders + any inactive traders who still have open copy positions
         wallet_rows = conn.execute("""
             SELECT wallet FROM copy_traders WHERE active=1
             UNION
@@ -311,22 +366,60 @@ def poll_positions_job() -> None:
         with get_conn() as conn:
             previous = load_copy_state(conn, wallet)
 
+            # ── Stop-loss check on active (non-stopped) copy positions ─────────
+            sl_closed: set[str] = set()
+            for coin, prev_pos in previous.items():
+                if prev_pos["side"] == "stopped":
+                    continue
+                last_price = mids.get(coin, 0.0)
+                entry_px   = prev_pos["entryPx"]
+                if last_price <= 0 or entry_px <= 0:
+                    continue
+                direction_sign = 1 if prev_pos["side"] == "long" else -1
+                pct_move = (last_price - entry_px) / entry_px * direction_sign
+                if pct_move < -stop_loss_pct:
+                    logger.info(
+                        f"Stop-loss triggered {wallet[:10]}… {coin} "
+                        f"move={pct_move*100:.1f}%"
+                    )
+                    _copy_close(conn, wallet, coin, last_price, "stop_loss")
+                    sl_closed.add(coin)
+
+            # ── Position diff ─────────────────────────────────────────────────
             for coin, pos in positions.items():
                 last_price = mids.get(coin, 0.0)
-                if coin not in previous:
-                    _copy_open(conn, wallet, coin, pos, margin_usdt)
-                elif pos["side"] != previous[coin]["side"]:
+                prev = previous.get(coin)
+
+                if prev is None:
+                    # New position appeared
+                    _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent)
+                elif prev["side"] == "stopped" or coin in sl_closed:
+                    # Stopped out — don't re-enter while HL trader holds same position
+                    pass
+                elif pos["side"] != prev["side"]:
+                    # Trader reversed direction
                     _copy_close(conn, wallet, coin, last_price, "trader_reversed")
-                    _copy_open(conn, wallet, coin, pos, margin_usdt)
+                    _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent)
                 else:
                     _update_last_price(conn, wallet, coin, last_price)
 
-            for coin in previous:
+            # ── Detect closes ─────────────────────────────────────────────────
+            for coin, prev_pos in previous.items():
                 if coin not in positions:
-                    last_price = mids.get(coin, 0.0)
-                    _copy_close(conn, wallet, coin, last_price, "trader_closed")
+                    if prev_pos["side"] != "stopped":
+                        last_price = mids.get(coin, 0.0)
+                        _copy_close(conn, wallet, coin, last_price, "trader_closed")
+                    # "stopped" entries are cleaned up by save_copy_state below
 
-            save_copy_state(conn, wallet, positions)
+            # ── Persist new state ─────────────────────────────────────────────
+            # Stopped-out coins kept as "stopped" while HL trader still holds them
+            new_state: dict = {}
+            for coin, pos in positions.items():
+                if coin in sl_closed or previous.get(coin, {}).get("side") == "stopped":
+                    new_state[coin] = {"side": "stopped", "size": pos["size"], "entryPx": pos["entryPx"]}
+                else:
+                    new_state[coin] = pos
+            save_copy_state(conn, wallet, new_state)
 
     logger.debug(f"Copy poll complete | traders={len(wallets)}")
 
@@ -353,7 +446,10 @@ def main() -> None:
 
     logger.info(
         f"Copy trader starting | top_n={c.get('top_n', 5)} "
-        f"margin={c.get('margin_usdt', 50)} USDT "
+        f"budget=${float(c.get('initial_balance', 10_000)):,.0f} "
+        f"pos_size={float(c.get('position_size_pct', 0.05))*100:.0f}% "
+        f"sl={float(c.get('stop_loss_pct', 0.20))*100:.0f}% "
+        f"max_pos={c.get('max_concurrent_positions', 15)} "
         f"min_30d_pnl=${float(c.get('min_pnl_30d', 10_000)):,.0f}"
     )
 

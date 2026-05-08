@@ -436,13 +436,64 @@ def create_app() -> Flask:
 
     # ── Copy Trader API ───────────────────────────────────────────────────────
 
+    @app.route("/api/copy/account")
+    def api_copy_account():
+        _auth()
+        ct_cfg = cfg().get("copy_trader", {})
+        initial = float(ct_cfg.get("initial_balance", 10_000))
+        with get_conn() as conn:
+            acc = conn.execute("SELECT balance FROM copy_account WHERE id=1").fetchone()
+            realized = conn.execute(
+                "SELECT COALESCE(SUM(pnl_usdt),0) FROM copy_positions WHERE closed_at IS NOT NULL"
+            ).fetchone()[0]
+            open_count = conn.execute(
+                "SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NULL"
+            ).fetchone()[0]
+            wins = conn.execute(
+                "SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NOT NULL AND pnl_usdt > 0"
+            ).fetchone()[0]
+            losses = conn.execute(
+                "SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NOT NULL AND pnl_usdt <= 0"
+            ).fetchone()[0]
+            open_pos = conn.execute(
+                "SELECT direction, entry_price, contracts, last_price FROM copy_positions WHERE closed_at IS NULL"
+            ).fetchall()
+
+        balance = acc["balance"] if acc else initial
+        unrealized = 0.0
+        for p in open_pos:
+            if p["last_price"]:
+                sign = 1 if p["direction"] == "long" else -1
+                unrealized += (p["last_price"] - p["entry_price"]) * (p["contracts"] or 0.0) * sign
+
+        total_closed = wins + losses
+        return jsonify({
+            "balance": round(balance, 2),
+            "initial_balance": initial,
+            "realized_pnl": round(realized, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "equity": round(balance + unrealized, 2),
+            "total_return_pct": round((balance + unrealized - initial) / initial * 100, 2) if initial > 0 else 0.0,
+            "wins": wins,
+            "losses": losses,
+            "open_count": open_count,
+            "win_rate": round(wins / total_closed, 4) if total_closed > 0 else 0.0,
+        })
+
     @app.route("/api/copy/traders")
     def api_copy_traders():
         _auth()
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT wallet, alias, pnl_30d, tracked_since, last_refreshed, active
-                   FROM copy_traders ORDER BY pnl_30d DESC"""
+                """SELECT t.wallet, t.alias, t.pnl_30d, t.tracked_since, t.last_refreshed, t.active,
+                          COUNT(p.id) as trade_count,
+                          COALESCE(SUM(CASE WHEN p.pnl_usdt > 0 THEN 1 ELSE 0 END), 0) as wins,
+                          COALESCE(SUM(CASE WHEN p.pnl_usdt <= 0 AND p.closed_at IS NOT NULL THEN 1 ELSE 0 END), 0) as losses,
+                          COALESCE(SUM(p.pnl_usdt), 0) as total_copy_pnl
+                   FROM copy_traders t
+                   LEFT JOIN copy_positions p ON p.trader_wallet=t.wallet AND p.closed_at IS NOT NULL
+                   GROUP BY t.wallet
+                   ORDER BY t.pnl_30d DESC"""
             ).fetchall()
         return jsonify({
             "traders": [
@@ -453,6 +504,11 @@ def create_app() -> Flask:
                     "tracked_since": _normalize_ts(r["tracked_since"]),
                     "last_refreshed": _normalize_ts(r["last_refreshed"]),
                     "active": bool(r["active"]),
+                    "trade_count": r["trade_count"] or 0,
+                    "wins": r["wins"] or 0,
+                    "losses": r["losses"] or 0,
+                    "total_copy_pnl": round(r["total_copy_pnl"] or 0.0, 2),
+                    "win_rate": round((r["wins"] or 0) / max(r["trade_count"] or 0, 1), 4),
                 }
                 for r in rows
             ]

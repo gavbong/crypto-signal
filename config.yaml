@@ -93,5 +93,8 @@ dashboard:
 copy_trader:
   enabled: true
   top_n: 5
-  margin_usdt: 50
-  min_pnl_30d: 100000     # only follow traders with >$100K 30d PnL
+  initial_balance: 10000        # starting capital in USDT
+  position_size_pct: 0.05       # allocate 5% of current balance per copied position ($500 at start)
+  stop_loss_pct: 0.20           # auto-close copy position if it loses >20% of margin
+  max_concurrent_positions: 15  # hard cap across all tracked traders
+  min_pnl_30d: 100000           # only follow traders with >$100K 30d PnL
