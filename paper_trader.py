@@ -15,7 +15,7 @@ from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from utils.config import env, db_path, get as cfg
-from utils.ccxt_wrapper import _make_exchange, fetch_ticker_safe
+from utils.ccxt_wrapper import make_exchange, fetch_ticker_safe
 from db.schema import get_conn
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -90,6 +90,14 @@ def init_paper_db(conn) -> None:
         conn.commit()
     except Exception:
         pass  # column already exists
+    for migration in [
+        "ALTER TABLE paper_positions ADD COLUMN exchange TEXT NOT NULL DEFAULT 'mexc'",
+    ]:
+        try:
+            conn.execute(migration)
+            conn.commit()
+        except Exception:
+            pass  # column already exists
     for key, default in [("last_signal_id", "0"), ("day_number", "0")]:
         conn.execute(
             "INSERT OR IGNORE INTO paper_state (key, value) VALUES (?, ?)",
@@ -111,17 +119,25 @@ def get_free_balance(conn) -> float:
     return INITIAL_BALANCE + closed - locked
 
 
-def _fetch_tickers(exchange, pairs: set[str]) -> dict[str, float]:
-    """Fetch live price for each unique pair. Returns {pair: price}."""
-    prices = {}
-    for pair in pairs:
-        ticker = fetch_ticker_safe(exchange, pair)
-        if ticker and ticker.get("last"):
-            prices[pair] = float(ticker["last"])
+def _fetch_tickers(exchange_map: dict, positions: list) -> dict[tuple, float]:
+    """Fetch live prices for positions, routing each to its originating exchange.
+    Returns {(exchange_id, pair): price}."""
+    by_exchange: dict[str, set] = {}
+    for pos in positions:
+        exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
+        by_exchange.setdefault(exc_id, set()).add(pos["pair"])
+
+    prices: dict[tuple, float] = {}
+    for exc_id, pairs in by_exchange.items():
+        exchange = exchange_map.get(exc_id) or next(iter(exchange_map.values()))
+        for pair in pairs:
+            ticker = fetch_ticker_safe(exchange, pair)
+            if ticker and ticker.get("last"):
+                prices[(exc_id, pair)] = float(ticker["last"])
     return prices
 
 
-def get_unrealized_pnl(conn, exchange) -> float:
+def get_unrealized_pnl(conn, exchange_map: dict) -> float:
     """Sum unrealized PnL across all open positions using live prices."""
     rows = conn.execute(
         "SELECT * FROM paper_positions WHERE exit_price IS NULL"
@@ -129,11 +145,12 @@ def get_unrealized_pnl(conn, exchange) -> float:
     if not rows:
         return 0.0
 
-    prices = _fetch_tickers(exchange, {pos["pair"] for pos in rows})
+    prices = _fetch_tickers(exchange_map, rows)
 
     total = 0.0
     for pos in rows:
-        live = prices.get(pos["pair"])
+        exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
+        live = prices.get((exc_id, pos["pair"]))
         if live is None:
             continue
         if pos["direction"] == "long":
@@ -242,10 +259,10 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     cur = conn.execute(
         """INSERT INTO paper_positions
            (signal_id, pair, direction, strategy, regime,
-            entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at, exchange)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (signal["id"], pair, direction, signal["strategy"], signal["regime"],
-         live_price, contracts, margin, stop, tp, now),
+         live_price, contracts, margin, stop, tp, now, signal.get("exchange", "mexc")),
     )
     conn.commit()
     pos_id = cur.lastrowid
@@ -288,7 +305,7 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
 
 # ── Poll cycle ────────────────────────────────────────────────────────────────
 
-def check_positions(conn, exchange) -> int:
+def check_positions(conn, exchange_map: dict) -> int:
     """Check open positions against live prices; close on SL/TP hit. Returns closed count."""
     rows = conn.execute(
         "SELECT * FROM paper_positions WHERE exit_price IS NULL"
@@ -296,13 +313,14 @@ def check_positions(conn, exchange) -> int:
     if not rows:
         return 0
 
-    prices = _fetch_tickers(exchange, {pos["pair"] for pos in rows})
+    prices = _fetch_tickers(exchange_map, rows)
 
     closed = 0
     for pos in rows:
-        live = prices.get(pos["pair"])
+        exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
+        live = prices.get((exc_id, pos["pair"]))
         if live is None:
-            logger.warning(f"Paper: no ticker for {pos['pair']} — skipping position check")
+            logger.warning(f"Paper: no ticker for {pos['pair']} ({exc_id}) — skipping position check")
             continue
 
         conn.execute("UPDATE paper_positions SET last_price=? WHERE id=?", (live, pos["id"]))
@@ -325,13 +343,12 @@ def check_positions(conn, exchange) -> int:
     return closed
 
 
-def poll_new_signals(conn, pairs: list[str]) -> list[dict]:
-    """Fetch new signals from the signals table for all configured pairs since last seen id."""
+def poll_new_signals(conn) -> list[dict]:
+    """Fetch all new signals since last seen id, across all exchanges."""
     last_id = int(_get_state(conn, "last_signal_id"))
-    placeholders = ",".join("?" * len(pairs))
     rows = conn.execute(
-        f"SELECT * FROM signals WHERE pair IN ({placeholders}) AND id > ? ORDER BY id",
-        (*pairs, last_id),
+        "SELECT * FROM signals WHERE id > ? ORDER BY id",
+        (last_id,),
     ).fetchall()
     if not rows:
         return []
@@ -341,12 +358,12 @@ def poll_new_signals(conn, pairs: list[str]) -> list[dict]:
 
 # ── Daily snapshot ────────────────────────────────────────────────────────────
 
-def snapshot_day(conn, exchange) -> dict:
+def snapshot_day(conn, exchange_map: dict) -> dict:
     """Capture end-of-day PnL snapshot and write JSON log."""
     day_number = int(_get_state(conn, "day_number")) + 1
 
     free       = get_free_balance(conn)
-    unrealized = get_unrealized_pnl(conn, exchange)
+    unrealized = get_unrealized_pnl(conn, exchange_map)
     equity     = free + unrealized
 
     realized_pnl = conn.execute(
@@ -406,25 +423,27 @@ def snapshot_day(conn, exchange) -> dict:
 
 # ── Scheduler jobs ────────────────────────────────────────────────────────────
 
-def poll_job(exchange, pairs: list[str]) -> None:
+def poll_job(exchange_map: dict) -> None:
     with get_conn() as conn:
-        closed = check_positions(conn, exchange)
+        closed = check_positions(conn, exchange_map)
         if closed:
             logger.info(f"Paper: closed {closed} position(s) this tick")
 
-        signals = poll_new_signals(conn, pairs)
+        signals = poll_new_signals(conn)
         for sig in signals:
+            exc_id = sig.get("exchange", "mexc")
+            exchange = exchange_map.get(exc_id) or next(iter(exchange_map.values()))
             ticker = fetch_ticker_safe(exchange, sig["pair"])
             if not ticker or not ticker.get("last"):
-                logger.warning(f"Paper: no live price for {sig['pair']} signal {sig['id']} — skipping")
+                logger.warning(f"Paper: no live price for {sig['pair']} ({exc_id}) signal {sig['id']} — skipping")
                 continue
             live_price = float(ticker["last"])
             open_position(conn, sig, live_price)
 
 
-def snapshot_job(exchange) -> None:
+def snapshot_job(exchange_map: dict) -> None:
     with get_conn() as conn:
-        snapshot_day(conn, exchange)
+        snapshot_day(conn, exchange_map)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -439,19 +458,28 @@ def main() -> None:
     logger.add("logs/paper_trader.log", rotation="1 day", retention="30 days", level="DEBUG",
                format="{time:YYYY-MM-DD HH:mm:ss} | {level:<7} | {message}")
 
-    pairs = cfg()["pairs"]
-
     with get_conn() as conn:
         init_paper_db(conn)
 
-    exchange = _make_exchange(env("MEXC_API_KEY"), env("MEXC_SECRET"))
+    exchange_map: dict = {}
+    for exc_id, exc_cfg in cfg().get("exchanges", {}).items():
+        if not exc_cfg.get("enabled", False):
+            continue
+        try:
+            exchange_map[exc_id] = make_exchange(exc_id)
+        except Exception as e:
+            logger.error(f"Paper: failed to init exchange {exc_id}: {e}")
+
+    if not exchange_map:
+        logger.error("Paper: no exchanges enabled — check config.yaml")
+        return
 
     free = 0.0
     with get_conn() as conn:
         free = get_free_balance(conn)
 
     logger.info(
-        f"Paper trader starting | pairs={pairs} balance={free:.2f} USDT "
+        f"Paper trader starting | exchanges={list(exchange_map)} balance={free:.2f} USDT "
         f"leverage={LEVERAGE}x risk={RISK_PCT:.0%}"
     )
 
@@ -461,7 +489,7 @@ def main() -> None:
         poll_job,
         "interval",
         minutes=15,
-        args=[exchange, pairs],
+        args=[exchange_map],
         next_run_time=datetime.now(timezone.utc),
     )
 
@@ -470,7 +498,7 @@ def main() -> None:
         "cron",
         hour=0,
         minute=0,
-        args=[exchange],
+        args=[exchange_map],
     )
 
     try:
