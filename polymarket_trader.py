@@ -402,9 +402,21 @@ def refresh_leaderboard_job() -> None:
     min_pnl      = float(c.get("min_pnl_30d", 50_000))
     volume_floor = float(c.get("volume_floor", 10_000))
 
+    # Try leaderboard API first (best-effort — endpoint may not be public)
     traders = fetch_poly_leaderboard(top_n, min_pnl, volume_floor)
+
+    # Fall back to manually specified wallets from config
+    watched: list[str] = c.get("watched_wallets", [])
+    if not traders and watched:
+        logger.info(f"PM leaderboard API unavailable — seeding {len(watched)} watched wallets from config")
+        traders = [{"wallet": w, "pnl_30d": None, "volume_30d": None, "alias": None}
+                   for w in watched[:top_n]]
+
     if not traders:
-        logger.warning("PM leaderboard refresh: no qualifying traders returned")
+        logger.warning(
+            "PM leaderboard refresh: no traders available. "
+            "Add wallet addresses to polymarket_trader.watched_wallets in config.yaml."
+        )
         return
 
     now = datetime.now(timezone.utc).isoformat()
@@ -424,7 +436,7 @@ def refresh_leaderboard_job() -> None:
 
     logger.info(
         f"PM leaderboard refreshed | active={len(traders)} "
-        f"top={traders[0]['wallet'][:12]}… pnl=${traders[0]['pnl_30d']:,.0f}"
+        f"first={traders[0]['wallet'][:12]}…"
     )
 
 

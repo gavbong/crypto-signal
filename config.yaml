@@ -107,3 +107,6 @@ polymarket_trader:
   max_concurrent_positions: 20
   min_pnl_30d: 50000
   volume_floor: 10000          # filter single-market outliers
+  # Polymarket has no public leaderboard API — add top trader wallet addresses here.
+  # Find them at polymarket.com/leaderboard. The service will track their positions.
+  watched_wallets: []
