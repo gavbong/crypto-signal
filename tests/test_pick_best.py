@@ -61,23 +61,25 @@ class TestPickBest:
         bases = {r["pair"].split("/")[0] for r in result}
         assert bases == {"BTC", "ETH"}
 
-    def test_different_directions_both_pass(self):
-        """BTC long and BTC short are different keys — both survive."""
+    def test_conflicting_directions_only_one_survives(self):
+        """BTC long (0.80) and BTC short (0.75) — only the higher-confidence long survives."""
         candidates = [
             _sig("BTC/USDT:USDT", "long",  "ema_9_21_crossover", "trending-up",   0.80, "mexc"),
             _sig("BTC/USDT:USDT", "short", "ema_9_21_crossover", "trending-down", 0.75, "okx"),
         ]
         result = _pick_best(candidates)
-        assert len(result) == 2
+        assert len(result) == 1
+        assert result[0]["direction"] == "long"
 
-    def test_different_strategies_both_pass(self):
-        """ema and rsi_divergence for the same token are different keys."""
+    def test_competing_strategies_best_wins(self):
+        """Two strategies for the same token — highest confidence (rsi 0.90) wins."""
         candidates = [
             _sig("BTC/USDT:USDT", "long", "ema_9_21_crossover", "trending-up", 0.80, "mexc"),
             _sig("BTC/USDT:USDT", "long", "rsi_divergence",     "trending-up", 0.90, "binance"),
         ]
         result = _pick_best(candidates)
-        assert len(result) == 2
+        assert len(result) == 1
+        assert result[0]["strategy"] == "rsi_divergence"
 
     def test_tie_keeps_first_seen(self):
         """Equal confidence — config order (first in list) wins."""
