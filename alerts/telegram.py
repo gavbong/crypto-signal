@@ -184,7 +184,8 @@ def send_copy_open_alert(
     balance_after: float,
 ) -> bool:
     colour = "🟢" if direction == "long" else "🔴"
-    short_wallet = wallet[:6] + "…" + wallet[-4:]
+    hl_url = f"https://app.hyperliquid.xyz/explorer/address/{wallet}"
+    short_wallet = f'<a href="{hl_url}">{wallet[:6]}…{wallet[-4:]}</a>'
     text = (
         f"{colour} <b>COPY {direction.upper()}</b>  <code>{coin}</code>\n"
         f"\n"
@@ -206,7 +207,8 @@ def send_poly_open_alert(
     balance_after: float, category: str, convergent: dict | None,
 ) -> bool:
     colour = "🟢" if outcome == "YES" else "🔴"
-    short_wallet = wallet[:6] + "…" + wallet[-4:]
+    poly_url = f"https://polymarket.com/profile/{wallet}"
+    short_wallet = f'<a href="{poly_url}">{wallet[:6]}…{wallet[-4:]}</a>'
     title_display = (market_title[:60] + "…") if len(market_title) > 60 else market_title
     text = (
         f"{colour} <b>POLY {outcome}</b>  [{title_display}]\n"
@@ -242,7 +244,8 @@ def send_poly_close_alert(
 
     pnl_pct  = (pnl / cost_basis * 100) if cost_basis > 0 else 0.0
     pnl_sign = "+" if pnl >= 0 else ""
-    short_wallet  = wallet[:6] + "…" + wallet[-4:]
+    poly_url = f"https://polymarket.com/profile/{wallet}"
+    short_wallet  = f'<a href="{poly_url}">{wallet[:6]}…{wallet[-4:]}</a>'
     title_display = (market_title[:60] + "…") if len(market_title) > 60 else market_title
 
     text = (
@@ -278,7 +281,8 @@ def send_copy_close_alert(
 
     pnl_pct = (pnl / margin_usdt * 100) if margin_usdt > 0 else 0.0
     pnl_sign = "+" if pnl >= 0 else ""
-    short_wallet = wallet[:6] + "…" + wallet[-4:]
+    hl_url = f"https://app.hyperliquid.xyz/explorer/address/{wallet}"
+    short_wallet = f'<a href="{hl_url}">{wallet[:6]}…{wallet[-4:]}</a>'
 
     text = (
         f"{icon} <b>COPY CLOSE</b>  <code>{coin}</code>  {direction.upper()}\n"
