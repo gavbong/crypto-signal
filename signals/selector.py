@@ -20,7 +20,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "choppy": {
         "ema_9_21_crossover": "SKIP",
         "macd_crossover":     "SKIP",  # lagging crossover whipsaws in sideways markets
-        "rsi_divergence":     "SKIP",  # n=61, net_r=-5.95R, avg_r=-0.149 — divergence signals whipsaw in sideways chop
+        "rsi_divergence":     "FIRE",
         "rsi_extreme":        "SKIP",  # WR 37.5% < BE 40%, net_r=-5.28R — false reversals in ranging markets
         "vol_breakout":       "SKIP",
         "supply_demand":      "FIRE",  # 1H zones + approach detection — replaces old zone-entry logic
