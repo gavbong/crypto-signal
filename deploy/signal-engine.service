@@ -1,0 +1,20 @@
+[Unit]
+Description=MEXC Signal Engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mexc
+Group=mexc
+WorkingDirectory=/opt/mexc-signal-engine
+EnvironmentFile=/opt/mexc-signal-engine/.env
+ExecStart=/opt/mexc-signal-engine/.venv/bin/python signal_engine.py
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mexc-signal-engine
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=MEXC Paper Trader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mexc
+Group=mexc
+WorkingDirectory=/opt/mexc-signal-engine
+EnvironmentFile=/opt/mexc-signal-engine/.env
+ExecStart=/opt/mexc-signal-engine/.venv/bin/python paper_trader.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mexc-paper-trader
+
+[Install]
+WantedBy=multi-user.target
