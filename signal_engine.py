@@ -117,9 +117,9 @@ def run_once(exchange, conn, pairs: list, timeframe: str, limit: int,
                     live_price, live_stop, signal["direction"], regime.label
                 )
 
-            # Deduplication check
+            # Deduplication check (per-exchange — each exchange fires independently)
             if is_duplicate(conn, pair, signal["direction"], strategy,
-                            regime.label, dedup_window):
+                            regime.label, dedup_window, exchange=exchange_id):
                 logger.debug(f"Duplicate suppressed: {pair} {signal['direction']} {strategy} {regime.label}")
                 continue
 

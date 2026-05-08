@@ -110,14 +110,15 @@ def log_regime(conn: sqlite3.Connection, pair: str, regime: str,
 
 
 def is_duplicate(conn: sqlite3.Connection, pair: str, direction: str,
-                 strategy: str, regime: str, window_hours: int) -> bool:
+                 strategy: str, regime: str, window_hours: int,
+                 exchange: str = "mexc") -> bool:
     from datetime import datetime, timedelta, timezone
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
     row = conn.execute(
         """SELECT 1 FROM signals
            WHERE pair=? AND direction=? AND strategy=? AND regime=?
-             AND fired_at > ? LIMIT 1""",
-        (pair, direction, strategy, regime, cutoff),
+             AND COALESCE(exchange, 'mexc')=? AND fired_at > ? LIMIT 1""",
+        (pair, direction, strategy, regime, exchange, cutoff),
     ).fetchone()
     return row is not None
 
