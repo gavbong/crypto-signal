@@ -464,6 +464,29 @@ body{
     <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">shadow mode · follows top Hyperliquid traders</span>
   </div>
 
+  <div class="stats-grid" style="margin-bottom:12px">
+    <div class="stat-card">
+      <div class="stat-label">Balance</div>
+      <div class="stat-value" id="copy-stat-balance">—</div>
+      <div class="stat-sub" id="copy-stat-balance-sub">Initial 10,000 USDT</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-value" id="copy-stat-realized">—</div>
+      <div class="stat-sub" id="copy-stat-realized-sub">— trades closed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value" id="copy-stat-winrate">—</div>
+      <div class="stat-sub" id="copy-stat-winrate-sub">—W · —L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open Positions</div>
+      <div class="stat-value amber" id="copy-stat-open">—</div>
+      <div class="stat-sub" id="copy-stat-return">—</div>
+    </div>
+  </div>
+
   <div class="panel" style="margin-bottom:12px">
     <div class="panel-hdr">
       <span class="panel-title">Tracked Traders</span>
@@ -1195,16 +1218,24 @@ function renderCopyTraders(traders) {
   body.innerHTML = `<table class="copy-tbl" style="width:100%">
     <thead><tr>
       <th>Wallet</th><th>Alias</th><th class="r">30d PnL</th>
+      <th class="r">Win Rate</th><th class="r">Copy PnL</th>
       <th>Since</th><th>Status</th>
     </tr></thead>
-    <tbody>${traders.map(t => `
-      <tr>
+    <tbody>${traders.map(t => {
+      const wr = t.trade_count > 0 ? (t.win_rate * 100).toFixed(0) + '%' : '—';
+      const cpnl = t.total_copy_pnl || 0;
+      const cpnlColor = cpnl > 0 ? 'var(--long)' : cpnl < 0 ? 'var(--short)' : 'var(--muted)';
+      const cpnlStr = cpnl === 0 ? '—' : (cpnl > 0 ? '+' : '') + '$' + Math.abs(cpnl).toFixed(2);
+      return `<tr>
         <td><span class="copy-wallet">${fmtWallet(t.wallet)}</span></td>
         <td style="font-size:12px">${t.alias || '<span style="color:var(--muted)">—</span>'}</td>
         <td class="r td-mono" style="color:var(--long)">+$${(t.pnl_30d||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td class="r td-mono">${wr}</td>
+        <td class="r td-mono" style="color:${cpnlColor}">${cpnlStr}</td>
         <td class="td-date">${t.tracked_since ? fmtDT(t.tracked_since) : '—'}</td>
         <td><span class="badge ${t.active ? 'b-live' : 'b-regime'}">${t.active ? 'Active' : 'Inactive'}</span></td>
-      </tr>`).join('')}
+      </tr>`;
+    }).join('')}
     </tbody>
   </table>`;
 }
@@ -1307,17 +1338,59 @@ function renderCopyChart(copy, paper) {
   </div>`;
 }
 
+function renderCopyAccount(acc) {
+  const fmt = v => '$' + Math.abs(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
+  const sign = v => v > 0 ? '+' : v < 0 ? '−' : '';
+  const color = v => v > 0 ? 'var(--long)' : v < 0 ? 'var(--short)' : '';
+
+  const balEl = document.getElementById('copy-stat-balance');
+  const subEl = document.getElementById('copy-stat-balance-sub');
+  if (balEl) {
+    balEl.textContent = fmt(acc.equity ?? acc.balance ?? 0);
+    balEl.style.color = color(acc.unrealized_pnl);
+    if (subEl) subEl.textContent = `Initial ${fmt(acc.initial_balance ?? 10000)}`;
+  }
+
+  const realEl = document.getElementById('copy-stat-realized');
+  const realSub = document.getElementById('copy-stat-realized-sub');
+  if (realEl) {
+    const r = acc.realized_pnl ?? 0;
+    realEl.textContent = (r === 0 ? '' : sign(r)) + fmt(r);
+    realEl.style.color = color(r);
+    if (realSub) realSub.textContent = `${acc.wins + acc.losses} trades closed`;
+  }
+
+  const wrEl = document.getElementById('copy-stat-winrate');
+  const wrSub = document.getElementById('copy-stat-winrate-sub');
+  if (wrEl) {
+    const total = (acc.wins ?? 0) + (acc.losses ?? 0);
+    wrEl.textContent = total > 0 ? (acc.win_rate * 100).toFixed(0) + '%' : '—';
+    if (wrSub) wrSub.textContent = `${acc.wins ?? 0}W · ${acc.losses ?? 0}L`;
+  }
+
+  const openEl = document.getElementById('copy-stat-open');
+  const retEl  = document.getElementById('copy-stat-return');
+  if (openEl) openEl.textContent = acc.open_count ?? 0;
+  if (retEl) {
+    const ret = acc.total_return_pct ?? 0;
+    retEl.textContent = (ret >= 0 ? '+' : '') + ret.toFixed(2) + '% total return';
+    retEl.style.color = color(ret);
+  }
+}
+
 async function refreshCopy() {
   try {
-    const [tradersRes, posRes, histRes, cmpRes] = await Promise.all([
+    const [accRes, tradersRes, posRes, histRes, cmpRes] = await Promise.all([
+      fetch('/api/copy/account'),
       fetch('/api/copy/traders'),
       fetch('/api/copy/positions'),
       fetch('/api/copy/history'),
       fetch('/api/copy/comparison'),
     ]);
-    const [traders, pos, hist, cmp] = await Promise.all([
-      tradersRes.json(), posRes.json(), histRes.json(), cmpRes.json(),
+    const [acc, traders, pos, hist, cmp] = await Promise.all([
+      accRes.json(), tradersRes.json(), posRes.json(), histRes.json(), cmpRes.json(),
     ]);
+    renderCopyAccount(acc);
     renderCopyTraders(traders.traders || []);
     renderCopyPositions(pos.positions || []);
     renderCopyHistory(hist.trades || []);
