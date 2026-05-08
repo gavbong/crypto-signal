@@ -701,6 +701,8 @@ def create_app() -> Flask:
         def _unrealized(r):
             if r["closed_at"] or r["current_price"] is None:
                 return r["pnl_usdt"]
+            if r["entry_price"] is None or r["entry_price"] < 0.01:
+                return None
             return round(r["shares"] * (r["current_price"] - r["entry_price"]), 4)
 
         return jsonify({
