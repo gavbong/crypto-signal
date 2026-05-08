@@ -1,9 +1,11 @@
 """
-alerts/telegram.py — Telegram signal alert sender.
+alerts/telegram.py — Telegram alert sender for signals and copy trader.
 
-Reads TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID from environment.
-Silently skips (logs warning) if either is missing or still a placeholder,
-so the engine keeps running without Telegram configured.
+Signal alerts:  TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
+Copy alerts:    COPY_TELEGRAM_BOT_TOKEN + COPY_TELEGRAM_CHAT_ID (separate bot)
+
+Silently skips if credentials are missing or still placeholders — the engine
+and copy trader keep running without Telegram configured.
 """
 import os
 import requests
@@ -21,6 +23,14 @@ def _is_placeholder(val: str) -> bool:
 def _credentials() -> tuple[str, str] | None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if _is_placeholder(token) or _is_placeholder(chat_id):
+        return None
+    return token, chat_id
+
+
+def _copy_credentials() -> tuple[str, str] | None:
+    token = os.environ.get("COPY_TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("COPY_TELEGRAM_CHAT_ID", "")
     if _is_placeholder(token) or _is_placeholder(chat_id):
         return None
     return token, chat_id
@@ -128,3 +138,82 @@ def send_signal_alert(signal: dict) -> bool:
     except requests.RequestException as e:
         logger.warning(f"Telegram request failed: {e}")
     return False
+
+
+# ── Copy trader alerts (separate bot) ─────────────────────────────────────────
+
+def _send_copy(text: str) -> bool:
+    """Send a copy trader alert. Never raises."""
+    creds = _copy_credentials()
+    if creds is None:
+        logger.debug("Copy Telegram not configured — skipping copy alert")
+        return False
+    token, chat_id = creds
+    try:
+        resp = requests.post(
+            _SEND_URL.format(token=token),
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            return True
+        logger.warning(f"Copy Telegram API error {resp.status_code}: {resp.text[:200]}")
+    except requests.RequestException as e:
+        logger.warning(f"Copy Telegram request failed: {e}")
+    return False
+
+
+def send_copy_open_alert(
+    wallet: str, coin: str, direction: str,
+    margin_usdt: float, entry_price: float,
+    balance_after: float,
+) -> bool:
+    colour = "🟢" if direction == "long" else "🔴"
+    short_wallet = wallet[:6] + "…" + wallet[-4:]
+    text = (
+        f"{colour} <b>COPY {direction.upper()}</b>  <code>{coin}</code>\n"
+        f"\n"
+        f"<b>Trader  </b>  <code>{short_wallet}</code>\n"
+        f"<b>Entry   </b>  <code>{entry_price:,.4f}</code>\n"
+        f"<b>Margin  </b>  <code>${margin_usdt:,.2f}</code>\n"
+        f"<b>Balance </b>  <code>${balance_after:,.2f}</code> remaining\n"
+        f"\n"
+        f"<i>shadow · Hyperliquid copy</i>"
+    )
+    return _send_copy(text)
+
+
+def send_copy_close_alert(
+    wallet: str, coin: str, direction: str,
+    entry_price: float, exit_price: float,
+    pnl: float, margin_usdt: float, reason: str,
+    balance_after: float,
+) -> bool:
+    if reason == "stop_loss":
+        icon = "🛑"
+        reason_label = "Stop-loss"
+    elif pnl >= 0:
+        icon = "✅"
+        reason_label = reason.replace("_", " ").title()
+    else:
+        icon = "❌"
+        reason_label = reason.replace("_", " ").title()
+
+    pnl_pct = (pnl / margin_usdt * 100) if margin_usdt > 0 else 0.0
+    pnl_sign = "+" if pnl >= 0 else ""
+    short_wallet = wallet[:6] + "…" + wallet[-4:]
+
+    text = (
+        f"{icon} <b>COPY CLOSE</b>  <code>{coin}</code>  {direction.upper()}\n"
+        f"\n"
+        f"<b>Trader  </b>  <code>{short_wallet}</code>\n"
+        f"<b>Entry   </b>  <code>{entry_price:,.4f}</code>\n"
+        f"<b>Exit    </b>  <code>{exit_price:,.4f}</code>\n"
+        f"<b>PnL     </b>  <code>{pnl_sign}${pnl:,.2f}</code>  "
+        f"<i>({pnl_sign}{pnl_pct:.1f}%)</i>\n"
+        f"<b>Reason  </b>  {reason_label}\n"
+        f"<b>Balance </b>  <code>${balance_after:,.2f}</code>\n"
+        f"\n"
+        f"<i>shadow · Hyperliquid copy</i>"
+    )
+    return _send_copy(text)
