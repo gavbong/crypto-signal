@@ -98,6 +98,7 @@ copy_trader:
   stop_loss_pct: 0.20           # auto-close copy position if it loses >20% of margin
   max_concurrent_positions: 15  # hard cap across all tracked traders
   min_pnl_30d: 100000           # only follow traders with >$100K 30d PnL
+  poll_interval_minutes: 2      # how often to check HL positions (was 15 — top traders open/close in minutes)
 
 polymarket_trader:
   enabled: true
