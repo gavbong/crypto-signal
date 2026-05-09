@@ -99,6 +99,8 @@ copy_trader:
   max_concurrent_positions: 15  # hard cap across all tracked traders
   min_pnl_30d: 100000           # only follow traders with >$100K 30d PnL
   poll_interval_minutes: 2      # how often to check HL positions (was 15 — top traders open/close in minutes)
+  min_position_usdt: 15         # hard floor per trade — below this, skip the open (HL minimum notional ~$10-15)
+  reset_balance: false          # set true + restart to reset DB balance to initial_balance (only if no open positions)
 
 polymarket_trader:
   enabled: true

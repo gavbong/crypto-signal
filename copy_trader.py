@@ -84,11 +84,21 @@ CREATE TABLE IF NOT EXISTS copy_account (
 def init_copy_db(conn) -> None:
     conn.executescript(_SCHEMA)
     conn.commit()
+    c = cfg().get("copy_trader", {})
+    initial = float(c.get("initial_balance", 10_000))
     # Seed initial balance if account row doesn't exist yet
     if conn.execute("SELECT COUNT(*) FROM copy_account").fetchone()[0] == 0:
-        initial = float(cfg().get("copy_trader", {}).get("initial_balance", 10_000))
         _set_copy_balance(conn, initial)
         conn.commit()
+    # Honour reset_balance flag — only resets if no open positions to avoid data loss
+    elif c.get("reset_balance", False):
+        open_pos = conn.execute("SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NULL").fetchone()[0]
+        if open_pos == 0:
+            _set_copy_balance(conn, initial)
+            conn.commit()
+            logger.info(f"Balance reset to ${initial:,.2f} (reset_balance=true, no open positions)")
+        else:
+            logger.warning(f"reset_balance=true ignored — {open_pos} open position(s) still active")
 
 
 # ── Balance helpers ────────────────────────────────────────────────────────────
@@ -223,7 +233,7 @@ def save_copy_state(conn, wallet: str, positions: dict) -> None:
 
 def _copy_open(
     conn, wallet: str, coin: str, pos: dict,
-    position_size_pct: float, max_concurrent: int,
+    position_size_pct: float, max_concurrent: int, min_position_usdt: float = 15.0,
 ) -> None:
     open_count = conn.execute(
         "SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NULL"
@@ -234,8 +244,8 @@ def _copy_open(
 
     balance = get_copy_balance(conn)
     margin_usdt = round(balance * position_size_pct, 2)
-    if margin_usdt < 1.0:
-        logger.warning(f"Insufficient balance ({balance:.2f}) to open {coin}")
+    if margin_usdt < min_position_usdt:
+        logger.warning(f"Position size ${margin_usdt:.2f} below minimum ${min_position_usdt:.0f} — skipping {coin}")
         return
 
     entry = pos["entryPx"]
@@ -346,9 +356,10 @@ def refresh_leaderboard_job() -> None:
 
 def poll_positions_job() -> None:
     c = cfg().get("copy_trader", {})
-    position_size_pct = float(c.get("position_size_pct", 0.05))
-    stop_loss_pct     = float(c.get("stop_loss_pct", 0.20))
-    max_concurrent    = int(c.get("max_concurrent_positions", 15))
+    position_size_pct  = float(c.get("position_size_pct", 0.05))
+    stop_loss_pct      = float(c.get("stop_loss_pct", 0.20))
+    max_concurrent     = int(c.get("max_concurrent_positions", 15))
+    min_position_usdt  = float(c.get("min_position_usdt", 15.0))
 
     mids = fetch_all_mids()
     if not mids:
@@ -401,14 +412,14 @@ def poll_positions_job() -> None:
 
                 if prev is None:
                     # New position appeared
-                    _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent)
+                    _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent, min_position_usdt)
                 elif prev["side"] == "stopped" or coin in sl_closed:
                     # Stopped out — don't re-enter while HL trader holds same position
                     pass
                 elif pos["side"] != prev["side"]:
                     # Trader reversed direction
                     _copy_close(conn, wallet, coin, last_price, "trader_reversed")
-                    _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent)
+                    _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent, min_position_usdt)
                 else:
                     _update_last_price(conn, wallet, coin, last_price)
 
