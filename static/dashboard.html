@@ -471,7 +471,7 @@ body{
     <table class="signal-table">
       <thead>
         <tr>
-          <th>Pair</th><th>Exch</th><th>Dir</th><th>Strategy</th><th>Opened</th><th>Closed</th>
+          <th>Pair</th><th>Exch</th><th>Dir</th><th>Strategy</th><th>Regime</th><th>Opened</th><th>Closed</th>
           <th>Entry</th><th>Exit</th><th>Reason</th>
           <th class="r">P&amp;L</th>
         </tr>
@@ -730,6 +730,19 @@ function fmtDate(iso) {
 function fmtDT(iso) {
   if (!iso) return '—';
   return iso.slice(5,16).replace('T',' ');
+}
+
+function fmtRegimeBadge(regime) {
+  if (!regime) return '<span style="color:var(--muted)">—</span>';
+  const map = {
+    'trending-up':    ['#22C55E','rgba(34,197,94,0.12)'],
+    'trending-down':  ['#EF4444','rgba(239,68,68,0.12)'],
+    'choppy':         ['#F0A500','rgba(240,165,0,0.12)'],
+    'high-volatility':['#60A5FA','rgba(96,165,250,0.12)'],
+  };
+  const [col, bg] = map[regime] || ['var(--muted)','transparent'];
+  const label = regime.replace('trending-','').replace('-',' ');
+  return `<span style="font-family:var(--font-ui);font-size:10px;font-weight:600;letter-spacing:.03em;padding:2px 6px;border-radius:3px;color:${col};background:${bg};border:1px solid ${col}33;white-space:nowrap;text-transform:uppercase">${label}</span>`;
 }
 
 function fmtDateTime(iso) {
@@ -1226,6 +1239,7 @@ function _renderTradePage(prevIds, tradesOverride) {
       <td style="padding:7px 8px">${excBadge(t.exchange || 'mexc')}</td>
       <td><span class="badge ${dc}">${t.direction.toUpperCase()}</span></td>
       <td class="td-muted">${t.strategy || '—'}</td>
+      <td>${fmtRegimeBadge(t.regime)}</td>
       <td class="td-date">${fmtDT(t.opened_at)}</td>
       <td class="td-date">${fmtDT(t.closed_at)}</td>
       <td class="td-mono">${fmt(t.entry_price)}</td>
