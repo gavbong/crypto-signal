@@ -6,7 +6,7 @@ from utils.config import db_path
 
 @contextmanager
 def get_conn(path: Path | None = None):
-    conn = sqlite3.connect(path or db_path())
+    conn = sqlite3.connect(path or db_path(), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
@@ -66,6 +66,35 @@ def init_db(path: Path | None = None) -> None:
                 pass  # column already exists
 
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS backtest_runs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at  TIMESTAMP,
+                since_date   TEXT NOT NULL,
+                pairs        TEXT,
+                pid          INTEGER,
+                signal_count INTEGER,
+                win_count    INTEGER,
+                net_r        REAL,
+                win_rate     REAL,
+                status       TEXT NOT NULL DEFAULT 'running',
+                progress_pct INTEGER NOT NULL DEFAULT 0,
+                progress_msg TEXT,
+                config_snapshot TEXT
+            );
+        """)
+
+        for migration in [
+            "ALTER TABLE signals ADD COLUMN backtest_run_id INTEGER REFERENCES backtest_runs(id)",
+            "CREATE INDEX IF NOT EXISTS idx_signals_backtest_run ON signals(backtest_run_id, fired_at)",
+        ]:
+            try:
+                conn.execute(migration)
+                conn.commit()
+            except Exception:
+                pass
+
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS regime_log (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 pair       TEXT      NOT NULL,
@@ -78,13 +107,14 @@ def init_db(path: Path | None = None) -> None:
         """)
 
 
-def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
+def log_signal(conn: sqlite3.Connection, signal: dict, backtest_run_id: int | None = None) -> int:
     cur = conn.execute(
         """INSERT INTO signals
            (pair, direction, strategy, regime, regime_confidence, regime_age_candles,
             entry_price, suggested_stop_loss, suggested_take_profit, timeframe,
-            fired_at, shadow_mode, llm_commentary, commentary_status, exchange)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            fired_at, shadow_mode, llm_commentary, commentary_status, exchange,
+            backtest_run_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             signal["pair"], signal["direction"], signal["strategy"],
             signal["regime"], signal["regime_confidence"], signal["regime_age_candles"],
@@ -93,6 +123,7 @@ def log_signal(conn: sqlite3.Connection, signal: dict) -> int:
             signal["timeframe"], signal["fired_at"], signal["shadow_mode"],
             signal.get("llm_commentary"), signal.get("commentary_status", "pending"),
             signal.get("exchange", "mexc"),
+            backtest_run_id,
         ),
     )
     conn.commit()

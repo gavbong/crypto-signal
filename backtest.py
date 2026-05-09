@@ -107,7 +107,7 @@ def _regime_stats() -> dict:
     return {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
 
 
-def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool) -> dict:
+def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int | None = None) -> dict:
     """Replay one pair's full history. Returns per-pair stats."""
     limit = c["candle_limit"]
     dedup_window = c["deduplication"]["window_candles"]
@@ -183,12 +183,12 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool) -> dict:
                 rb["pnl_r"] += pnl_r
 
                 if not dry_run:
-                    signal_id = log_signal(conn, signal)
+                    signal_id = log_signal(conn, signal, backtest_run_id=run_id)
                     update_outcome(conn, signal_id, outcome, price, pnl_r)
             else:
                 stats["unresolved"] += 1
                 if not dry_run:
-                    log_signal(conn, signal)
+                    log_signal(conn, signal, backtest_run_id=run_id)
 
     return stats
 
@@ -260,14 +260,22 @@ def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regi
 
 
 def main() -> None:
+    import json as _json
+    import os
+
     parser = argparse.ArgumentParser(description="Backtest the signal engine on historical data.")
     parser.add_argument("--since", default=None, metavar="YYYY-MM-DD",
                         help="Backtest start date (default: 180 days ago)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Compute signals without writing to DB")
     parser.add_argument("--clear", action="store_true",
-                        help="Delete all existing shadow signals before running")
+                        help="[DEPRECATED] No-op. Runs are now isolated by run_id.")
+    parser.add_argument("--run-id", type=int, default=None, metavar="N",
+                        help="Backtest run ID (provided by dashboard API)")
     args = parser.parse_args()
+
+    if args.clear:
+        logger.warning("--clear is deprecated and has no effect. Runs are isolated by run_id.")
 
     c = cfg()
     init_db()
@@ -278,54 +286,93 @@ def main() -> None:
         else datetime.now(timezone.utc) - timedelta(days=180)
     )
 
+    run_id = args.run_id
+
+    if run_id is not None and not args.dry_run:
+        from signals.selector import REGIME_STRATEGY_MAP
+        sig_cfg = c.get("signals", {})
+        snapshot = {
+            "rsi_overbought": sig_cfg.get("rsi_overbought"),
+            "rsi_oversold": sig_cfg.get("rsi_oversold"),
+            "rsi_divergence_min_diff": sig_cfg.get("rsi_divergence_min_diff"),
+            "atr_stop_multiplier": sig_cfg.get("atr_stop_multiplier"),
+            "rr_ratio": sig_cfg.get("rr_ratio"),
+            "trending_max_confidence": c.get("regime", {}).get("trending_max_confidence"),
+            "regime_strategy_map": REGIME_STRATEGY_MAP,
+        }
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE backtest_runs SET config_snapshot=?, pid=? WHERE id=?",
+                (_json.dumps(snapshot), os.getpid(), run_id),
+            )
+            conn.commit()
+
     exchange = _make_exchange(env("MEXC_API_KEY"), env("MEXC_SECRET"))
 
-    if args.clear and not args.dry_run:
-        with get_conn() as conn:
-            deleted = conn.execute("DELETE FROM signals WHERE shadow_mode=1").rowcount
-            conn.commit()
-            logger.info(f"Cleared {deleted} existing shadow signals from DB")
-
     mode = "DRY RUN" if args.dry_run else "WRITE"
-    logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={c['pairs']}")
+    logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={c['pairs']} | run_id={run_id}")
 
     totals = {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
     regime_breakdown: dict[str, dict] = {}
+    pairs = c["pairs"]
 
-    for pair in c["pairs"]:
+    for idx, pair in enumerate(pairs):
         logger.info(f"Fetching history for {pair} ...")
         candles = fetch_history(exchange, pair, since_dt, c["timeframe"])
         if not candles:
             logger.warning(f"  No data for {pair}, skipping")
-            continue
+        else:
+            first_dt = datetime.fromtimestamp(candles[0][0] / 1000, tz=timezone.utc)
+            last_dt = datetime.fromtimestamp(candles[-1][0] / 1000, tz=timezone.utc)
+            logger.info(f"  {pair}: {len(candles)} candles ({first_dt.date()} to {last_dt.date()})")
 
-        first_dt = datetime.fromtimestamp(candles[0][0] / 1000, tz=timezone.utc)
-        last_dt = datetime.fromtimestamp(candles[-1][0] / 1000, tz=timezone.utc)
-        logger.info(f"  {pair}: {len(candles)} candles ({first_dt.date()} to {last_dt.date()})")
+            with get_conn() as conn:
+                stats = run_pair(pair, candles, conn, c, args.dry_run, run_id=run_id)
 
-        with get_conn() as conn:
-            stats = run_pair(pair, candles, conn, c, args.dry_run)
+            wins = stats["win"] + stats["tp_hit"]
+            resolved = wins + stats["loss"] + stats["stopped_out"]
+            acc = wins / resolved if resolved > 0 else None
+            logger.info(
+                f"  {pair}: fired={stats['fired']} tp={stats['tp_hit']} win={stats['win']} "
+                f"loss={stats['loss']} stop={stats['stopped_out']} "
+                f"acc={f'{acc:.1%}' if acc else 'N/A'} "
+                f"net={stats['pnl_r']:+.2f}R "
+                f"(dedup={stats['skipped_dedup']} unstable={stats['skipped_unstable']})"
+            )
 
-        wins = stats["win"] + stats["tp_hit"]
-        resolved = wins + stats["loss"] + stats["stopped_out"]
-        acc = wins / resolved if resolved > 0 else None
-        logger.info(
-            f"  {pair}: fired={stats['fired']} tp={stats['tp_hit']} win={stats['win']} "
-            f"loss={stats['loss']} stop={stats['stopped_out']} "
-            f"acc={f'{acc:.1%}' if acc else 'N/A'} "
-            f"net={stats['pnl_r']:+.2f}R "
-            f"(dedup={stats['skipped_dedup']} unstable={stats['skipped_unstable']})"
-        )
-
-        for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
-            totals[k] += stats.get(k, 0)
-        totals["pnl_r"] += stats["pnl_r"]
-
-        for regime, rb in stats["by_regime"].items():
-            dest = regime_breakdown.setdefault(regime, _regime_stats())
             for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
-                dest[k] += rb[k]
-            dest["pnl_r"] += rb["pnl_r"]
+                totals[k] += stats.get(k, 0)
+            totals["pnl_r"] += stats["pnl_r"]
+
+            for regime, rb in stats["by_regime"].items():
+                dest = regime_breakdown.setdefault(regime, _regime_stats())
+                for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
+                    dest[k] += rb[k]
+                dest["pnl_r"] += rb["pnl_r"]
+
+        if run_id is not None and not args.dry_run:
+            pct = int((idx + 1) / len(pairs) * 100)
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE backtest_runs SET progress_pct=?, progress_msg=? WHERE id=?",
+                    (pct, f"{pair} done ({idx+1}/{len(pairs)})", run_id),
+                )
+                conn.commit()
+
+    if run_id is not None and not args.dry_run:
+        wins_total = totals["win"] + totals["tp_hit"]
+        resolved_total = wins_total + totals["loss"] + totals["stopped_out"]
+        win_rate = wins_total / resolved_total if resolved_total > 0 else None
+        with get_conn() as conn:
+            conn.execute(
+                """UPDATE backtest_runs
+                   SET finished_at=CURRENT_TIMESTAMP, status='done',
+                       signal_count=?, win_count=?, net_r=?, win_rate=?,
+                       progress_pct=100, progress_msg='Complete'
+                   WHERE id=?""",
+                (totals["fired"], wins_total, totals["pnl_r"], win_rate, run_id),
+            )
+            conn.commit()
 
     print_summary(totals, c, since_dt, args.dry_run, regime_breakdown)
 
