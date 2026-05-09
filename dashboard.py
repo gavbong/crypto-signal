@@ -3,6 +3,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -807,7 +808,7 @@ def create_app() -> Flask:
 
     # ── BACKTEST ROUTES ──────────────────────────────────────────────────────
 
-    _active_backtest: dict = {"proc": None, "run_id": None}
+    _active_backtest: dict = {"proc": None, "run_id": None, "stderr_path": None}
 
     @app.route("/api/backtest/runs")
     def api_backtest_runs():
@@ -944,8 +945,27 @@ def create_app() -> Flask:
         _auth()
         proc = _active_backtest.get("proc")
         run_id = _active_backtest.get("run_id")
-        if proc is not None and proc.poll() is not None:
-            _active_backtest["proc"] = None
+        if proc is not None:
+            rc = proc.poll()
+            if rc is not None:
+                _active_backtest["proc"] = None
+                if rc != 0 and run_id is not None:
+                    stderr_path = _active_backtest.get("stderr_path")
+                    error_msg = f"process exited with code {rc}"
+                    if stderr_path and os.path.exists(stderr_path):
+                        try:
+                            tail = open(stderr_path).read()[-800:].strip()
+                            if tail:
+                                last_line = [l for l in tail.splitlines() if l.strip()]
+                                error_msg = last_line[-1][:300] if last_line else error_msg
+                        except Exception:
+                            pass
+                    with get_conn() as conn:
+                        conn.execute(
+                            "UPDATE backtest_runs SET status='failed', progress_msg=? WHERE id=? AND status='running'",
+                            (error_msg, run_id),
+                        )
+                        conn.commit()
         running = _active_backtest.get("proc") is not None
         if run_id is not None:
             with get_conn() as conn:
@@ -979,24 +999,31 @@ def create_app() -> Flask:
             conn.commit()
             run_id = cur.lastrowid
         backtest_script = str(Path(__file__).parent / "backtest.py")
+        stderr_fh = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".log", prefix="backtest_", delete=False
+        )
+        stderr_path = stderr_fh.name
         proc = subprocess.Popen(
             [sys.executable, backtest_script, "--since", since, "--run-id", str(run_id)],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr_fh,
+            env=os.environ.copy(),
         )
+        stderr_fh.close()
         _active_backtest["proc"] = proc
         _active_backtest["run_id"] = run_id
+        _active_backtest["stderr_path"] = stderr_path
         with get_conn() as conn:
             conn.execute("UPDATE backtest_runs SET pid=? WHERE id=?", (proc.pid, run_id))
             conn.commit()
         return jsonify({"run_id": run_id})
 
-    # Stale run detection: mark any run stuck in 'running' for >10 min as failed
+    # Stale run detection: mark any run stuck in 'running' for >2 min as failed on startup
     with get_conn() as conn:
         conn.execute(
-            """UPDATE backtest_runs SET status='failed', progress_msg='interrupted by restart'
+            """UPDATE backtest_runs SET status='failed', progress_msg='interrupted — process did not complete'
                WHERE status='running'
-               AND started_at < datetime('now', '-10 minutes')"""
+               AND started_at < datetime('now', '-2 minutes')"""
         )
         conn.commit()
 

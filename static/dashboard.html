@@ -138,6 +138,7 @@ body{
 
 /* ── MID GRID ────────────────────────────────────────────────── */
 .mid-grid{display:grid;grid-template-columns:65fr 35fr;gap:12px;margin-bottom:12px}
+.panels-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
 
 /* ── REGIME TIMELINE ─────────────────────────────────────────── */
 .regime-bar-wrap{position:relative;margin-bottom:6px}
@@ -298,11 +299,11 @@ body{
 .bt-ab-label{font-family:var(--font-ui);font-size:11px;color:var(--muted);margin-left:4px}
 .bt-equity-wrap{padding:14px 16px}
 .bt-equity-svg{width:100%;height:110px;overflow:visible}
-.bt-progress-bar-wrap{padding:10px 16px;display:none}
+.bt-progress-bar-wrap{padding:10px 14px;display:none;border-bottom:1px solid var(--border)}
 .bt-progress-track{height:4px;background:var(--surface-up);border-radius:2px;overflow:hidden}
 .bt-progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width 300ms}
 .bt-progress-label{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px}
-.bt-run-form{padding:10px 16px;display:none;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border)}
+.bt-run-form{padding:10px 14px;display:none;align-items:center;gap:10px;flex-wrap:wrap;border-bottom:1px solid var(--border);background:var(--surface-up)}
 .bt-since-input{font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:2px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:110px}
 .bt-run-btn{font-family:var(--font-ui);font-size:11px;padding:5px 14px;border-radius:2px;border:none;background:var(--accent);color:#000;cursor:pointer;font-weight:600}
 .bt-run-btn:disabled{opacity:.4;cursor:not-allowed}
@@ -709,36 +710,40 @@ body{
 
     <!-- Equity curve + run selector -->
     <div class="panel">
-      <div class="panel-hdr" style="flex-direction:column;align-items:flex-start;gap:8px">
-        <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
-          <span class="panel-title">Equity Curve</span>
-          <button class="bt-run-btn" id="bt-toggle-run-form" onclick="btToggleRunForm()" style="font-size:10px;padding:3px 10px;background:transparent;border:1px solid var(--accent);color:var(--accent)">Run Backtest ▾</button>
-        </div>
-        <div id="bt-run-form" class="bt-run-form">
-          <span style="font-family:var(--font-ui);font-size:11px;color:var(--muted)">Since:</span>
-          <input class="bt-since-input" type="date" id="bt-since-input" />
-          <button class="bt-run-btn" id="bt-run-btn" onclick="btStartRun()">▶ Run</button>
-        </div>
-        <div id="bt-progress-wrap" class="bt-progress-bar-wrap" style="padding:0;width:100%">
-          <div class="bt-progress-track"><div class="bt-progress-fill" id="bt-progress-fill" style="width:0%"></div></div>
-          <div class="bt-progress-label" id="bt-progress-label">Starting…</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div class="panel-hdr">
+        <span class="panel-title">Equity Curve</span>
+        <button class="bt-run-btn" id="bt-toggle-run-form" onclick="btToggleRunForm()" style="font-size:10px;padding:3px 10px;background:transparent;border:1px solid var(--accent);color:var(--accent)">Run Backtest ▾</button>
+      </div>
+      <!-- Run selector chips + A/B toggle -->
+      <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:36px">
+        <div id="bt-run-selector-wrap" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1">
           <div class="bt-run-selector" id="bt-run-selector"></div>
-          <label style="display:flex;align-items:center;gap:5px;font-family:var(--font-ui);font-size:11px;color:var(--muted);cursor:pointer;margin-left:8px">
-            <input type="checkbox" id="bt-ab-toggle" onchange="btToggleAB()" style="accent-color:var(--accent)">
-            <span>A/B Compare</span>
-          </label>
         </div>
-        <div id="bt-ab-selectors" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="bt-ab-label" style="color:#F0A500">A (candidate):</span>
-          <div class="bt-run-selector" id="bt-run-selector-a"></div>
-          <span class="bt-ab-label" style="color:#22C55E">B (baseline):</span>
-          <div class="bt-run-selector" id="bt-run-selector-b"></div>
-        </div>
+        <label style="display:flex;align-items:center;gap:5px;font-family:var(--font-ui);font-size:11px;color:var(--muted);cursor:pointer;white-space:nowrap">
+          <input type="checkbox" id="bt-ab-toggle" onchange="btToggleAB()" style="accent-color:var(--accent)">
+          <span>A/B</span>
+        </label>
+      </div>
+      <!-- A/B run selectors (shown in compare mode) -->
+      <div id="bt-ab-selectors" style="display:none;padding:8px 14px;border-bottom:1px solid var(--border);gap:8px;flex-wrap:wrap;align-items:center">
+        <span class="bt-ab-label" style="color:#F0A500">A:</span>
+        <div class="bt-run-selector" id="bt-run-selector-a"></div>
+        <span class="bt-ab-label" style="color:#22C55E;margin-left:8px">B:</span>
+        <div class="bt-run-selector" id="bt-run-selector-b"></div>
+      </div>
+      <!-- Collapsible run form -->
+      <div id="bt-run-form" class="bt-run-form">
+        <span style="font-family:var(--font-ui);font-size:11px;color:var(--muted)">Since:</span>
+        <input class="bt-since-input" type="date" id="bt-since-input" />
+        <button class="bt-run-btn" id="bt-run-btn" onclick="btStartRun()">▶ Run</button>
+      </div>
+      <!-- Progress bar (shown during active run) -->
+      <div id="bt-progress-wrap" class="bt-progress-bar-wrap">
+        <div class="bt-progress-track"><div class="bt-progress-fill" id="bt-progress-fill" style="width:0%"></div></div>
+        <div class="bt-progress-label" id="bt-progress-label">Starting…</div>
       </div>
       <div class="panel-body" id="bt-equity-body">
-        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No backtest data. Run a backtest first.</span>
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No backtest runs yet — click "Run Backtest ▾" above to start one.</span>
       </div>
     </div>
 
@@ -749,7 +754,7 @@ body{
         <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="bt-breakdown-sub">—</span>
       </div>
       <div id="bt-breakdown-body" style="padding:0;overflow-x:auto">
-        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run from the equity panel.</span>
       </div>
     </div>
 
@@ -1834,21 +1839,33 @@ let _btRunB = null;
 let _btABMode = false;
 let _btPollInterval = null;
 
+function btFmtDate(isoStr) {
+  if (!isoStr) return '—';
+  const d = new Date(isoStr.replace(' ', 'T') + (isoStr.includes('T') ? '' : 'Z'));
+  const mo = d.toLocaleString('en', {month:'short'});
+  const day = String(d.getDate()).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${mo} ${day} ${hh}:${mm}`;
+}
+
 function btLabel(run) {
   if (!run) return '—';
-  const d = (run.started_at || '').slice(0,10);
-  return `#${run.id} ${d}`;
+  return `#${run.id} ${btFmtDate(run.started_at)}`;
 }
 
 function btRenderRunSelector(containerId, selectedId, onSelect) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  if (!_btRuns.length) { el.innerHTML = '<span style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">No runs yet</span>'; return; }
+  if (!_btRuns.length) {
+    el.innerHTML = '<span style="font-family:var(--font-ui);font-size:11px;color:var(--muted)">No runs yet — click "Run Backtest ▾" to start</span>';
+    return;
+  }
   el.innerHTML = _btRuns.map(r => {
     const active = r.id === selectedId;
     const statusDot = r.status === 'running' ? '<span style="color:var(--accent)">● </span>'
                     : r.status === 'failed'  ? '<span style="color:var(--short)">✕ </span>' : '';
-    return `<button class="bt-run-chip${active?' selected':''}" onclick="(${onSelect})(${r.id})">${statusDot}#${r.id} ${(r.started_at||'').slice(2,10)}</button>`;
+    return `<button class="bt-run-chip${active?' selected':''}" title="${r.status}" onclick="(${onSelect})(${r.id})">${statusDot}#${r.id} ${btFmtDate(r.started_at)}</button>`;
   }).join('');
 }
 
@@ -1872,7 +1889,7 @@ function btSelectB(runId) {
 
 function btToggleAB() {
   _btABMode = document.getElementById('bt-ab-toggle').checked;
-  document.getElementById('bt-run-selector').closest('div').style.display = _btABMode ? 'none' : '';
+  document.getElementById('bt-run-selector-wrap').style.display = _btABMode ? 'none' : 'flex';
   document.getElementById('bt-ab-selectors').style.display = _btABMode ? 'flex' : 'none';
   document.getElementById('bt-diff-panel').style.display = _btABMode ? '' : 'none';
   if (_btABMode) {
@@ -1894,10 +1911,28 @@ function btToggleRunForm() {
 async function btLoadRun(runId) {
   const run = _btRuns.find(r => r.id === runId);
   btUpdateStats(run);
+  const body = document.getElementById('bt-equity-body');
+  const bdBody = document.getElementById('bt-breakdown-body');
+  if (!run) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run to view its equity curve.</span>';
+    bdBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run above.</span>';
+    return;
+  }
+  if (run.status === 'running') {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--accent);padding:14px 16px;display:block">● Run in progress — equity curve will appear when complete.</span>';
+    bdBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Waiting for run to finish…</span>';
+    return;
+  }
+  if (run.status === 'failed') {
+    const msg = run.progress_msg || 'unknown error';
+    body.innerHTML = `<span style="font-family:var(--font-mono);font-size:11px;color:var(--short);padding:14px 16px;display:block">✕ Run failed: ${msg}</span>`;
+    bdBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No data — run did not complete.</span>';
+    return;
+  }
   try {
     const [eqRes, bdRes] = await Promise.all([
-      fetch('/api/backtest/equity' + (runId != null ? '?run_id=' + runId : '')),
-      fetch('/api/backtest/breakdown' + (runId != null ? '?run_id=' + runId : '')),
+      fetch('/api/backtest/equity?run_id=' + runId),
+      fetch('/api/backtest/breakdown?run_id=' + runId),
     ]);
     const equity = await eqRes.json();
     const breakdown = await bdRes.json();
@@ -1928,7 +1963,8 @@ function btUpdateStats(run) {
   const netrEl = document.getElementById('bt-stat-netr');
   const wrEl = document.getElementById('bt-stat-wr');
   const sigEl = document.getElementById('bt-stat-signals');
-  if (run) {
+  document.getElementById('bt-stat-runs').textContent = _btRuns.length || '—';
+  if (run && run.status === 'done') {
     const netr = run.net_r != null ? (run.net_r >= 0 ? '+' : '') + run.net_r.toFixed(2) + 'R' : '—';
     netrEl.textContent = netr;
     netrEl.style.color = run.net_r > 0 ? '#22C55E' : run.net_r < 0 ? '#EF4444' : '';
@@ -1939,8 +1975,20 @@ function btUpdateStats(run) {
     sigEl.textContent = run.signal_count != null ? run.signal_count : '—';
     document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id}`;
     document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id} · ${run.since_date || ''}`;
+  } else if (run && run.status === 'running') {
+    netrEl.textContent = '…'; netrEl.style.color = 'var(--accent)';
+    wrEl.textContent = '…'; sigEl.textContent = '…';
+    document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id} · in progress`;
+    document.getElementById('bt-stat-wr-sub').textContent = '—W · —L';
+    document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id}`;
+  } else if (run && run.status === 'failed') {
+    netrEl.textContent = '✕'; netrEl.style.color = '#EF4444';
+    wrEl.textContent = '✕'; sigEl.textContent = '✕';
+    document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id} · failed`;
+    document.getElementById('bt-stat-wr-sub').textContent = '—';
+    document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id}`;
   } else {
-    netrEl.textContent = '—'; wrEl.textContent = '—'; sigEl.textContent = '—';
+    netrEl.textContent = '—'; netrEl.style.color = ''; wrEl.textContent = '—'; sigEl.textContent = '—';
     document.getElementById('bt-stat-netr-sub').textContent = 'selected run';
     document.getElementById('bt-stat-wr-sub').textContent = '—W · —L';
     document.getElementById('bt-breakdown-sub').textContent = '—';
