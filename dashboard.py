@@ -1,6 +1,8 @@
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -802,6 +804,201 @@ def create_app() -> Flask:
                         "signal_fired_at": _normalize_ts(sig["fired_at"]),
                     })
         return jsonify({"convergence": convergent})
+
+    # ── BACKTEST ROUTES ──────────────────────────────────────────────────────
+
+    _active_backtest: dict = {"proc": None, "run_id": None}
+
+    @app.route("/api/backtest/runs")
+    def api_backtest_runs():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, started_at, finished_at, since_date, status,
+                          signal_count, win_count, net_r, win_rate, progress_pct, progress_msg
+                   FROM backtest_runs ORDER BY id DESC"""
+            ).fetchall()
+        return jsonify([dict(r) for r in rows])
+
+    @app.route("/api/backtest/equity")
+    def api_backtest_equity():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        with get_conn() as conn:
+            if run_id is None:
+                rows = conn.execute(
+                    """SELECT DATE(fired_at) as date, SUM(pnl_r) as daily_r
+                       FROM signals WHERE shadow_mode=1 AND backtest_run_id IS NULL AND pnl_r IS NOT NULL
+                       GROUP BY DATE(fired_at) ORDER BY date"""
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT DATE(fired_at) as date, SUM(pnl_r) as daily_r
+                       FROM signals WHERE backtest_run_id=? AND pnl_r IS NOT NULL
+                       GROUP BY DATE(fired_at) ORDER BY date""",
+                    (run_id,),
+                ).fetchall()
+        cumulative, total = [], 0.0
+        for r in rows:
+            total += r["daily_r"] or 0
+            cumulative.append({"date": r["date"], "cumulative_r": round(total, 4)})
+        return jsonify(cumulative)
+
+    @app.route("/api/backtest/breakdown")
+    def api_backtest_breakdown():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        with get_conn() as conn:
+            if run_id is None:
+                rows = conn.execute(
+                    """SELECT strategy, regime,
+                              COUNT(*) as fired,
+                              SUM(CASE WHEN outcome='tp_hit' THEN 1 ELSE 0 END) as tp_hit,
+                              SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
+                              SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) as loss,
+                              SUM(CASE WHEN outcome='stopped_out' THEN 1 ELSE 0 END) as stopped_out,
+                              SUM(pnl_r) as net_r
+                       FROM signals WHERE shadow_mode=1 AND backtest_run_id IS NULL
+                       GROUP BY strategy, regime ORDER BY net_r DESC"""
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT strategy, regime,
+                              COUNT(*) as fired,
+                              SUM(CASE WHEN outcome='tp_hit' THEN 1 ELSE 0 END) as tp_hit,
+                              SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
+                              SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) as loss,
+                              SUM(CASE WHEN outcome='stopped_out' THEN 1 ELSE 0 END) as stopped_out,
+                              SUM(pnl_r) as net_r
+                       FROM signals WHERE backtest_run_id=?
+                       GROUP BY strategy, regime ORDER BY net_r DESC""",
+                    (run_id,),
+                ).fetchall()
+        result = []
+        for r in rows:
+            resolved = (r["win"] or 0) + (r["loss"] or 0) + (r["stopped_out"] or 0)
+            win_rate = r["win"] / resolved if resolved > 0 else None
+            result.append({
+                "strategy": r["strategy"], "regime": r["regime"],
+                "fired": r["fired"], "tp_hit": r["tp_hit"] or 0,
+                "win": r["win"] or 0, "loss": r["loss"] or 0,
+                "stopped_out": r["stopped_out"] or 0,
+                "win_rate": round(win_rate, 3) if win_rate is not None else None,
+                "net_r": round(r["net_r"] or 0, 2),
+            })
+        return jsonify(result)
+
+    @app.route("/api/backtest/diff")
+    def api_backtest_diff():
+        _auth()
+        run_a = request.args.get("run_a", type=int)
+        run_b = request.args.get("run_b", type=int)
+        if run_a is None or run_b is None:
+            return jsonify({"error": "run_a and run_b required"}), 400
+
+        def _stats_for(run_id):
+            with get_conn() as conn:
+                rows = conn.execute(
+                    """SELECT strategy, regime,
+                              SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
+                              SUM(CASE WHEN outcome IN ('win','tp_hit','loss','stopped_out') THEN 1 ELSE 0 END) as resolved,
+                              SUM(pnl_r) as net_r
+                       FROM signals WHERE backtest_run_id=?
+                       GROUP BY strategy, regime""",
+                    (run_id,),
+                ).fetchall()
+            return {(r["strategy"], r["regime"]): r for r in rows}
+
+        stats_a = _stats_for(run_a)
+        stats_b = _stats_for(run_b)
+        keys = sorted(set(stats_a) | set(stats_b))
+        diff = []
+        for key in keys:
+            ra = stats_a.get(key)
+            rb = stats_b.get(key)
+            wr_a = (ra["win"] / ra["resolved"]) if ra and ra["resolved"] else None
+            wr_b = (rb["win"] / rb["resolved"]) if rb and rb["resolved"] else None
+            delta = (wr_a - wr_b) if (wr_a is not None and wr_b is not None) else None
+            diff.append({
+                "strategy": key[0], "regime": key[1],
+                "wr_a": round(wr_a, 3) if wr_a is not None else None,
+                "wr_b": round(wr_b, 3) if wr_b is not None else None,
+                "delta": round(delta, 3) if delta is not None else None,
+                "net_r_a": round(ra["net_r"] or 0, 2) if ra else None,
+                "net_r_b": round(rb["net_r"] or 0, 2) if rb else None,
+            })
+        diff.sort(key=lambda x: abs(x["delta"] or 0), reverse=True)
+
+        with get_conn() as conn:
+            run_a_row = conn.execute("SELECT config_snapshot FROM backtest_runs WHERE id=?", (run_a,)).fetchone()
+            run_b_row = conn.execute("SELECT config_snapshot FROM backtest_runs WHERE id=?", (run_b,)).fetchone()
+        snap_a = json.loads(run_a_row["config_snapshot"]) if run_a_row and run_a_row["config_snapshot"] else {}
+        snap_b = json.loads(run_b_row["config_snapshot"]) if run_b_row and run_b_row["config_snapshot"] else {}
+        config_changes = {k: {"a": snap_a.get(k), "b": snap_b.get(k)}
+                         for k in set(snap_a) | set(snap_b)
+                         if snap_a.get(k) != snap_b.get(k) and k != "regime_strategy_map"}
+        return jsonify({"diff": diff, "config_changes": config_changes})
+
+    @app.route("/api/backtest/status")
+    def api_backtest_status():
+        _auth()
+        proc = _active_backtest.get("proc")
+        run_id = _active_backtest.get("run_id")
+        if proc is not None and proc.poll() is not None:
+            _active_backtest["proc"] = None
+        running = _active_backtest.get("proc") is not None
+        if run_id is not None:
+            with get_conn() as conn:
+                row = conn.execute(
+                    "SELECT status, progress_pct, progress_msg FROM backtest_runs WHERE id=?",
+                    (run_id,),
+                ).fetchone()
+            if row:
+                return jsonify({
+                    "running": running,
+                    "run_id": run_id,
+                    "status": row["status"],
+                    "progress_pct": row["progress_pct"],
+                    "msg": row["progress_msg"] or "",
+                })
+        return jsonify({"running": running, "run_id": run_id, "status": "idle", "progress_pct": 0, "msg": ""})
+
+    @app.route("/api/backtest/run", methods=["POST"])
+    def api_backtest_run():
+        _auth()
+        if _active_backtest.get("proc") is not None and _active_backtest["proc"].poll() is None:
+            return jsonify({"error": "A backtest is already running"}), 409
+        body = request.get_json(silent=True) or {}
+        since = body.get("since", (datetime.now(timezone.utc).replace(day=1)).strftime("%Y-%m-%d"))
+        c = cfg()
+        with get_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO backtest_runs (since_date, status) VALUES (?, 'running')",
+                (since,),
+            )
+            conn.commit()
+            run_id = cur.lastrowid
+        backtest_script = str(Path(__file__).parent / "backtest.py")
+        proc = subprocess.Popen(
+            [sys.executable, backtest_script, "--since", since, "--run-id", str(run_id)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        _active_backtest["proc"] = proc
+        _active_backtest["run_id"] = run_id
+        with get_conn() as conn:
+            conn.execute("UPDATE backtest_runs SET pid=? WHERE id=?", (proc.pid, run_id))
+            conn.commit()
+        return jsonify({"run_id": run_id})
+
+    # Stale run detection: mark any run stuck in 'running' for >10 min as failed
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE backtest_runs SET status='failed', progress_msg='interrupted by restart'
+               WHERE status='running'
+               AND started_at < datetime('now', '-10 minutes')"""
+        )
+        conn.commit()
 
     _migrate_paper_db()
     _migrate_copy_db()

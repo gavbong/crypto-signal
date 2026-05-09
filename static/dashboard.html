@@ -290,6 +290,25 @@ body{
 .wallet-link:hover{color:var(--amber);text-decoration:underline}
 .copy-chart-wrap{padding:14px 16px}
 .copy-chart-svg{width:100%;height:100px;overflow:visible}
+/* ── Backtest tab ── */
+.bt-run-selector{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.bt-run-chip{font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;border:1px solid var(--border);background:var(--surface);color:var(--text-muted);cursor:pointer;transition:all 80ms}
+.bt-run-chip:hover{border-color:var(--accent);color:var(--accent)}
+.bt-run-chip.selected{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+.bt-ab-label{font-family:var(--font-ui);font-size:11px;color:var(--muted);margin-left:4px}
+.bt-equity-wrap{padding:14px 16px}
+.bt-equity-svg{width:100%;height:110px;overflow:visible}
+.bt-progress-bar-wrap{padding:10px 16px;display:none}
+.bt-progress-track{height:4px;background:var(--surface-up);border-radius:2px;overflow:hidden}
+.bt-progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width 300ms}
+.bt-progress-label{font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px}
+.bt-run-form{padding:10px 16px;display:none;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--border)}
+.bt-since-input{font-family:var(--font-mono);font-size:11px;padding:4px 8px;border-radius:2px;border:1px solid var(--border);background:var(--surface);color:var(--text);width:110px}
+.bt-run-btn{font-family:var(--font-ui);font-size:11px;padding:5px 14px;border-radius:2px;border:none;background:var(--accent);color:#000;cursor:pointer;font-weight:600}
+.bt-run-btn:disabled{opacity:.4;cursor:not-allowed}
+.bt-diff-delta-pos{color:#22C55E}
+.bt-diff-delta-neg{color:#EF4444}
+.bt-diff-delta-neu{color:var(--muted)}
 /* ── Polymarket tab ── */
 .poly-feed-row{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(31,35,48,0.6)}
 .poly-feed-row:last-child{border-bottom:none}
@@ -331,7 +350,7 @@ body{
   <button class="nav-btn" data-view="polymarket" title="Polymarket">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 2 Q11 8 8 14"/><path d="M8 2 Q5 8 8 14"/><line x1="2.5" y1="6" x2="13.5" y2="6"/><line x1="2.5" y1="10" x2="13.5" y2="10"/></svg>
   </button>
-  <button class="nav-btn" title="Backtest">
+  <button class="nav-btn" data-view="backtest" title="Backtest">
     <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="10" width="2" height="5" rx=".5" fill="currentColor"/><rect x="5" y="7" width="2" height="8" rx=".5" fill="currentColor"/><rect x="9" y="4" width="2" height="11" rx=".5" fill="currentColor"/><rect x="13" y="2" width="2" height="13" rx=".5" fill="currentColor" opacity=".35"/></svg>
   </button>
   <button class="nav-btn bottom" title="Settings">
@@ -655,6 +674,99 @@ body{
   </div>
 
 </div><!-- /view-polymarket -->
+
+<!-- ── BACKTEST VIEW ────────────────────────────────────────────────── -->
+<div id="view-backtest" class="view">
+
+  <div class="stats-row-hdr">
+    <span class="stats-row-title">Backtest</span>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">historical signal replay · R-multiple P&amp;L</span>
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Net R</div>
+      <div class="stat-value" id="bt-stat-netr">—</div>
+      <div class="stat-sub" id="bt-stat-netr-sub">selected run</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Win Rate</div>
+      <div class="stat-value" id="bt-stat-wr">—</div>
+      <div class="stat-sub" id="bt-stat-wr-sub">—W · —L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Signals</div>
+      <div class="stat-value" id="bt-stat-signals">—</div>
+      <div class="stat-sub" id="bt-stat-signals-sub">fired this run</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Runs</div>
+      <div class="stat-value amber" id="bt-stat-runs">—</div>
+      <div class="stat-sub">total in DB</div>
+    </div>
+  </div>
+
+  <div class="panels-grid">
+
+    <!-- Equity curve + run selector -->
+    <div class="panel">
+      <div class="panel-hdr" style="flex-direction:column;align-items:flex-start;gap:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+          <span class="panel-title">Equity Curve</span>
+          <button class="bt-run-btn" id="bt-toggle-run-form" onclick="btToggleRunForm()" style="font-size:10px;padding:3px 10px;background:transparent;border:1px solid var(--accent);color:var(--accent)">Run Backtest ▾</button>
+        </div>
+        <div id="bt-run-form" class="bt-run-form">
+          <span style="font-family:var(--font-ui);font-size:11px;color:var(--muted)">Since:</span>
+          <input class="bt-since-input" type="date" id="bt-since-input" />
+          <button class="bt-run-btn" id="bt-run-btn" onclick="btStartRun()">▶ Run</button>
+        </div>
+        <div id="bt-progress-wrap" class="bt-progress-bar-wrap" style="padding:0;width:100%">
+          <div class="bt-progress-track"><div class="bt-progress-fill" id="bt-progress-fill" style="width:0%"></div></div>
+          <div class="bt-progress-label" id="bt-progress-label">Starting…</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div class="bt-run-selector" id="bt-run-selector"></div>
+          <label style="display:flex;align-items:center;gap:5px;font-family:var(--font-ui);font-size:11px;color:var(--muted);cursor:pointer;margin-left:8px">
+            <input type="checkbox" id="bt-ab-toggle" onchange="btToggleAB()" style="accent-color:var(--accent)">
+            <span>A/B Compare</span>
+          </label>
+        </div>
+        <div id="bt-ab-selectors" style="display:none;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="bt-ab-label" style="color:#F0A500">A (candidate):</span>
+          <div class="bt-run-selector" id="bt-run-selector-a"></div>
+          <span class="bt-ab-label" style="color:#22C55E">B (baseline):</span>
+          <div class="bt-run-selector" id="bt-run-selector-b"></div>
+        </div>
+      </div>
+      <div class="panel-body" id="bt-equity-body">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No backtest data. Run a backtest first.</span>
+      </div>
+    </div>
+
+    <!-- Strategy × Regime breakdown -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Strategy × Regime Breakdown</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="bt-breakdown-sub">—</span>
+      </div>
+      <div id="bt-breakdown-body" style="padding:0;overflow-x:auto">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- A/B diff table (shown only in compare mode) -->
+  <div class="panel" id="bt-diff-panel" style="margin-top:12px;display:none">
+    <div class="panel-hdr">
+      <span class="panel-title">What Changed?</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="bt-config-diff-label"></span>
+    </div>
+    <div id="bt-diff-body" style="padding:0;overflow-x:auto">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select two runs to compare.</span>
+    </div>
+  </div>
+
+</div><!-- /view-backtest -->
 
 </main>
 
@@ -1329,6 +1441,7 @@ function setPageContext(view) {
       setPageContext(view);
       if (view === 'copy') refreshCopy();
       if (view === 'polymarket') refreshPoly();
+      if (view === 'backtest') refreshBacktest();
     });
   });
 })();
@@ -1711,6 +1824,338 @@ async function refreshCopy() {
   } catch (err) {
     console.error('Copy refresh error:', err);
   }
+}
+
+// ─── BACKTEST ─────────────────────────────────────────────────────────────────
+let _btRuns = [];
+let _btSelectedRun = null;
+let _btRunA = null;
+let _btRunB = null;
+let _btABMode = false;
+let _btPollInterval = null;
+
+function btLabel(run) {
+  if (!run) return '—';
+  const d = (run.started_at || '').slice(0,10);
+  return `#${run.id} ${d}`;
+}
+
+function btRenderRunSelector(containerId, selectedId, onSelect) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (!_btRuns.length) { el.innerHTML = '<span style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">No runs yet</span>'; return; }
+  el.innerHTML = _btRuns.map(r => {
+    const active = r.id === selectedId;
+    const statusDot = r.status === 'running' ? '<span style="color:var(--accent)">● </span>'
+                    : r.status === 'failed'  ? '<span style="color:var(--short)">✕ </span>' : '';
+    return `<button class="bt-run-chip${active?' selected':''}" onclick="(${onSelect})(${r.id})">${statusDot}#${r.id} ${(r.started_at||'').slice(2,10)}</button>`;
+  }).join('');
+}
+
+function btSelectRun(runId) {
+  _btSelectedRun = runId;
+  btRenderRunSelector('bt-run-selector', _btSelectedRun, 'btSelectRun');
+  btLoadRun(_btSelectedRun);
+}
+
+function btSelectA(runId) {
+  _btRunA = runId;
+  btRenderRunSelector('bt-run-selector-a', _btRunA, 'btSelectA');
+  btLoadDiff();
+}
+
+function btSelectB(runId) {
+  _btRunB = runId;
+  btRenderRunSelector('bt-run-selector-b', _btRunB, 'btSelectB');
+  btLoadDiff();
+}
+
+function btToggleAB() {
+  _btABMode = document.getElementById('bt-ab-toggle').checked;
+  document.getElementById('bt-run-selector').closest('div').style.display = _btABMode ? 'none' : '';
+  document.getElementById('bt-ab-selectors').style.display = _btABMode ? 'flex' : 'none';
+  document.getElementById('bt-diff-panel').style.display = _btABMode ? '' : 'none';
+  if (_btABMode) {
+    if (!_btRunA && _btRuns.length > 0) _btRunA = _btRuns[0].id;
+    if (!_btRunB && _btRuns.length > 1) _btRunB = _btRuns[1].id;
+    btRenderRunSelector('bt-run-selector-a', _btRunA, 'btSelectA');
+    btRenderRunSelector('bt-run-selector-b', _btRunB, 'btSelectB');
+    btLoadDiff();
+  } else {
+    btLoadRun(_btSelectedRun);
+  }
+}
+
+function btToggleRunForm() {
+  const form = document.getElementById('bt-run-form');
+  form.style.display = form.style.display === 'flex' ? 'none' : 'flex';
+}
+
+async function btLoadRun(runId) {
+  const run = _btRuns.find(r => r.id === runId);
+  btUpdateStats(run);
+  try {
+    const [eqRes, bdRes] = await Promise.all([
+      fetch('/api/backtest/equity' + (runId != null ? '?run_id=' + runId : '')),
+      fetch('/api/backtest/breakdown' + (runId != null ? '?run_id=' + runId : '')),
+    ]);
+    const equity = await eqRes.json();
+    const breakdown = await bdRes.json();
+    btRenderEquitySVG(equity, '#F0A500');
+    btRenderBreakdownTable(breakdown, run);
+  } catch (e) { console.error('btLoadRun error', e); }
+}
+
+async function btLoadDiff() {
+  if (!_btRunA || !_btRunB) return;
+  const runA = _btRuns.find(r => r.id === _btRunA);
+  const runB = _btRuns.find(r => r.id === _btRunB);
+  try {
+    const [eqARes, eqBRes, diffRes] = await Promise.all([
+      fetch('/api/backtest/equity?run_id=' + _btRunA),
+      fetch('/api/backtest/equity?run_id=' + _btRunB),
+      fetch(`/api/backtest/diff?run_a=${_btRunA}&run_b=${_btRunB}`),
+    ]);
+    const eqA = await eqARes.json();
+    const eqB = await eqBRes.json();
+    const diff = await diffRes.json();
+    btRenderEquityOverlay(eqA, eqB);
+    btRenderDiffTable(diff.diff || [], diff.config_changes || {});
+  } catch (e) { console.error('btLoadDiff error', e); }
+}
+
+function btUpdateStats(run) {
+  const netrEl = document.getElementById('bt-stat-netr');
+  const wrEl = document.getElementById('bt-stat-wr');
+  const sigEl = document.getElementById('bt-stat-signals');
+  if (run) {
+    const netr = run.net_r != null ? (run.net_r >= 0 ? '+' : '') + run.net_r.toFixed(2) + 'R' : '—';
+    netrEl.textContent = netr;
+    netrEl.style.color = run.net_r > 0 ? '#22C55E' : run.net_r < 0 ? '#EF4444' : '';
+    wrEl.textContent = run.win_rate != null ? Math.round(run.win_rate * 100) + '%' : '—';
+    const wins = run.win_count || 0;
+    const losses = (run.signal_count || 0) - wins;
+    document.getElementById('bt-stat-wr-sub').textContent = `${wins}W · ${losses >= 0 ? losses : '—'}L`;
+    sigEl.textContent = run.signal_count != null ? run.signal_count : '—';
+    document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id}`;
+    document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id} · ${run.since_date || ''}`;
+  } else {
+    netrEl.textContent = '—'; wrEl.textContent = '—'; sigEl.textContent = '—';
+    document.getElementById('bt-stat-netr-sub').textContent = 'selected run';
+    document.getElementById('bt-stat-wr-sub').textContent = '—W · —L';
+    document.getElementById('bt-breakdown-sub').textContent = '—';
+  }
+}
+
+function btRenderEquitySVG(points, color) {
+  const body = document.getElementById('bt-equity-body');
+  if (!points.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No resolved signals in this run yet.</span>';
+    return;
+  }
+  const H = 90, W = 100;
+  const vals = points.map(p => p.cumulative_r).concat([0]);
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const toY = v => H - ((v - minV) / range) * H;
+  const toX = i => (i / (points.length - 1 || 1)) * W;
+  const path = points.map((p, i) => `${i===0?'M':'L'}${toX(i).toFixed(1)},${toY(p.cumulative_r).toFixed(1)}`).join(' ');
+  const zeroY = toY(0).toFixed(1);
+  body.innerHTML = `<div class="bt-equity-wrap">
+    <svg viewBox="0 0 ${W} ${H}" class="bt-equity-svg" preserveAspectRatio="none">
+      <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="rgba(240,165,0,0.15)" stroke-width="0.5"/>
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round"/>
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px">
+      <span>${points[0].date}</span><span>${points[points.length-1].date}</span>
+    </div>
+  </div>`;
+}
+
+function btRenderEquityOverlay(pointsA, pointsB) {
+  const body = document.getElementById('bt-equity-body');
+  const all = [...pointsA, ...pointsB];
+  if (!all.length) { body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px;display:block">No data.</span>'; return; }
+  const allDates = [...new Set([...pointsA.map(p=>p.date), ...pointsB.map(p=>p.date)])].sort();
+  const mapA = Object.fromEntries(pointsA.map(p=>[p.date, p.cumulative_r]));
+  const mapB = Object.fromEntries(pointsB.map(p=>[p.date, p.cumulative_r]));
+  const vals = all.map(p => p.cumulative_r).concat([0]);
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+  const H = 90, W = 100;
+  const toY = v => H - ((v - minV) / range) * H;
+  const toX = i => (i / (allDates.length - 1 || 1)) * W;
+  function buildPath(dataMap) {
+    return allDates.map((d,i) => {
+      const v = dataMap[d] ?? null;
+      return v !== null ? `${i===0?'M':'L'}${toX(i).toFixed(1)},${toY(v).toFixed(1)}` : null;
+    }).filter(Boolean).join(' ');
+  }
+  const zeroY = toY(0).toFixed(1);
+  body.innerHTML = `<div class="bt-equity-wrap">
+    <div style="display:flex;gap:12px;margin-bottom:6px;font-family:var(--font-mono);font-size:10px">
+      <span style="color:#F0A500">— A (candidate)</span>
+      <span style="color:#22C55E;opacity:.7">— B (baseline)</span>
+    </div>
+    <svg viewBox="0 0 ${W} ${H}" class="bt-equity-svg" preserveAspectRatio="none">
+      <line x1="0" y1="${zeroY}" x2="${W}" y2="${zeroY}" stroke="rgba(240,165,0,0.15)" stroke-width="0.5"/>
+      ${pointsB.length ? `<path d="${buildPath(mapB)}" fill="none" stroke="#22C55E" stroke-width="1.2" stroke-linejoin="round" opacity=".65"/>` : ''}
+      ${pointsA.length ? `<path d="${buildPath(mapA)}" fill="none" stroke="#F0A500" stroke-width="1.4" stroke-linejoin="round"/>` : ''}
+    </svg>
+    <div style="display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:4px">
+      <span>${allDates[0]}</span><span>${allDates[allDates.length-1]}</span>
+    </div>
+  </div>`;
+}
+
+function btRenderBreakdownTable(rows, run) {
+  const body = document.getElementById('bt-breakdown-body');
+  if (!rows.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No signals in this run.</span>';
+    return;
+  }
+  const pct = v => v != null ? Math.round(v * 100) + '%' : '—';
+  const r = v => v != null ? (v >= 0 ? '+' : '') + v.toFixed(2) + 'R' : '—';
+  const color = v => v > 0 ? 'color:#22C55E' : v < 0 ? 'color:#EF4444' : '';
+  body.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px">
+    <thead><tr style="border-bottom:1px solid var(--border);color:var(--muted)">
+      <th style="text-align:left;padding:6px 12px;font-weight:500">Strategy</th>
+      <th style="text-align:left;padding:6px 8px;font-weight:500">Regime</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">Fired</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">TP</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">Win</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">Loss</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">WR</th>
+      <th style="text-align:right;padding:6px 12px;font-weight:500">Net R</th>
+    </tr></thead>
+    <tbody>
+    ${rows.map(row => `<tr style="border-bottom:1px solid rgba(31,35,48,0.4)">
+      <td style="padding:6px 12px;color:var(--text)">${row.strategy}</td>
+      <td style="padding:6px 8px;color:var(--muted)">${row.regime}</td>
+      <td style="padding:6px 8px;text-align:right">${row.fired}</td>
+      <td style="padding:6px 8px;text-align:right">${row.tp_hit}</td>
+      <td style="padding:6px 8px;text-align:right;color:#22C55E">${row.win}</td>
+      <td style="padding:6px 8px;text-align:right;color:#EF4444">${row.loss}</td>
+      <td style="padding:6px 8px;text-align:right">${pct(row.win_rate)}</td>
+      <td style="padding:6px 12px;text-align:right;${color(row.net_r)}">${r(row.net_r)}</td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function btRenderDiffTable(rows, configChanges) {
+  const body = document.getElementById('bt-diff-body');
+  const pct = v => v != null ? Math.round(v * 100) + '%' : '—';
+  const deltaClass = v => v == null ? 'bt-diff-delta-neu' : v > 0.005 ? 'bt-diff-delta-pos' : v < -0.005 ? 'bt-diff-delta-neg' : 'bt-diff-delta-neu';
+  const deltaStr = v => v == null ? '—' : (v > 0 ? '+' : '') + Math.round(v * 100) + '% ' + (v > 0.005 ? '▲' : v < -0.005 ? '▼' : '');
+  if (!rows.length) { body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px;display:block">No comparable signals.</span>'; return; }
+  body.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px">
+    <thead><tr style="border-bottom:1px solid var(--border);color:var(--muted)">
+      <th style="text-align:left;padding:6px 12px;font-weight:500">Strategy</th>
+      <th style="text-align:left;padding:6px 8px;font-weight:500">Regime</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">A WR</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">B WR</th>
+      <th style="text-align:right;padding:6px 12px;font-weight:500">Delta</th>
+    </tr></thead>
+    <tbody>
+    ${rows.map(row => `<tr style="border-bottom:1px solid rgba(31,35,48,0.4)">
+      <td style="padding:6px 12px;color:var(--text)">${row.strategy}</td>
+      <td style="padding:6px 8px;color:var(--muted)">${row.regime}</td>
+      <td style="padding:6px 8px;text-align:right;color:#F0A500">${pct(row.wr_a)}</td>
+      <td style="padding:6px 8px;text-align:right;color:#22C55E;opacity:.8">${pct(row.wr_b)}</td>
+      <td style="padding:6px 12px;text-align:right" class="${deltaClass(row.delta)}">${deltaStr(row.delta)}</td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+
+  const configEl = document.getElementById('bt-config-diff-label');
+  const changes = Object.entries(configChanges).filter(([,v]) => v.a !== v.b);
+  if (changes.length) {
+    configEl.textContent = changes.map(([k, {a, b}]) => `${k}: ${a} → ${b}`).join(' · ');
+    configEl.style.color = 'var(--accent)';
+  } else {
+    configEl.textContent = 'config identical';
+    configEl.style.color = '';
+  }
+}
+
+function btPollStatus() {
+  if (_btPollInterval) return;
+  _btPollInterval = setInterval(async () => {
+    try {
+      const res = await fetch('/api/backtest/status');
+      const s = await res.json();
+      const wrap = document.getElementById('bt-progress-wrap');
+      const fill = document.getElementById('bt-progress-fill');
+      const label = document.getElementById('bt-progress-label');
+      const btn = document.getElementById('bt-run-btn');
+      wrap.style.display = 'block';
+      fill.style.width = (s.progress_pct || 0) + '%';
+      label.textContent = s.msg || (s.running ? 'Running…' : 'Done');
+      if (btn) btn.disabled = s.running;
+      if (!s.running) {
+        clearInterval(_btPollInterval);
+        _btPollInterval = null;
+        wrap.style.display = 'none';
+        if (btn) btn.disabled = false;
+        await refreshBacktest();
+      }
+    } catch (e) { clearInterval(_btPollInterval); _btPollInterval = null; }
+  }, 2000);
+}
+
+async function btStartRun() {
+  const since = document.getElementById('bt-since-input').value;
+  if (!since) { alert('Please select a start date.'); return; }
+  document.getElementById('bt-run-btn').disabled = true;
+  try {
+    const res = await fetch('/api/backtest/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({since}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert(err.error || 'Failed to start backtest');
+      document.getElementById('bt-run-btn').disabled = false;
+      return;
+    }
+    document.getElementById('bt-run-form').style.display = 'none';
+    btPollStatus();
+  } catch (e) {
+    document.getElementById('bt-run-btn').disabled = false;
+    console.error('btStartRun error', e);
+  }
+}
+
+async function refreshBacktest() {
+  try {
+    const res = await fetch('/api/backtest/runs');
+    _btRuns = await res.json();
+    document.getElementById('bt-stat-runs').textContent = _btRuns.length;
+    if (!_btSelectedRun && _btRuns.length) _btSelectedRun = _btRuns[0].id;
+    if (!_btRunA && _btRuns.length) _btRunA = _btRuns[0].id;
+    if (!_btRunB && _btRuns.length > 1) _btRunB = _btRuns[1].id;
+
+    const sinceInput = document.getElementById('bt-since-input');
+    if (!sinceInput.value) {
+      const d = new Date(); d.setMonth(d.getMonth() - 6);
+      sinceInput.value = d.toISOString().slice(0,10);
+    }
+
+    if (_btABMode) {
+      btRenderRunSelector('bt-run-selector-a', _btRunA, 'btSelectA');
+      btRenderRunSelector('bt-run-selector-b', _btRunB, 'btSelectB');
+      btLoadDiff();
+    } else {
+      btRenderRunSelector('bt-run-selector', _btSelectedRun, 'btSelectRun');
+      btLoadRun(_btSelectedRun);
+    }
+
+    const statusRes = await fetch('/api/backtest/status');
+    const status = await statusRes.json();
+    if (status.running && !_btPollInterval) btPollStatus();
+  } catch (e) { console.error('refreshBacktest error', e); }
 }
 </script>
 </body>
