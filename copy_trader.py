@@ -466,11 +466,11 @@ def main() -> None:
 
     scheduler = BlockingScheduler(timezone="UTC")
 
-    # Staggered to :07 to avoid DB write contention with signal_engine (:00) and paper_trader (:01)
+    poll_interval = int(c.get("poll_interval_minutes", 2))
     scheduler.add_job(
         poll_positions_job,
-        "cron",
-        minute="7,22,37,52",
+        "interval",
+        minutes=poll_interval,
         next_run_time=datetime.now(timezone.utc),
     )
 
