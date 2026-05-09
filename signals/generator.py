@@ -87,9 +87,11 @@ def ema_9_21_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
     close = df["close"].iloc[-1]
 
     if prev_fast <= prev_slow and curr_fast > curr_slow and close > curr_fast:
-        return _signal(pair, "long", "ema_9_21_crossover", regime, df, timeframe)
+        if regime.label != "trending-down":  # no counter-trend longs in a downtrend
+            return _signal(pair, "long", "ema_9_21_crossover", regime, df, timeframe)
     if prev_fast >= prev_slow and curr_fast < curr_slow and close < curr_fast:
-        return _signal(pair, "short", "ema_9_21_crossover", regime, df, timeframe)
+        if regime.label != "trending-up":  # no counter-trend shorts in an uptrend
+            return _signal(pair, "short", "ema_9_21_crossover", regime, df, timeframe)
     return None
 
 

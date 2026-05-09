@@ -53,8 +53,8 @@ signals:
   rsi_period: 14
   rsi_divergence_lookback: 10    # candles to look back for divergence
   rsi_oversold: 45               # RSI must be below this for bullish rsi_divergence
-  rsi_overbought: 55             # RSI must be above this for bearish rsi_divergence
-  rsi_divergence_min_diff: 3     # minimum RSI point gap between current and prior extreme
+  rsi_overbought: 62             # RSI must be above this for bearish rsi_divergence (raised from 55 — choppy SHORT WR was 14%)
+  rsi_divergence_min_diff: 5     # minimum RSI point gap between current and prior extreme (raised from 3 — stronger divergence required)
   ema_signal_fast: 9             # ema_9_21_crossover fast period
   ema_signal_slow: 21            # ema_9_21_crossover slow period
   rsi_extreme_oversold: 35       # rsi_extreme long trigger: RSI exits below this

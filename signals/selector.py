@@ -1,6 +1,6 @@
 REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "trending-up": {
-        "ema_9_21_crossover": "FIRE",
+        "ema_9_21_crossover": "FIRE",  # LONG only — generator blocks counter-trend SHORTs via regime gate
         "macd_crossover":     "SKIP",  # n=28, net_r=-3.53R, lagging indicator — entries too late into move
         "rsi_divergence":     "SKIP",
         "rsi_extreme":        "SKIP",
@@ -10,7 +10,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "volume_spike":       "FIRE",  # institutional participation on trend continuation
     },
     "trending-down": {
-        "ema_9_21_crossover": "FIRE",
+        "ema_9_21_crossover": "FIRE",  # SHORT only — generator blocks counter-trend LONGs via regime gate
         "macd_crossover":     "SKIP",  # crossovers in downtrends produce more whipsaw than uptrends
         "rsi_divergence":     "SKIP",
         "rsi_extreme":        "SKIP",
