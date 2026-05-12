@@ -26,7 +26,7 @@ from loguru import logger
 from utils.config import env, get as cfg
 from utils.ccxt_wrapper import _make_exchange, fetch_ohlcv_safe
 from db.schema import init_db, get_conn, log_signal, update_outcome
-from regime.classifier import classify, _to_df
+from regime.classifier import classify, classify_series, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy
 
@@ -130,12 +130,13 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
         logger.warning(f"{pair}: only {len(candles)} candles, need {limit + outcome_window_h}+")
         return stats
 
-    for i in range(start_idx, end_idx):
-        window = candles[i - limit: i]
+    # Precompute full DataFrame + all regime classifications once (O(n) vs O(n²))
+    full_df = _to_df(candles)
+    regimes = classify_series(full_df)
 
-        try:
-            regime = classify(window)
-        except ValueError:
+    for i in range(start_idx, end_idx):
+        regime = regimes[i]
+        if regime is None:
             continue
 
         if not regime.stable:
@@ -146,7 +147,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
         if not strategies:
             continue
 
-        df = _to_df(window)
+        df = full_df.iloc[i - limit: i]
 
         for strategy in strategies:
             signal = run_strategy(strategy, pair, df, regime, timeframe)
