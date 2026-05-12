@@ -310,6 +310,24 @@ body{
 .bt-diff-delta-pos{color:#22C55E}
 .bt-diff-delta-neg{color:#EF4444}
 .bt-diff-delta-neu{color:var(--muted)}
+.bt-detail-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.bt-detail-tbl th{font-family:var(--font-ui);font-size:10px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:7px 12px;border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+.bt-detail-tbl th.r{text-align:right}
+.bt-detail-tbl td{padding:6px 12px;border-bottom:1px solid rgba(31,35,48,0.5);vertical-align:middle;font-family:var(--font-mono)}
+.bt-detail-tbl td.l{font-family:var(--font-ui)}
+.bt-detail-tbl tbody tr:hover td{background:rgba(26,29,38,0.5)}
+.bt-detail-tbl tbody tr:last-child td{border-bottom:none}
+.bt-netr-bar{display:inline-block;height:6px;border-radius:1px;vertical-align:middle;margin-left:6px}
+.bt-filter-sel{font-family:var(--font-ui);font-size:11px;padding:3px 6px;border-radius:2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+.bt-pg-btn{font-family:var(--font-mono);font-size:12px;padding:2px 8px;border-radius:2px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+.bt-pg-btn:disabled{opacity:.35;cursor:not-allowed}
+.bt-dir-badge{font-family:var(--font-ui);font-size:10px;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:2px}
+.bt-dir-badge.long{color:#22C55E;background:rgba(34,197,94,.1)}
+.bt-dir-badge.short{color:#EF4444;background:rgba(239,68,68,.1)}
+.bt-outcome-badge{font-family:var(--font-ui);font-size:10px;font-weight:600;letter-spacing:.03em;padding:1px 5px;border-radius:2px}
+.bt-outcome-badge.win,.bt-outcome-badge.tp_hit{color:#22C55E;background:rgba(34,197,94,.1)}
+.bt-outcome-badge.loss,.bt-outcome-badge.stopped_out{color:#EF4444;background:rgba(239,68,68,.1)}
+.bt-outcome-badge.null{color:var(--muted);background:rgba(100,100,100,.1)}
 /* ── Polymarket tab ── */
 .poly-feed-row{display:flex;align-items:flex-start;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(31,35,48,0.6)}
 .poly-feed-row:last-child{border-bottom:none}
@@ -758,6 +776,65 @@ body{
       </div>
     </div>
 
+  </div>
+
+  <!-- Per-Pair P&L + Long/Short direction split -->
+  <div class="panels-grid" id="bt-detail-panels" style="margin-top:12px;display:none">
+
+    <!-- Per-Pair P&L -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Per-Pair P&amp;L</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="bt-pair-sub">—</span>
+      </div>
+      <div id="bt-pair-body" style="padding:0;overflow-x:auto">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run.</span>
+      </div>
+    </div>
+
+    <!-- Long vs Short direction split -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Long vs Short Split</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="bt-dir-sub">by strategy × regime</span>
+      </div>
+      <div id="bt-dir-body" style="padding:0;overflow-x:auto">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run.</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Trade Log -->
+  <div class="panel" id="bt-tradelog-panel" style="margin-top:12px;display:none">
+    <div class="panel-hdr" style="flex-wrap:wrap;gap:8px">
+      <span class="panel-title">Trade Log</span>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto">
+        <select class="bt-filter-sel" id="bt-tl-outcome" onchange="btTradeLogFilter()">
+          <option value="">All outcomes</option>
+          <option value="win">Wins only</option>
+          <option value="loss">Losses only</option>
+        </select>
+        <select class="bt-filter-sel" id="bt-tl-pair" onchange="btTradeLogFilter()">
+          <option value="">All pairs</option>
+        </select>
+        <select class="bt-filter-sel" id="bt-tl-strategy" onchange="btTradeLogFilter()">
+          <option value="">All strategies</option>
+        </select>
+        <select class="bt-filter-sel" id="bt-tl-direction" onchange="btTradeLogFilter()">
+          <option value="">Both directions</option>
+          <option value="long">Long</option>
+          <option value="short">Short</option>
+        </select>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="bt-tl-count">—</span>
+      </div>
+    </div>
+    <div id="bt-tradelog-body" style="padding:0;overflow-x:auto"></div>
+    <div id="bt-tl-pagination" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 14px;border-top:1px solid var(--border)">
+      <button class="bt-pg-btn" id="bt-tl-prev" onclick="btTLPage(-1)" disabled>←</button>
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted)" id="bt-tl-page-label">1 / 1</span>
+      <button class="bt-pg-btn" id="bt-tl-next" onclick="btTLPage(1)">→</button>
+    </div>
   </div>
 
   <!-- A/B diff table (shown only in compare mode) -->
@@ -1836,6 +1913,10 @@ let _btRuns = [];
 let _btSelectedRun = null;
 let _btRunA = null;
 let _btRunB = null;
+// trade log state
+let _btTLPage = 1;
+let _btTLPages = 1;
+let _btTLRunId = null;
 let _btABMode = false;
 let _btPollInterval = null;
 
@@ -1913,32 +1994,214 @@ async function btLoadRun(runId) {
   btUpdateStats(run);
   const body = document.getElementById('bt-equity-body');
   const bdBody = document.getElementById('bt-breakdown-body');
+  const detailPanels = document.getElementById('bt-detail-panels');
+  const tradelogPanel = document.getElementById('bt-tradelog-panel');
+
   if (!run) {
     body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run to view its equity curve.</span>';
     bdBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run above.</span>';
+    detailPanels.style.display = 'none';
+    tradelogPanel.style.display = 'none';
     return;
   }
   if (run.status === 'running') {
     body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--accent);padding:14px 16px;display:block">● Run in progress — equity curve will appear when complete.</span>';
     bdBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Waiting for run to finish…</span>';
+    detailPanels.style.display = 'none';
+    tradelogPanel.style.display = 'none';
     return;
   }
   if (run.status === 'failed') {
     const msg = run.progress_msg || 'unknown error';
     body.innerHTML = `<span style="font-family:var(--font-mono);font-size:11px;color:var(--short);padding:14px 16px;display:block">✕ Run failed: ${msg}</span>`;
     bdBody.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No data — run did not complete.</span>';
+    detailPanels.style.display = 'none';
+    tradelogPanel.style.display = 'none';
     return;
   }
   try {
-    const [eqRes, bdRes] = await Promise.all([
+    const [eqRes, bdRes, pairRes, dirRes] = await Promise.all([
       fetch('/api/backtest/equity?run_id=' + runId),
       fetch('/api/backtest/breakdown?run_id=' + runId),
+      fetch('/api/backtest/by-pair?run_id=' + runId),
+      fetch('/api/backtest/by-direction?run_id=' + runId),
     ]);
     const equity = await eqRes.json();
     const breakdown = await bdRes.json();
+    const byPair = await pairRes.json();
+    const byDir = await dirRes.json();
     btRenderEquitySVG(equity, '#F0A500');
     btRenderBreakdownTable(breakdown, run);
+    btRenderPairTable(byPair, run);
+    btRenderDirectionTable(byDir, run);
+    detailPanels.style.display = '';
+    tradelogPanel.style.display = '';
+    // populate filter dropdowns from data
+    btPopulateTradeLogFilters(byPair, breakdown);
+    // reset and load trade log page 1
+    _btTLPage = 1;
+    _btTLRunId = runId;
+    btLoadTradeLog();
   } catch (e) { console.error('btLoadRun error', e); }
+}
+
+function btRenderPairTable(data, run) {
+  const sub = document.getElementById('bt-pair-sub');
+  sub.textContent = `${data.length} pairs · run #${run.id}`;
+  const maxAbsR = Math.max(...data.map(r => Math.abs(r.net_r)), 0.01);
+  const rows = data.map(r => {
+    const wr = r.win_rate != null ? (r.win_rate * 100).toFixed(1) + '%' : '—';
+    const netRFmt = (r.net_r >= 0 ? '+' : '') + r.net_r.toFixed(2) + 'R';
+    const color = r.net_r >= 0 ? '#22C55E' : '#EF4444';
+    const barW = Math.round((Math.abs(r.net_r) / maxAbsR) * 60);
+    const bar = `<span class="bt-netr-bar" style="width:${barW}px;background:${color};opacity:.7"></span>`;
+    return `<tr>
+      <td class="l">${r.pair.replace('/USDT:USDT','').replace('/USDC:USDC','')}</td>
+      <td style="text-align:right">${r.fired}</td>
+      <td style="text-align:right">${wr}</td>
+      <td style="text-align:right;color:${color}">${netRFmt}${bar}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('bt-pair-body').innerHTML = `
+    <table class="bt-detail-tbl">
+      <thead><tr>
+        <th>Pair</th><th class="r">Signals</th><th class="r">WR</th><th class="r">Net R</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function btRenderDirectionTable(data, run) {
+  document.getElementById('bt-dir-sub').textContent = `strategy × regime × direction · run #${run.id}`;
+  // group by strategy+regime, show long vs short side by side
+  const combos = {};
+  data.forEach(r => {
+    const key = r.strategy + '|' + r.regime;
+    if (!combos[key]) combos[key] = { strategy: r.strategy, regime: r.regime, long: null, short: null };
+    combos[key][r.direction] = r;
+  });
+  const sorted = Object.values(combos).sort((a, b) => {
+    const aNet = (a.long?.net_r || 0) + (a.short?.net_r || 0);
+    const bNet = (b.long?.net_r || 0) + (b.short?.net_r || 0);
+    return aNet - bNet;
+  });
+  const rows = sorted.map(c => {
+    const fmtSide = (s) => {
+      if (!s) return '<td>—</td><td>—</td><td>—</td>';
+      const wr = s.win_rate != null ? (s.win_rate * 100).toFixed(1) + '%' : '—';
+      const col = s.net_r >= 0 ? '#22C55E' : '#EF4444';
+      return `<td style="text-align:right">${s.fired}</td><td style="text-align:right">${wr}</td><td style="text-align:right;color:${col}">${(s.net_r >= 0 ? '+' : '') + s.net_r.toFixed(2)}R</td>`;
+    };
+    const regimeBadge = `<span style="font-family:var(--font-ui);font-size:10px;color:var(--muted)">${c.regime}</span>`;
+    return `<tr>
+      <td class="l" style="font-size:11px">${c.strategy}</td>
+      <td class="l">${regimeBadge}</td>
+      ${fmtSide(c.long)}
+      ${fmtSide(c.short)}
+    </tr>`;
+  }).join('');
+  document.getElementById('bt-dir-body').innerHTML = `
+    <table class="bt-detail-tbl">
+      <thead><tr>
+        <th>Strategy</th><th>Regime</th>
+        <th class="r" colspan="3" style="color:#22C55E;border-left:1px solid var(--border)">Long</th>
+        <th class="r" colspan="3" style="color:#EF4444;border-left:1px solid var(--border)">Short</th>
+      </tr>
+      <tr>
+        <th></th><th></th>
+        <th class="r">n</th><th class="r">WR</th><th class="r">Net R</th>
+        <th class="r">n</th><th class="r">WR</th><th class="r">Net R</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function btPopulateTradeLogFilters(byPair, breakdown) {
+  const pairSel = document.getElementById('bt-tl-pair');
+  const strSel = document.getElementById('bt-tl-strategy');
+  // keep first (blank) option, rebuild rest
+  const pairs = [...new Set(byPair.map(r => r.pair))].sort();
+  pairSel.innerHTML = '<option value="">All pairs</option>' +
+    pairs.map(p => `<option value="${p}">${p.replace('/USDT:USDT','').replace('/USDC:USDC','')}</option>`).join('');
+  const strats = [...new Set(breakdown.map(r => r.strategy))].sort();
+  strSel.innerHTML = '<option value="">All strategies</option>' +
+    strats.map(s => `<option value="${s}">${s}</option>`).join('');
+  // reset filters
+  document.getElementById('bt-tl-outcome').value = '';
+  document.getElementById('bt-tl-direction').value = '';
+}
+
+async function btLoadTradeLog() {
+  if (!_btTLRunId) return;
+  const outcome = document.getElementById('bt-tl-outcome').value;
+  const pair = document.getElementById('bt-tl-pair').value;
+  const strategy = document.getElementById('bt-tl-strategy').value;
+  const direction = document.getElementById('bt-tl-direction').value;
+  const url = `/api/backtest/signals?run_id=${_btTLRunId}&page=${_btTLPage}&per_page=50` +
+    (outcome ? `&outcome=${outcome}` : '') +
+    (pair ? `&pair=${encodeURIComponent(pair)}` : '') +
+    (strategy ? `&strategy=${encodeURIComponent(strategy)}` : '') +
+    (direction ? `&direction=${direction}` : '');
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    _btTLPages = data.pages;
+    document.getElementById('bt-tl-count').textContent = `${data.total.toLocaleString()} signals`;
+    document.getElementById('bt-tl-page-label').textContent = `${data.page} / ${data.pages}`;
+    document.getElementById('bt-tl-prev').disabled = data.page <= 1;
+    document.getElementById('bt-tl-next').disabled = data.page >= data.pages;
+    btRenderTradeLog(data.signals);
+  } catch (e) { console.error('btLoadTradeLog error', e); }
+}
+
+function btRenderTradeLog(signals) {
+  if (!signals.length) {
+    document.getElementById('bt-tradelog-body').innerHTML =
+      '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No signals match the current filters.</span>';
+    return;
+  }
+  const rows = signals.map(s => {
+    const date = s.fired_at ? s.fired_at.slice(0,10) : '—';
+    const time = s.fired_at ? s.fired_at.slice(11,16) : '';
+    const dirBadge = `<span class="bt-dir-badge ${s.direction}">${s.direction.toUpperCase()}</span>`;
+    const oc = s.outcome || 'null';
+    const ocLabel = oc === 'tp_hit' ? 'TP HIT' : oc === 'stopped_out' ? 'STOP' : (oc || '—').toUpperCase();
+    const ocBadge = s.outcome
+      ? `<span class="bt-outcome-badge ${oc}">${ocLabel}</span>`
+      : `<span style="font-family:var(--font-ui);font-size:10px;color:var(--muted)">—</span>`;
+    const pnlCol = s.pnl_r == null ? 'var(--muted)' : s.pnl_r >= 0 ? '#22C55E' : '#EF4444';
+    const pnlFmt = s.pnl_r != null ? (s.pnl_r >= 0 ? '+' : '') + s.pnl_r.toFixed(2) + 'R' : '—';
+    const qs = s.quality_score != null ? s.quality_score.toFixed(0) : '—';
+    return `<tr>
+      <td style="color:var(--muted);white-space:nowrap">${date}<span style="color:rgba(160,160,180,.5);margin-left:4px">${time}</span></td>
+      <td class="l" style="white-space:nowrap">${s.pair.replace('/USDT:USDT','').replace('/USDC:USDC','')}</td>
+      <td>${dirBadge}</td>
+      <td class="l" style="font-size:11px">${s.strategy}</td>
+      <td class="l" style="font-size:11px;color:var(--muted)">${s.regime}</td>
+      <td>${s.entry_price != null ? s.entry_price.toPrecision(6) : '—'}</td>
+      <td>${ocBadge}</td>
+      <td style="color:${pnlCol};font-weight:${s.pnl_r != null ? '600' : '400'}">${pnlFmt}</td>
+      <td style="color:var(--muted)">${qs}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('bt-tradelog-body').innerHTML = `
+    <table class="bt-detail-tbl" style="min-width:700px">
+      <thead><tr>
+        <th>Date</th><th>Pair</th><th>Dir</th><th>Strategy</th><th>Regime</th>
+        <th class="r">Entry</th><th>Outcome</th><th class="r">P&amp;L</th><th class="r">QS</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function btTradeLogFilter() {
+  _btTLPage = 1;
+  btLoadTradeLog();
+}
+
+function btTLPage(delta) {
+  _btTLPage = Math.max(1, Math.min(_btTLPages, _btTLPage + delta));
+  btLoadTradeLog();
 }
 
 async function btLoadDiff() {
