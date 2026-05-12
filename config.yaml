@@ -71,12 +71,12 @@ signals:
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
 
 signal_quality:
-  min_quality_score: 55          # suppress signals below this (0-100 composite)
+  min_quality_score: 45          # suppress signals below this (0-100 composite)
   quality_weights:
     regime_confidence: 0.30
     rolling_30d_wr: 0.40
     stop_quality: 0.30
-  bootstrap_wr: 0.35             # WR assumed when <20 live signals exist for a combo (conservative)
+  bootstrap_wr: 0.45             # WR assumed when <20 live signals exist for a combo (matches observed 43% live WR)
 
 strategy_health:
   auto_disable_window_days: 30   # rolling window for WR calculation
