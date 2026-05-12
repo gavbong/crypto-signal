@@ -4,7 +4,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "macd_crossover":     "SKIP",  # n=28, net_r=-3.53R, lagging indicator — entries too late into move
         "rsi_divergence":     "SKIP",
         "rsi_extreme":        "SKIP",
-        "vol_breakout":       "FIRE",  # consolidation-then-breakout continuation
+        "vol_breakout":       "SKIP",  # backtest: -23.05R, 27% WR — lagging entry after breakout already done
         "supply_demand":      "SKIP",  # S/D zones require faster reaction than 15-min polling allows
         "liquidity_grab":     "SKIP",
         "volume_spike":       "FIRE",  # institutional participation on trend continuation
@@ -17,27 +17,40 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "vol_breakout":       "FIRE",  # consolidation-then-breakdown continuation
         "supply_demand":      "SKIP",  # S/D zones require faster reaction than 15-min polling allows
         "liquidity_grab":     "SKIP",
-        "volume_spike":       "FIRE",  # institutional selling pressure on trend continuation
+        "volume_spike":       "SKIP",  # backtest: -17.45R, 32% WR — trend exhaustion, not participation
     },
     "choppy": {
         "ema_9_21_crossover": "SKIP",
         "macd_crossover":     "SKIP",  # lagging crossover whipsaws in sideways markets
-        "rsi_divergence":     "FIRE",
+        "rsi_divergence":     "FIRE",  # short only (long: -13.52R; short: +10.45R) — see DIRECTION_BLOCK
         "rsi_extreme":        "SKIP",  # WR 37.5% < BE 40%, net_r=-5.28R — false reversals in ranging markets
         "vol_breakout":       "SKIP",
         "supply_demand":      "FIRE",  # 1H zones + approach detection — replaces old zone-entry logic
-        "liquidity_grab":     "FIRE",
+        "liquidity_grab":     "FIRE",  # short only (long: -25.01R; short: +6.35R) — see DIRECTION_BLOCK
         "volume_spike":       "SKIP",  # spikes in choppy = noise, no trend to ride
     },
     "high-volatility": {
         "ema_9_21_crossover": "SKIP",
         "macd_crossover":     "SKIP",
         "rsi_divergence":     "SKIP",
-        "rsi_extreme":        "FIRE",
+        "rsi_extreme":        "FIRE",  # long only (short: -9.31R) — see DIRECTION_BLOCK
         "vol_breakout":       "FIRE",
         "supply_demand":      "SKIP",  # removed entirely — 17% WR across all regimes
         "liquidity_grab":     "FIRE",
         "volume_spike":       "SKIP",  # high-vol already captures spike energy via vol_breakout
+    },
+}
+
+# Per-direction blocks applied AFTER REGIME_STRATEGY_MAP says FIRE.
+# Format: {regime: {strategy: set_of_blocked_directions}}
+# Backtest evidence: see 2026-05-12-signal-quality-overhaul.md
+DIRECTION_BLOCK: dict[str, dict[str, set]] = {
+    "choppy": {
+        "liquidity_grab": {"long"},   # long: -25.01R | short: +6.35R
+        "rsi_divergence": {"long"},   # long: -13.52R | short: +10.45R
+    },
+    "high-volatility": {
+        "rsi_extreme": {"short"},     # long: positive | short: -9.31R
     },
 }
 
@@ -51,3 +64,9 @@ def active_strategies(regime: str) -> list[str]:
 def action_for(regime: str, strategy: str) -> str:
     """Return FIRE | SKIP for a specific regime+strategy pair."""
     return REGIME_STRATEGY_MAP.get(regime, {}).get(strategy, "SKIP")
+
+
+def is_direction_allowed(regime: str, strategy: str, direction: str) -> bool:
+    """Return False if this direction is blocked for this regime+strategy combo."""
+    blocked = DIRECTION_BLOCK.get(regime, {}).get(strategy, set())
+    return direction not in blocked

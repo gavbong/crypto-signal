@@ -61,14 +61,14 @@ def create_app() -> Flask:
         shadow = _shadow_param(request.args.get("filter", "live"))
         exchange_filter = request.args.get("exchange")
         with get_conn() as conn:
-            where_parts, params = [], []
+            where_parts, params = ["backtest_run_id IS NULL"], []
             if shadow is not None:
                 where_parts.append("shadow_mode=?")
                 params.append(shadow)
             if exchange_filter:
                 where_parts.append("exchange=?")
                 params.append(exchange_filter)
-            where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+            where = "WHERE " + " AND ".join(where_parts)
             rows = conn.execute(
                 f"""SELECT id, pair, direction, strategy, regime, entry_price,
                           suggested_stop_loss, suggested_take_profit,
@@ -111,14 +111,14 @@ def create_app() -> Flask:
         shadow = _shadow_param(request.args.get("filter", "live"))
         since = request.args.get("since")
 
-        where_parts, params = [], []
+        where_parts, params = ["backtest_run_id IS NULL"], []
         if shadow is not None:
             where_parts.append("shadow_mode=?")
             params.append(shadow)
         if since:
             where_parts.append("DATE(fired_at)>=?")
             params.append(since)
-        where = ("WHERE " + " AND ".join(where_parts)) if where_parts else ""
+        where = "WHERE " + " AND ".join(where_parts)
 
         with get_conn() as conn:
             agg = conn.execute(
@@ -213,6 +213,71 @@ def create_app() -> Flask:
                 for r in rows
             ]
         })
+
+    # ── Strategy Health API ───────────────────────────────────────────────────
+
+    @app.route("/api/strategy-health")
+    def api_strategy_health():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT strategy, regime, direction, asset_class,
+                          signal_count, win_count, win_rate, net_r,
+                          status, disabled_at, window_start, window_end
+                   FROM strategy_health
+                   ORDER BY status DESC, net_r ASC"""
+            ).fetchall()
+        return jsonify([
+            {
+                "strategy": r["strategy"],
+                "regime": r["regime"],
+                "direction": r["direction"],
+                "asset_class": r["asset_class"],
+                "signal_count": r["signal_count"],
+                "win_count": r["win_count"],
+                "win_rate": r["win_rate"],
+                "net_r": r["net_r"],
+                "status": r["status"],
+                "disabled_at": r["disabled_at"],
+                "window_start": r["window_start"],
+                "window_end": r["window_end"],
+            }
+            for r in rows
+        ])
+
+    @app.route("/api/strategy-health/toggle", methods=["POST"])
+    def api_strategy_health_toggle():
+        _auth()
+        data = request.get_json(force=True)
+        strategy = data.get("strategy")
+        regime = data.get("regime")
+        direction = data.get("direction")
+        asset_class = data.get("asset_class", "crypto")
+        enabled = data.get("enabled", True)
+        new_status = "HEALTHY" if enabled else "DISABLED"
+        with get_conn() as conn:
+            conn.execute(
+                """UPDATE strategy_health SET status=?, disabled_at=?
+                   WHERE strategy=? AND regime=? AND direction=? AND asset_class=?""",
+                (new_status,
+                 None if enabled else __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                 strategy, regime, direction, asset_class),
+            )
+            conn.commit()
+        return jsonify({"ok": True, "status": new_status})
+
+    @app.route("/api/engine/pause", methods=["POST"])
+    def api_engine_pause():
+        _auth()
+        data = request.get_json(force=True)
+        paused = data.get("paused", True)
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('paused', ?)",
+                ("1" if paused else "0",),
+            )
+            conn.commit()
+        return jsonify({"ok": True, "paused": paused})
 
     # ── Paper Trading API ─────────────────────────────────────────────────────
     _PAPER_INITIAL = 1_000.0
