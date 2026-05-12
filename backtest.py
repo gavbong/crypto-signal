@@ -310,11 +310,15 @@ def main() -> None:
     exchange = _make_exchange(env("MEXC_API_KEY"), env("MEXC_SECRET"))
 
     mode = "DRY RUN" if args.dry_run else "WRITE"
-    logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={c['pairs']} | run_id={run_id}")
+
+    pairs = c.get("pairs") or c.get("exchanges", {}).get("mexc", {}).get("pairs", [])
+    if not pairs:
+        raise RuntimeError("No pairs configured — check config.yaml exchanges.mexc.pairs")
+
+    logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={pairs} | run_id={run_id}")
 
     totals = {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
     regime_breakdown: dict[str, dict] = {}
-    pairs = c["pairs"]
 
     for idx, pair in enumerate(pairs):
         logger.info(f"Fetching history for {pair} ...")
