@@ -1005,6 +1005,137 @@ def create_app() -> Flask:
                          if snap_a.get(k) != snap_b.get(k) and k != "regime_strategy_map"}
         return jsonify({"diff": diff, "config_changes": config_changes})
 
+    @app.route("/api/backtest/by-pair")
+    def api_backtest_by_pair():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        if run_id is None:
+            return jsonify({"error": "run_id required"}), 400
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT pair,
+                          COUNT(*) as fired,
+                          SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
+                          SUM(CASE WHEN outcome IN ('win','tp_hit','loss','stopped_out') THEN 1 ELSE 0 END) as resolved,
+                          SUM(pnl_r) as net_r
+                   FROM signals WHERE backtest_run_id=?
+                   GROUP BY pair ORDER BY net_r ASC""",
+                (run_id,),
+            ).fetchall()
+        result = []
+        for r in rows:
+            resolved = r["resolved"] or 0
+            win = r["win"] or 0
+            result.append({
+                "pair": r["pair"],
+                "fired": r["fired"],
+                "win": win,
+                "resolved": resolved,
+                "win_rate": round(win / resolved, 3) if resolved > 0 else None,
+                "net_r": round(r["net_r"] or 0, 2),
+            })
+        return jsonify(result)
+
+    @app.route("/api/backtest/by-direction")
+    def api_backtest_by_direction():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        if run_id is None:
+            return jsonify({"error": "run_id required"}), 400
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT strategy, regime, direction,
+                          COUNT(*) as fired,
+                          SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
+                          SUM(CASE WHEN outcome IN ('win','tp_hit','loss','stopped_out') THEN 1 ELSE 0 END) as resolved,
+                          SUM(pnl_r) as net_r
+                   FROM signals WHERE backtest_run_id=?
+                   GROUP BY strategy, regime, direction ORDER BY net_r ASC""",
+                (run_id,),
+            ).fetchall()
+        result = []
+        for r in rows:
+            resolved = r["resolved"] or 0
+            win = r["win"] or 0
+            result.append({
+                "strategy": r["strategy"], "regime": r["regime"], "direction": r["direction"],
+                "fired": r["fired"], "win": win, "resolved": resolved,
+                "win_rate": round(win / resolved, 3) if resolved > 0 else None,
+                "net_r": round(r["net_r"] or 0, 2),
+            })
+        return jsonify(result)
+
+    @app.route("/api/backtest/signals")
+    def api_backtest_signals():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        if run_id is None:
+            return jsonify({"error": "run_id required"}), 400
+        page = max(1, request.args.get("page", 1, type=int))
+        per_page = min(100, max(10, request.args.get("per_page", 50, type=int)))
+        outcome_f = request.args.get("outcome", "")
+        pair_f = request.args.get("pair", "")
+        strategy_f = request.args.get("strategy", "")
+        direction_f = request.args.get("direction", "")
+
+        where_parts = ["backtest_run_id=?"]
+        params = [run_id]
+        if outcome_f == "win":
+            where_parts.append("outcome IN ('win','tp_hit')")
+        elif outcome_f == "loss":
+            where_parts.append("outcome IN ('loss','stopped_out')")
+        if pair_f:
+            where_parts.append("pair=?")
+            params.append(pair_f)
+        if strategy_f:
+            where_parts.append("strategy=?")
+            params.append(strategy_f)
+        if direction_f:
+            where_parts.append("direction=?")
+            params.append(direction_f)
+
+        where = "WHERE " + " AND ".join(where_parts)
+        offset = (page - 1) * per_page
+
+        with get_conn() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM signals {where}", params
+            ).fetchone()[0]
+            rows = conn.execute(
+                f"""SELECT id, pair, direction, strategy, regime, regime_confidence,
+                           entry_price, suggested_stop_loss, suggested_take_profit,
+                           fired_at, outcome, pnl_r, quality_score
+                    FROM signals {where}
+                    ORDER BY fired_at ASC
+                    LIMIT ? OFFSET ?""",
+                params + [per_page, offset],
+            ).fetchall()
+
+        return jsonify({
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "pages": max(1, (total + per_page - 1) // per_page),
+            "signals": [
+                {
+                    "id": r["id"],
+                    "pair": r["pair"],
+                    "direction": r["direction"],
+                    "strategy": r["strategy"],
+                    "regime": r["regime"],
+                    "regime_confidence": r["regime_confidence"],
+                    "entry_price": r["entry_price"],
+                    "suggested_stop_loss": r["suggested_stop_loss"],
+                    "suggested_take_profit": r["suggested_take_profit"],
+                    "fired_at": _normalize_ts(r["fired_at"]),
+                    "outcome": r["outcome"],
+                    "pnl_r": round(r["pnl_r"], 3) if r["pnl_r"] is not None else None,
+                    "quality_score": r["quality_score"],
+                }
+                for r in rows
+            ],
+        })
+
     @app.route("/api/backtest/status")
     def api_backtest_status():
         _auth()
