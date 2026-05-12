@@ -100,6 +100,104 @@ def classify_single(df: pd.DataFrame) -> tuple[str, float]:
     return "choppy", round(confidence, 3)
 
 
+def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
+    """
+    Vectorized regime classification across a full candle DataFrame.
+    Computes all indicators once — O(n) instead of O(n²) per-window recalc.
+    Returns one RegimeResult (or None if not enough history) per candle.
+    Used by backtest to avoid re-running indicator math on every sliding window.
+    """
+    c = cfg()["regime"]
+    adx_period = c["adx_period"]
+    slope_thresh = c["ema_slope_threshold"]
+    adx_thresh = c["adx_trend_threshold"]
+    hv_mult = c["high_vol_bb_multiplier"]
+    stability_n = c["stability_candles"]
+    stability_min = c["stability_min_match"]
+    min_idx = c["ema_slow"] + 5
+
+    adx_df = ta.adx(full_df["high"], full_df["low"], full_df["close"], length=adx_period)
+    ema_fast_s = ta.ema(full_df["close"], length=c["ema_fast"])
+    ema_slow_s = ta.ema(full_df["close"], length=c["ema_slow"])
+    bb = ta.bbands(full_df["close"], length=c["bb_period"], std=c["bb_std"])
+    adx_col = f"ADX_{adx_period}"
+    bb_width_col = next(col for col in bb.columns if col.startswith("BBB_"))
+    bb_width_s = bb[bb_width_col]
+    bb_width_avg_s = bb_width_s.rolling(20).mean()
+    ema_slope_s = (ema_fast_s - ema_fast_s.shift(3)) / ema_fast_s.shift(3)
+
+    n = len(full_df)
+    labels: list[str | None] = []
+    confs: list[float] = []
+
+    for i in range(n):
+        if i < min_idx:
+            labels.append(None)
+            confs.append(0.0)
+            continue
+        adx_val = adx_df[adx_col].iloc[i]
+        efv = ema_fast_s.iloc[i]
+        esv = ema_slow_s.iloc[i]
+        bw = bb_width_s.iloc[i]
+        bwa = bb_width_avg_s.iloc[i]
+        slope = ema_slope_s.iloc[i]
+        if pd.isna(adx_val) or pd.isna(efv) or pd.isna(esv):
+            labels.append(None)
+            confs.append(0.0)
+            continue
+        bb_valid = not pd.isna(bw) and not pd.isna(bwa) and bwa > 0
+        if bb_valid and bw > bwa * hv_mult:
+            bb_score = min((bw / bwa - hv_mult) / hv_mult, 1.0)
+            ema_sep = abs(efv - esv) / esv
+            labels.append("high-volatility")
+            confs.append(round(0.7 * bb_score + 0.3 * min(ema_sep / 0.02, 1.0), 3))
+        elif adx_val > adx_thresh:
+            adx_score = min(adx_val / (2.0 * adx_thresh), 1.0)
+            ema_sep = abs(efv - esv) / esv
+            ema_sep_score = min(ema_sep / 0.03, 1.0)
+            slope_score = min(abs(slope) / (slope_thresh * 10), 1.0)
+            if slope > slope_thresh and efv > esv:
+                labels.append("trending-up")
+                confs.append(round(0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score, 3))
+            elif slope < -slope_thresh and efv < esv:
+                labels.append("trending-down")
+                confs.append(round(0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score, 3))
+            else:
+                adx_s2 = max(1.0 - adx_val / adx_thresh, 0.0)
+                bb_tight = max(1.0 - bw / (bwa * 1.2), 0.0) if bb_valid else 0.5
+                slope_flat = max(1.0 - abs(slope) / (slope_thresh * 3), 0.0)
+                labels.append("choppy")
+                confs.append(round(0.5 * adx_s2 + 0.3 * bb_tight + 0.2 * slope_flat, 3))
+        else:
+            adx_score = max(1.0 - adx_val / adx_thresh, 0.0)
+            bb_tight = max(1.0 - bw / (bwa * 1.2), 0.0) if bb_valid else 0.5
+            slope_flat = max(1.0 - abs(slope) / (slope_thresh * 3), 0.0)
+            labels.append("choppy")
+            confs.append(round(0.5 * adx_score + 0.3 * bb_tight + 0.2 * slope_flat, 3))
+
+    # Forward pass for age (O(n) instead of O(n²) per-candle scan-back)
+    ages: list[int] = []
+    cur_age = 0
+    for i in range(n):
+        if labels[i] is None or (i > 0 and labels[i] != labels[i - 1]):
+            cur_age = 0 if labels[i] is None else 1
+        else:
+            cur_age += 1
+        ages.append(cur_age)
+
+    results: list[RegimeResult | None] = []
+    for i in range(n):
+        lbl = labels[i]
+        if lbl is None:
+            results.append(None)
+            continue
+        recent = [l for l in labels[max(0, i - stability_n + 1):i + 1] if l is not None]
+        stable = recent.count(lbl) >= stability_min
+        results.append(RegimeResult(label=lbl, confidence=confs[i], age_candles=ages[i], stable=stable))
+
+    return results
+
+
 def classify(ohlcv: list) -> RegimeResult:
     """
     Full classification with stability check and age count.
