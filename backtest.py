@@ -38,6 +38,7 @@ logger.add(sys.stderr, level="INFO", format="{time:HH:mm:ss} | {level} | {messag
 def fetch_history(exchange, pair: str, since_dt: datetime, timeframe: str) -> list:
     """Page through OHLCV history in 1000-candle chunks until present."""
     since_ms = int(since_dt.timestamp() * 1000)
+    now_ms = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
     all_candles: list = []
     page_limit = 1000
 
@@ -45,6 +46,11 @@ def fetch_history(exchange, pair: str, since_dt: datetime, timeframe: str) -> li
         batch = fetch_ohlcv_safe(exchange, pair, timeframe, limit=page_limit, since=since_ms)
         if not batch:
             break
+        # Some exchanges (e.g. MEXC commodity futures) return synthetic future candles;
+        # stop paging once we pass the current time.
+        if batch[0][0] > now_ms:
+            break
+        batch = [c for c in batch if c[0] <= now_ms]
         all_candles.extend(batch)
         if len(batch) < page_limit:
             break
