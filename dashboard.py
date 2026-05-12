@@ -444,14 +444,14 @@ def create_app() -> Flask:
         if last_write:
             try:
                 dt = datetime.fromisoformat(last_write.replace("Z", "+00:00"))
-                engine_running = (datetime.now(timezone.utc) - dt).total_seconds() < 600
+                engine_running = (datetime.now(timezone.utc) - dt).total_seconds() < 1200
             except Exception:
                 pass
 
         return jsonify({
             "engine_running": engine_running,
             "last_write": last_write,
-            "threshold_minutes": 10,
+            "threshold_minutes": 20,
         })
 
     @app.route("/api/regime")
