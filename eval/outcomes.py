@@ -80,16 +80,23 @@ def run_evaluation(conn: sqlite3.Connection, exchange) -> dict:
     logger.info(f"Resolving {len(pending)} pending signal outcomes")
 
     resolved = 0
+    resolved_signals: list[dict] = []
     for signal in pending:
         result = resolve_outcome(signal, exchange)
         if result is not None:
             outcome, price, pnl_r = result
             update_outcome(conn, signal["id"], outcome, price, pnl_r)
             resolved += 1
+            resolved_signals.append({
+                "strategy": signal["strategy"],
+                "regime": signal["regime"],
+                "direction": signal["direction"],
+                "pair": signal["pair"],
+            })
 
     stats = get_accuracy_stats(conn)
     _log_stats(stats, c)
-    return {"resolved": resolved, "stats": stats}
+    return {"resolved": resolved, "stats": stats, "resolved_signals": resolved_signals}
 
 
 def _log_stats(stats: dict, c: dict) -> None:

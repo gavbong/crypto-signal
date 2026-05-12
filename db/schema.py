@@ -87,12 +87,44 @@ def init_db(path: Path | None = None) -> None:
         for migration in [
             "ALTER TABLE signals ADD COLUMN backtest_run_id INTEGER REFERENCES backtest_runs(id)",
             "CREATE INDEX IF NOT EXISTS idx_signals_backtest_run ON signals(backtest_run_id, fired_at)",
+            "ALTER TABLE signals ADD COLUMN quality_score REAL",
         ]:
             try:
                 conn.execute(migration)
                 conn.commit()
             except Exception:
                 pass
+
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS strategy_health (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                strategy     TEXT    NOT NULL,
+                regime       TEXT    NOT NULL,
+                direction    TEXT    NOT NULL,
+                asset_class  TEXT    NOT NULL DEFAULT 'crypto',
+                window_start TEXT,
+                window_end   TEXT,
+                signal_count INTEGER NOT NULL DEFAULT 0,
+                win_count    INTEGER NOT NULL DEFAULT 0,
+                win_rate     REAL,
+                net_r        REAL    NOT NULL DEFAULT 0.0,
+                status       TEXT    NOT NULL DEFAULT 'HEALTHY',
+                disabled_at  TEXT,
+                UNIQUE(strategy, regime, direction, asset_class)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_strategy_health_lookup
+            ON strategy_health (strategy, regime, direction, asset_class);
+
+            CREATE INDEX IF NOT EXISTS idx_signals_quality_lookup
+            ON signals (strategy, regime, direction, outcome, fired_at)
+            WHERE backtest_run_id IS NULL;
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        """)
 
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS regime_log (
@@ -113,8 +145,8 @@ def log_signal(conn: sqlite3.Connection, signal: dict, backtest_run_id: int | No
            (pair, direction, strategy, regime, regime_confidence, regime_age_candles,
             entry_price, suggested_stop_loss, suggested_take_profit, timeframe,
             fired_at, shadow_mode, llm_commentary, commentary_status, exchange,
-            backtest_run_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            backtest_run_id, quality_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             signal["pair"], signal["direction"], signal["strategy"],
             signal["regime"], signal["regime_confidence"], signal["regime_age_candles"],
@@ -124,6 +156,7 @@ def log_signal(conn: sqlite3.Connection, signal: dict, backtest_run_id: int | No
             signal.get("llm_commentary"), signal.get("commentary_status", "pending"),
             signal.get("exchange", "mexc"),
             backtest_run_id,
+            signal.get("quality_score"),
         ),
     )
     conn.commit()
@@ -161,7 +194,7 @@ def get_pending_outcomes(conn: sqlite3.Connection, older_than_hours: int) -> lis
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=older_than_hours)).isoformat()
     return conn.execute(
         """SELECT * FROM signals
-           WHERE outcome IS NULL AND fired_at <= ?
+           WHERE outcome IS NULL AND fired_at <= ? AND backtest_run_id IS NULL
            ORDER BY fired_at""",
         (cutoff,),
     ).fetchall()

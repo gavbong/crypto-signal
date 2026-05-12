@@ -6,6 +6,7 @@ import pandas_ta as ta
 from loguru import logger
 
 from regime.classifier import RegimeResult
+from signals.selector import is_direction_allowed
 from utils.config import get as cfg
 
 
@@ -414,5 +415,9 @@ def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
         logger.warning(f"Unknown strategy: {strategy}")
         return None
     if strategy == "supply_demand":
-        return gen(pair, df, regime, timeframe, df_1h=df_1h)
-    return gen(pair, df, regime, timeframe)
+        signal = gen(pair, df, regime, timeframe, df_1h=df_1h)
+    else:
+        signal = gen(pair, df, regime, timeframe)
+    if signal is not None and not is_direction_allowed(regime.label, strategy, signal["direction"]):
+        return None
+    return signal

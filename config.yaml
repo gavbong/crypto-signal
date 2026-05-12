@@ -70,6 +70,62 @@ signals:
   rr_ratio_high_vol: 2.0              # volatile but uncertain direction: keep at default
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
 
+signal_quality:
+  min_quality_score: 55          # suppress signals below this (0-100 composite)
+  quality_weights:
+    regime_confidence: 0.30
+    rolling_30d_wr: 0.40
+    stop_quality: 0.30
+  bootstrap_wr: 0.35             # WR assumed when <20 live signals exist for a combo (conservative)
+
+strategy_health:
+  auto_disable_window_days: 30   # rolling window for WR calculation
+  auto_disable_min_signals: 20   # don't disable on fewer signals than this
+  watch_threshold: 0.38          # WR below this → WATCH
+  caution_threshold: 0.33        # WR below this → CAUTION
+  disable_threshold: 0.30        # WR below this → DISABLED (approx breakeven for RR=2.33)
+  re_enable_threshold: 0.40      # auto re-enable if WR recovers above this for 14d
+  re_enable_min_days: 14
+
+regime_gates:
+  min_regime_age_candles:
+    trending-up: 3
+    trending-down: 3
+    choppy: 5
+    high-volatility: 2
+
+stop_quality:
+  min_stop_pct: 0.003            # global floor — overridden per asset class
+  max_stop_pct: 0.030            # global ceiling
+
+asset_class_profiles:
+  crypto:
+    pairs:
+      - BTC/USDT:USDT
+      - ETH/USDT:USDT
+      - SOL/USDT:USDT
+    adx_trend_threshold: 25
+    ema_slope_threshold: 0.001
+    high_vol_bb_multiplier: 1.5
+    stop_min_pct: 0.003
+    stop_max_pct: 0.030
+  commodity:
+    pairs:
+      - UKOIL/USDT:USDT
+    adx_trend_threshold: 20
+    ema_slope_threshold: 0.001
+    high_vol_bb_multiplier: 1.3
+    stop_min_pct: 0.005          # oil moves ~0.5%+ intraday; 0.3% stops too tight
+    stop_max_pct: 0.050
+  gold:
+    pairs:
+      - XAUT/USDT:USDT
+    adx_trend_threshold: 20
+    ema_slope_threshold: 0.001
+    high_vol_bb_multiplier: 1.4
+    stop_min_pct: 0.002          # gold can move 0.1-0.3% in 15m; keep floor low
+    stop_max_pct: 0.025
+
 deduplication:
   window_candles: 3              # suppress same pair+dir+strategy+regime within N candles
 
@@ -101,6 +157,9 @@ copy_trader:
   poll_interval_minutes: 2      # how often to check HL positions (was 15 — top traders open/close in minutes)
   min_position_usdt: 15         # hard floor per trade — below this, skip the open (HL minimum notional ~$10-15)
   reset_balance: false          # set true + restart to reset DB balance to initial_balance (only if no open positions)
+
+paper_trader:
+  reset_account: true             # set true + restart to wipe positions and restart from $1,000 USDT
 
 polymarket_trader:
   enabled: true

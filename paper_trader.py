@@ -344,10 +344,10 @@ def check_positions(conn, exchange_map: dict) -> int:
 
 
 def poll_new_signals(conn) -> list[dict]:
-    """Fetch all new signals since last seen id, across all exchanges."""
+    """Fetch all new live (non-backtest) signals since last seen id."""
     last_id = int(_get_state(conn, "last_signal_id"))
     rows = conn.execute(
-        "SELECT * FROM signals WHERE id > ? ORDER BY id",
+        "SELECT * FROM signals WHERE id > ? AND backtest_run_id IS NULL ORDER BY id",
         (last_id,),
     ).fetchall()
     if not rows:
@@ -460,6 +460,20 @@ def main() -> None:
 
     with get_conn() as conn:
         init_paper_db(conn)
+        # Config-driven account reset — set paper_trader.reset_account: true to wipe and restart
+        if cfg().get("paper_trader", {}).get("reset_account", False):
+            max_live_id_row = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM signals WHERE backtest_run_id IS NULL"
+            ).fetchone()
+            max_live_id = max_live_id_row[0] if max_live_id_row else 0
+            conn.executescript("""
+                DELETE FROM paper_positions;
+                DELETE FROM paper_daily_pnl;
+            """)
+            _set_state(conn, "last_signal_id", str(max_live_id))
+            _set_state(conn, "day_number", "0")
+            _set_state(conn, "reset_note", f"Paper account v2 reset at {datetime.now(timezone.utc).isoformat()} — post signal quality overhaul, 1k starting balance")
+            logger.info(f"Paper account reset to $1,000 USDT — will process signals from id>{max_live_id}")
 
     exchange_map: dict = {}
     for exc_id, exc_cfg in cfg().get("exchanges", {}).items():

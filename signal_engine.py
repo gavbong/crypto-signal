@@ -17,6 +17,7 @@ from db.schema import init_db, get_conn, log_signal, is_duplicate, log_regime
 from regime.classifier import classify, RegimeResult, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy, _calc_take_profit
+from signals.quality import compute_quality_score, is_stop_in_range, update_strategy_health
 from llm.commentary import generate_commentary
 from apscheduler.triggers.cron import CronTrigger
 from eval.outcomes import run_evaluation
@@ -67,11 +68,16 @@ def _collect_candidates(
     df_1h_map: dict | None,
     exchange_id: str,
     shadow_mode: bool,
+    conn,
 ) -> list[dict]:
     """Collect potential signals from one exchange without emitting.
     No dedup check, no LLM commentary, no alerts. Returns raw candidates
     so signal_job can compare quality across exchanges before firing."""
     candidates = []
+    c = cfg()
+    sq_cfg = c.get("signal_quality", {})
+    min_quality = sq_cfg.get("min_quality_score", 55)
+    rg_gates = c.get("regime_gates", {}).get("min_regime_age_candles", {})
 
     regime_context_for_llm = {
         p: {"regime": r.label, "confidence": r.confidence,
@@ -87,6 +93,12 @@ def _collect_candidates(
 
         if not regime.stable:
             logger.debug(f"{pair}: regime {regime.label} not stable yet ({regime.age_candles} candles)")
+            continue
+
+        # Regime age gate: require minimum consecutive candles in this regime
+        min_age = rg_gates.get(regime.label, 0)
+        if regime.age_candles < min_age:
+            logger.debug(f"{pair}: regime {regime.label} too young ({regime.age_candles} < {min_age} candles)")
             continue
 
         strategies = active_strategies(regime.label)
@@ -128,6 +140,36 @@ def _collect_candidates(
                     live_price, live_stop, signal["direction"], regime.label
                 )
 
+            # Stop distance hard gate (per asset class)
+            if not is_stop_in_range(signal["entry_price"], signal["suggested_stop_loss"], pair):
+                logger.debug(
+                    f"{pair} {strategy}: stop distance out of range — skipping "
+                    f"(entry={signal['entry_price']}, stop={signal['suggested_stop_loss']})"
+                )
+                continue
+
+            # Strategy health gate: skip DISABLED combos
+            health_row = conn.execute(
+                """SELECT status FROM strategy_health
+                   WHERE strategy=? AND regime=? AND direction=?""",
+                (strategy, regime.label, signal["direction"]),
+            ).fetchone()
+            if health_row and health_row["status"] == "DISABLED":
+                logger.debug(f"{pair} {strategy} {signal['direction']}: DISABLED by strategy health — skipping")
+                continue
+
+            # Quality score gate
+            quality_score = compute_quality_score(
+                conn, strategy, regime.label, regime.confidence,
+                signal["direction"], pair, signal["entry_price"], signal["suggested_stop_loss"],
+            )
+            if quality_score < min_quality:
+                logger.debug(
+                    f"{pair} {strategy}: quality_score={quality_score} < {min_quality} — skipping"
+                )
+                continue
+
+            signal["quality_score"] = quality_score
             signal["exchange"] = exchange_id
             signal["shadow_mode"] = shadow_mode
             signal["_regime_context"] = regime_context_for_llm
@@ -158,6 +200,14 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
     """
     c = cfg()
     with get_conn() as conn:
+        # Pause gate: check settings table before running
+        paused_row = conn.execute(
+            "SELECT value FROM settings WHERE key='paused'"
+        ).fetchone()
+        if paused_row and paused_row["value"] == "1":
+            logger.info("Signal engine paused via /pause command — skipping cycle")
+            return
+
         all_candidates: list[dict] = []
 
         for exchange_id, exchange, pairs in exchanges_config:
@@ -166,7 +216,7 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
             )
             candidates = _collect_candidates(
                 exchange, pairs, timeframe, limit,
-                regimes_1h, df_1h_map, exchange_id, shadow_mode,
+                regimes_1h, df_1h_map, exchange_id, shadow_mode, conn,
             )
             all_candidates.extend(candidates)
 
@@ -219,6 +269,15 @@ def eval_job(exchange) -> None:
     with get_conn() as conn:
         result = run_evaluation(conn, exchange)
         logger.info(f"Outcome evaluation complete | resolved={result['resolved']}")
+        # Update strategy health for all combos that had new outcomes
+        for signal in result.get("resolved_signals", []):
+            try:
+                update_strategy_health(
+                    conn, signal["strategy"], signal["regime"],
+                    signal["direction"], signal["pair"],
+                )
+            except Exception as e:
+                logger.warning(f"strategy_health update failed for {signal}: {e}")
 
 
 def review_job() -> None:
