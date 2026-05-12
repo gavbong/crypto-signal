@@ -159,7 +159,7 @@ copy_trader:
   reset_balance: false          # set true + restart to reset DB balance to initial_balance (only if no open positions)
 
 paper_trader:
-  reset_account: true             # set true + restart to wipe positions and restart from $1,000 USDT
+  reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
 
 polymarket_trader:
   enabled: true
