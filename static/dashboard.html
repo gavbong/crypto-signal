@@ -1447,7 +1447,7 @@ function _renderTradePage(prevIds, tradesOverride) {
 // ─── MAIN REFRESH ────────────────────────────────────────────────────────────
 async function refresh() {
   try {
-    const [paperStatsRes, posRes, histRes, healthRes, regimeRes, sigStatsRes, analysisRes, signalsRes] = await Promise.all([
+    const [paperStatsRes, posRes, histRes, healthRes, regimeRes, sigStatsRes, analysisRes, signalsRes, pairsRes] = await Promise.all([
       fetch('/api/paper/stats'),
       fetch('/api/paper/positions'),
       fetch('/api/paper/history'),
@@ -1456,11 +1456,13 @@ async function refresh() {
       fetch('/api/stats?filter=live'),
       fetch('/api/analysis/latest'),
       fetch('/api/signals?filter=all'),
+      fetch('/api/config/pairs'),
     ]);
-    const [paperStats, posData, histData, health, regime, sigStats, analysisData, signalsData] = await Promise.all([
+    const [paperStats, posData, histData, health, regime, sigStats, analysisData, signalsData, pairsData] = await Promise.all([
       paperStatsRes.json(), posRes.json(), histRes.json(),
       healthRes.json(), regimeRes.json(), sigStatsRes.json(),
       analysisRes.json(), signalsRes.json(),
+      pairsRes.ok ? pairsRes.json() : Promise.resolve(null),
     ]);
 
     const allTrades = [...posData.positions, ...histData.trades];
@@ -1475,31 +1477,13 @@ async function refresh() {
     renderStrategyStats(histData.trades);
     renderTradeHistory(histData.trades);
     renderExcFilterChips(histData.trades, posData.positions);
+    if (pairsData?.pairs?.length) renderPairChips(pairsData.pairs);
     _lastRefresh = Date.now();
 
   } catch (err) {
     console.error('Refresh error:', err);
   }
 }
-
-// ─── PAIR CHIPS FROM CONFIG ───────────────────────────────────────────────────
-(async function loadPairs() {
-  try {
-    const r = await fetch('/api/config/pairs');
-    if (!r.ok) throw new Error();
-    const data = await r.json();
-    if (data.pairs?.length) renderPairChips(data.pairs);  // [{pair, exchange}]
-  } catch (_) {
-    // fallback: derive from trade history if config endpoint unavailable
-    try {
-      const r2 = await fetch('/api/paper/history');
-      if (!r2.ok) return;
-      const data2 = await r2.json();
-      const pairs = [...new Set(data2.trades.map(t => t.pair.split(':')[0]))];
-      if (pairs.length) renderPairChips(pairs);
-    } catch (_2) {}
-  }
-})();
 
 refresh();
 setInterval(refresh, POLL_MS);
