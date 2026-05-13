@@ -29,6 +29,7 @@ from db.schema import init_db, get_conn, log_signal, update_outcome
 from regime.classifier import classify, classify_series, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy
+from signals.quality import compute_quality_score, is_stop_in_range
 
 
 logger.remove()
@@ -124,7 +125,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
 
     stats = {
         "fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0,
-        "skipped_dedup": 0, "skipped_unstable": 0, "unresolved": 0,
+        "skipped_dedup": 0, "skipped_unstable": 0, "skipped_stop_range": 0, "unresolved": 0,
         "pnl_r": 0.0,
         "by_regime": {},
     }
@@ -173,6 +174,25 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
             signal["commentary_status"] = "skipped"
 
             dedup_state[key] = i
+
+            # Hard gate: stop must be within asset-class min/max range (same as live engine)
+            if not is_stop_in_range(signal["entry_price"], signal["suggested_stop_loss"], pair):
+                stats["skipped_stop_range"] += 1
+                continue
+
+            # Compute quality score and store on signal; don't filter — all scores
+            # are written to DB so the threshold can be calibrated from backtest data.
+            signal["quality_score"] = compute_quality_score(
+                conn,
+                strategy,
+                regime.label,
+                regime.confidence,
+                signal["direction"],
+                pair,
+                signal["entry_price"],
+                signal["suggested_stop_loss"],
+            )
+
             stats["fired"] += 1
 
             r = regime.label
