@@ -71,7 +71,7 @@ signals:
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
 
 signal_quality:
-  min_quality_score: 45          # suppress signals below this (0-100 composite)
+  min_quality_score: 40          # suppress signals below this (0-100 composite)
   quality_weights:
     regime_confidence: 0.30
     rolling_30d_wr: 0.40
