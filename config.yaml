@@ -5,7 +5,6 @@ exchanges:
       - BTC/USDT:USDT
       - ETH/USDT:USDT
       - SOL/USDT:USDT
-      - UKOIL/USDT:USDT
       - XAUT/USDT:USDT
   binance:
     enabled: true
@@ -109,14 +108,6 @@ asset_class_profiles:
     high_vol_bb_multiplier: 1.5
     stop_min_pct: 0.003
     stop_max_pct: 0.030
-  commodity:
-    pairs:
-      - UKOIL/USDT:USDT
-    adx_trend_threshold: 20
-    ema_slope_threshold: 0.001
-    high_vol_bb_multiplier: 1.3
-    stop_min_pct: 0.005          # oil moves ~0.5%+ intraday; 0.3% stops too tight
-    stop_max_pct: 0.050
   gold:
     pairs:
       - XAUT/USDT:USDT
