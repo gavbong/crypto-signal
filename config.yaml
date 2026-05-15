@@ -72,8 +72,8 @@ signals:
 signal_quality:
   min_quality_score: 40          # suppress signals below this (0-100 composite)
   quality_weights:
-    regime_confidence: 0.40
-    rolling_30d_wr: 0.60
+    regime_confidence: 0.20
+    rolling_30d_wr: 0.80
     stop_quality: 0.00           # zeroed — 15m crypto stops (0.3-0.8%) cluster near the min of the 0.3-3% range,
                                  # giving near-zero scores and blocking valid signals. Hard gate (is_stop_in_range)
                                  # already handles truly bad stops.
