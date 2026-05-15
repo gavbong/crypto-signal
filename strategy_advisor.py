@@ -62,6 +62,7 @@ def run_strategy_review() -> list[dict]:
                    SUM(COALESCE(pnl_r, 0)) as net_r
             FROM signals
             WHERE outcome IS NOT NULL
+              AND backtest_run_id IS NULL
               AND DATE(fired_at) >= ?
             GROUP BY strategy, regime
             """,
