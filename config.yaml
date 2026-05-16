@@ -153,6 +153,12 @@ copy_trader:
 
 paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
+  taker_fee_pct: 0.0006           # 0.06% per leg — MEXC taker default (conservative; per-exchange rates override)
+  funding_rate_8h: 0.0001         # 0.01% per 8h — BTC perp avg; longs pay, shorts receive
+  slippage_pct: 0.0005            # 0.05% slippage on SL exits only (market order fills worse than stop)
+  position_timeout_hours: 48      # close stale positions at market after 2 days
+  circuit_breaker_losses: 5       # pause new entries after N consecutive losses
+  circuit_breaker_cooldown_hours: 4  # hours to wait before resuming after circuit breaker trips
 
 polymarket_trader:
   enabled: true
