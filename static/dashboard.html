@@ -1027,7 +1027,7 @@ function renderPaperStats(stats) {
   const totalCost = fees + funding;
   const feesEl = document.getElementById('stat-fees');
   feesEl.innerHTML = `${totalCost.toFixed(2)}<span class="stat-unit"> USDT</span>`;
-  feesEl.className = 'stat-value ' + (totalCost <= 0 ? 'red' : '');
+  feesEl.className = 'stat-value ' + (totalCost < 0 ? 'red' : '');
   const feesSub = document.getElementById('stat-fees-sub');
   feesSub.textContent = fees !== 0 || funding !== 0
     ? `${fees.toFixed(2)} fees · ${funding.toFixed(2)} funding`
