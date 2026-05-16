@@ -245,6 +245,8 @@ body{
 .pnl-pos{font-family:var(--font-mono);font-size:12px;color:var(--long)}
 .pnl-neg{font-family:var(--font-mono);font-size:12px;color:var(--short)}
 .cell-r{text-align:right}
+.costs-cell{cursor:default;border-bottom:1px dashed var(--muted);opacity:0.85}
+.costs-cell:hover{opacity:1}
 .outcome-badge{
   font-family:var(--font-mono);font-size:10px;font-weight:500;
   letter-spacing:0.03em;text-transform:uppercase;padding:2px 5px;
@@ -414,9 +416,9 @@ body{
       <div class="stat-sub" id="stat-gross-sub">before fees &amp; funding</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Fees Paid</div>
+      <div class="stat-label">Total Costs</div>
       <div class="stat-value" id="stat-fees">—</div>
-      <div class="stat-sub" id="stat-fees-sub">fees + funding</div>
+      <div class="stat-sub" id="stat-fees-sub">fees · slip · funding</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Net P&amp;L</div>
@@ -521,7 +523,7 @@ body{
         <tr>
           <th>Pair</th><th>Exch</th><th>Dir</th><th>Strategy</th><th>Regime</th><th>Opened</th><th>Closed</th>
           <th>Entry</th><th>Exit</th><th>Reason</th>
-          <th class="r">Gross</th><th class="r">Fees</th><th class="r">Net P&amp;L</th>
+          <th class="r">Costs ⓘ</th><th class="r">Net P&amp;L</th>
         </tr>
       </thead>
       <tbody id="trades-tbody"></tbody>
@@ -1024,14 +1026,16 @@ function renderPaperStats(stats) {
 
   const fees = stats.total_fees ?? 0;
   const funding = stats.total_funding ?? 0;
-  const totalCost = fees + funding;
+  const slippage = stats.total_slippage ?? 0;
+  const totalCost = fees + funding + slippage;
   const feesEl = document.getElementById('stat-fees');
   feesEl.innerHTML = `${totalCost.toFixed(2)}<span class="stat-unit"> USDT</span>`;
   feesEl.className = 'stat-value ' + (totalCost < 0 ? 'red' : '');
   const feesSub = document.getElementById('stat-fees-sub');
-  feesSub.textContent = fees !== 0 || funding !== 0
-    ? `${fees.toFixed(2)} fees · ${funding.toFixed(2)} funding`
-    : 'fees + funding';
+  const hasCosts = fees !== 0 || funding !== 0 || slippage !== 0;
+  feesSub.textContent = hasCosts
+    ? `${fees.toFixed(2)} fees · ${slippage.toFixed(2)} slip · ${funding.toFixed(2)} funding`
+    : 'fees · slip · funding';
 
   const realized = stats.realized_pnl ?? 0;
   const realEl = document.getElementById('stat-realized');
@@ -1452,14 +1456,19 @@ function _renderTradePage(prevIds, tradesOverride) {
       : t.exit_reason === 'stop_loss' ? 'b-loss'
       : t.exit_reason === 'signal_flip' ? 'b-stopped'
       : t.exit_reason === 'timeout' ? 'b-regime' : 'b-regime';
-    const gross = t.gross_pnl_usdt ?? t.pnl_usdt;
-    const fees = (t.fees_usdt ?? 0) + (t.funding_usdt ?? 0);
-    const grossStr = gross != null
-      ? `<span class="${gross >= 0 ? 'pnl-pos' : 'pnl-neg'}">${gross >= 0 ? '+' : ''}${gross.toFixed(2)}</span>`
+    const gross = t.gross_pnl_usdt ?? t.pnl_usdt ?? 0;
+    const feesCost = t.fees_usdt ?? 0;
+    const slipCost = t.slippage_usdt ?? 0;
+    const fundCost = t.funding_usdt ?? 0;
+    const totalCosts = feesCost + slipCost + fundCost;
+    const hasCosts = totalCosts !== 0;
+    const costsStr = hasCosts
+      ? `<span class="pnl-neg">${totalCosts.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
-    const feesStr = fees !== 0
-      ? `<span class="pnl-neg">${fees.toFixed(2)}</span>`
-      : '<span style="color:var(--muted)">—</span>';
+    const costsTip = `Gross: ${gross >= 0 ? '+' : ''}${gross.toFixed(2)}<br>`
+      + `Fees: ${feesCost.toFixed(2)}<br>`
+      + `Slip: ${slipCost.toFixed(2)}<br>`
+      + `Funding: ${fundCost.toFixed(2)}`;
     const pnl = t.pnl_usdt != null
       ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
@@ -1475,11 +1484,14 @@ function _renderTradePage(prevIds, tradesOverride) {
       <td class="td-mono">${fmt(t.entry_price)}</td>
       <td class="td-mono">${fmt(t.exit_price)}</td>
       <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
-      <td class="cell-r">${grossStr}</td>
-      <td class="cell-r">${feesStr}</td>
+      <td class="cell-r costs-cell" data-tip="${costsTip}">${costsStr}</td>
       <td class="cell-r">${pnl}</td>
     </tr>`;
   }).join('');
+  tbody.querySelectorAll('.costs-cell[data-tip]').forEach(el => {
+    el.addEventListener('mouseenter', e => showTip(e, el.dataset.tip));
+    el.addEventListener('mouseleave', hideTip);
+  });
 }
 
 // ─── MAIN REFRESH ────────────────────────────────────────────────────────────

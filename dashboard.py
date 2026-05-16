@@ -313,6 +313,9 @@ def create_app() -> Flask:
             total_funding = conn.execute(
                 "SELECT COALESCE(SUM(funding_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
             ).fetchone()[0]
+            total_slippage = conn.execute(
+                "SELECT COALESCE(SUM(slippage_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+            ).fetchone()[0]
 
         unrealized = 0.0
         for p in open_positions:
@@ -333,6 +336,7 @@ def create_app() -> Flask:
             "gross_pnl": round(gross_realized, 2),
             "total_fees": round(total_fees, 2),
             "total_funding": round(total_funding, 2),
+            "total_slippage": round(total_slippage, 2),
             "unrealized_pnl": round(unrealized, 2),
             "open_margin": round(open_margin, 2),
             "wins": wins,
@@ -385,7 +389,7 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT id, pair, direction, strategy, regime, entry_price,
                           contracts, margin_usdt, exit_price, exit_reason, pnl_usdt,
-                          gross_pnl_usdt, fees_usdt, funding_usdt,
+                          gross_pnl_usdt, fees_usdt, funding_usdt, slippage_usdt,
                           opened_at, closed_at, exchange
                    FROM paper_positions WHERE exit_price IS NOT NULL
                    ORDER BY closed_at DESC"""
@@ -401,6 +405,7 @@ def create_app() -> Flask:
                     "gross_pnl_usdt": r["gross_pnl_usdt"],
                     "fees_usdt": r["fees_usdt"] or 0,
                     "funding_usdt": r["funding_usdt"] or 0,
+                    "slippage_usdt": r["slippage_usdt"] or 0,
                     "opened_at": _normalize_ts(r["opened_at"]),
                     "closed_at": _normalize_ts(r["closed_at"]),
                     "exchange": r["exchange"] or "mexc",
@@ -1253,6 +1258,7 @@ def _migrate_paper_db():
             "ALTER TABLE paper_positions ADD COLUMN gross_pnl_usdt REAL",
             "ALTER TABLE paper_positions ADD COLUMN fees_usdt REAL DEFAULT 0",
             "ALTER TABLE paper_positions ADD COLUMN funding_usdt REAL DEFAULT 0",
+            "ALTER TABLE paper_positions ADD COLUMN slippage_usdt REAL DEFAULT 0",
         ]:
             try:
                 conn.execute(migration)
