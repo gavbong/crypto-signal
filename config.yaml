@@ -153,12 +153,39 @@ copy_trader:
 
 paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
-  taker_fee_pct: 0.0006           # 0.06% per leg — MEXC taker default (conservative; per-exchange rates override)
-  funding_rate_8h: 0.0001         # 0.01% per 8h — BTC perp avg; longs pay, shorts receive
-  slippage_pct: 0.0005            # 0.05% slippage on SL exits only (market order fills worse than stop)
   position_timeout_hours: 48      # close stale positions at market after 2 days
   circuit_breaker_losses: 5       # pause new entries after N consecutive losses
   circuit_breaker_cooldown_hours: 4  # hours to wait before resuming after circuit breaker trips
+
+  # ── Fees ─────────────────────────────────────────────────────────────────────
+  # Taker rate used for: entry (market order) + SL/flip/timeout exits (market order)
+  # Maker rate used for: TP exits (limit order resting on book)
+  taker_fee_pct: 0.0006           # 0.06% — MEXC default; per-exchange constants override when known
+  # Per-exchange maker rates (TP exits); 0 = free maker on MEXC futures
+  maker_fee_rates:
+    mexc:        0.0000            # MEXC futures maker: free
+    binance:     0.0002            # 0.02%
+    okx:         0.0002            # 0.02%
+    hyperliquid: 0.0001            # 0.01%
+
+  # ── Slippage ─────────────────────────────────────────────────────────────────
+  # Entry: market order — small adverse fill vs signal price
+  entry_slippage_pct: 0.0002      # 0.02% — conservative; entries have more liquidity than panic SL
+  # SL exit: stop triggered as market order — wider spread, more adverse fill
+  slippage_pct: 0.0005            # 0.05% — SL exits fill worse than entry
+
+  # ── Funding ──────────────────────────────────────────────────────────────────
+  # Per-pair 8h funding rate; sign: positive = longs pay shorts (normal bull market)
+  # Negative rates are valid (bearish: shorts pay longs) — set to reflect current conditions
+  funding_rate_8h: 0.0001         # fallback if pair not in funding_rates_8h below
+  funding_rates_8h:
+    BTC/USDT:USDT:  0.0001        # ~0.01% per 8h — BTC perp historical avg
+    ETH/USDT:USDT:  0.0001
+    SOL/USDT:USDT:  0.0001
+    XAUT/USDT:USDT: 0.00005       # gold perp — lower funding, less speculative demand
+    BTC/USDC:USDC:  0.0001
+    ETH/USDC:USDC:  0.0001
+    SOL/USDC:USDC:  0.0001
 
 polymarket_trader:
   enabled: true
