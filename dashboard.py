@@ -304,6 +304,15 @@ def create_app() -> Flask:
             open_positions = conn.execute(
                 "SELECT direction, entry_price, contracts, last_price FROM paper_positions WHERE exit_price IS NULL"
             ).fetchall()
+            gross_realized = conn.execute(
+                "SELECT COALESCE(SUM(gross_pnl_usdt), SUM(pnl_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+            ).fetchone()[0]
+            total_fees = conn.execute(
+                "SELECT COALESCE(SUM(fees_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+            ).fetchone()[0]
+            total_funding = conn.execute(
+                "SELECT COALESCE(SUM(funding_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+            ).fetchone()[0]
 
         unrealized = 0.0
         for p in open_positions:
@@ -321,6 +330,9 @@ def create_app() -> Flask:
             "equity_usdt": round(equity, 2),
             "initial_balance": _PAPER_INITIAL,
             "realized_pnl": round(realized, 2),
+            "gross_pnl": round(gross_realized, 2),
+            "total_fees": round(total_fees, 2),
+            "total_funding": round(total_funding, 2),
             "unrealized_pnl": round(unrealized, 2),
             "open_margin": round(open_margin, 2),
             "wins": wins,
@@ -373,6 +385,7 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT id, pair, direction, strategy, regime, entry_price,
                           contracts, margin_usdt, exit_price, exit_reason, pnl_usdt,
+                          gross_pnl_usdt, fees_usdt, funding_usdt,
                           opened_at, closed_at, exchange
                    FROM paper_positions WHERE exit_price IS NOT NULL
                    ORDER BY closed_at DESC"""
@@ -385,6 +398,9 @@ def create_app() -> Flask:
                     "entry_price": r["entry_price"], "contracts": r["contracts"],
                     "margin_usdt": r["margin_usdt"], "exit_price": r["exit_price"],
                     "exit_reason": r["exit_reason"], "pnl_usdt": r["pnl_usdt"],
+                    "gross_pnl_usdt": r["gross_pnl_usdt"],
+                    "fees_usdt": r["fees_usdt"] or 0,
+                    "funding_usdt": r["funding_usdt"] or 0,
                     "opened_at": _normalize_ts(r["opened_at"]),
                     "closed_at": _normalize_ts(r["closed_at"]),
                     "exchange": r["exchange"] or "mexc",
@@ -1234,6 +1250,9 @@ def _migrate_paper_db():
         for migration in [
             "ALTER TABLE paper_positions ADD COLUMN last_price REAL",
             "ALTER TABLE paper_positions ADD COLUMN exchange TEXT NOT NULL DEFAULT 'mexc'",
+            "ALTER TABLE paper_positions ADD COLUMN gross_pnl_usdt REAL",
+            "ALTER TABLE paper_positions ADD COLUMN fees_usdt REAL DEFAULT 0",
+            "ALTER TABLE paper_positions ADD COLUMN funding_usdt REAL DEFAULT 0",
         ]:
             try:
                 conn.execute(migration)

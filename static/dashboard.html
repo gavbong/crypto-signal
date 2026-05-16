@@ -409,7 +409,17 @@ body{
       <div class="stat-sub" id="stat-balance-sub">Initial 1,000 USDT</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Realized P&amp;L</div>
+      <div class="stat-label">Gross P&amp;L</div>
+      <div class="stat-value" id="stat-gross">—</div>
+      <div class="stat-sub" id="stat-gross-sub">before fees &amp; funding</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Fees Paid</div>
+      <div class="stat-value" id="stat-fees">—</div>
+      <div class="stat-sub" id="stat-fees-sub">fees + funding</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Net P&amp;L</div>
       <div class="stat-value" id="stat-realized">—</div>
       <div class="stat-sub" id="stat-realized-sub">— trades closed</div>
     </div>
@@ -511,7 +521,7 @@ body{
         <tr>
           <th>Pair</th><th>Exch</th><th>Dir</th><th>Strategy</th><th>Regime</th><th>Opened</th><th>Closed</th>
           <th>Entry</th><th>Exit</th><th>Reason</th>
-          <th class="r">P&amp;L</th>
+          <th class="r">Gross</th><th class="r">Fees</th><th class="r">Net P&amp;L</th>
         </tr>
       </thead>
       <tbody id="trades-tbody"></tbody>
@@ -1006,6 +1016,23 @@ function renderPaperStats(stats) {
   document.getElementById('stat-balance-sub').textContent =
     `${equityDelta >= 0 ? '+' : ''}${equityDelta.toFixed(2)} vs initial${unrealStr}`;
 
+  const gross = stats.gross_pnl ?? stats.realized_pnl ?? 0;
+  const grossEl = document.getElementById('stat-gross');
+  grossEl.innerHTML = `${gross >= 0 ? '+' : ''}${gross.toFixed(2)}<span class="stat-unit"> USDT</span>`;
+  grossEl.className = 'stat-value ' + (gross >= 0 ? 'green' : 'red');
+  document.getElementById('stat-gross-sub').textContent = 'before fees & funding';
+
+  const fees = stats.total_fees ?? 0;
+  const funding = stats.total_funding ?? 0;
+  const totalCost = fees + funding;
+  const feesEl = document.getElementById('stat-fees');
+  feesEl.innerHTML = `${totalCost.toFixed(2)}<span class="stat-unit"> USDT</span>`;
+  feesEl.className = 'stat-value ' + (totalCost <= 0 ? 'red' : '');
+  const feesSub = document.getElementById('stat-fees-sub');
+  feesSub.textContent = fees !== 0 || funding !== 0
+    ? `${fees.toFixed(2)} fees · ${funding.toFixed(2)} funding`
+    : 'fees + funding';
+
   const realized = stats.realized_pnl ?? 0;
   const realEl = document.getElementById('stat-realized');
   realEl.innerHTML = `${realized >= 0 ? '+' : ''}${realized.toFixed(2)}<span class="stat-unit"> USDT</span>`;
@@ -1420,10 +1447,19 @@ function _renderTradePage(prevIds, tradesOverride) {
   tbody.innerHTML = pageTrades.map(t => {
     const dc = t.direction === 'long' ? 'b-long' : 'b-short';
     const won = t.pnl_usdt > 0;
-    const reasonLabel = {take_profit:'TP',stop_loss:'SL',signal_flip:'FLIP'}[t.exit_reason] || t.exit_reason || '—';
+    const reasonLabel = {take_profit:'TP',stop_loss:'SL',signal_flip:'FLIP',timeout:'TMO'}[t.exit_reason] || t.exit_reason || '—';
     const reasonCls = t.exit_reason === 'take_profit' ? 'b-tp'
       : t.exit_reason === 'stop_loss' ? 'b-loss'
-      : t.exit_reason === 'signal_flip' ? 'b-stopped' : 'b-regime';
+      : t.exit_reason === 'signal_flip' ? 'b-stopped'
+      : t.exit_reason === 'timeout' ? 'b-regime' : 'b-regime';
+    const gross = t.gross_pnl_usdt ?? t.pnl_usdt;
+    const fees = (t.fees_usdt ?? 0) + (t.funding_usdt ?? 0);
+    const grossStr = gross != null
+      ? `<span class="${gross >= 0 ? 'pnl-pos' : 'pnl-neg'}">${gross >= 0 ? '+' : ''}${gross.toFixed(2)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const feesStr = fees !== 0
+      ? `<span class="pnl-neg">${fees.toFixed(2)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
     const pnl = t.pnl_usdt != null
       ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
@@ -1439,6 +1475,8 @@ function _renderTradePage(prevIds, tradesOverride) {
       <td class="td-mono">${fmt(t.entry_price)}</td>
       <td class="td-mono">${fmt(t.exit_price)}</td>
       <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
+      <td class="cell-r">${grossStr}</td>
+      <td class="cell-r">${feesStr}</td>
       <td class="cell-r">${pnl}</td>
     </tr>`;
   }).join('');
