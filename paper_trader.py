@@ -25,12 +25,18 @@ LEVERAGE              = 20       # 20x: liquidation requires ~5% adverse move, s
 RISK_PCT              = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
 MIN_REGIME_CONFIDENCE = 0.20     # skip signals where regime classification is very uncertain
 
-# Taker fee rates per exchange (applied to both entry and exit legs)
-EXCHANGE_FEE_RATES: dict[str, float] = {
-    "mexc":        0.0006,   # 0.06%
-    "binance":     0.0004,   # 0.04%
-    "okx":         0.0005,   # 0.05%
-    "hyperliquid": 0.00035,  # 0.035%
+# Per-exchange taker/maker fee rates; config overrides taker, maker comes from maker_fee_rates config
+EXCHANGE_TAKER_RATES: dict[str, float] = {
+    "mexc":        0.0006,    # 0.06%
+    "binance":     0.0004,    # 0.04%
+    "okx":         0.0005,    # 0.05%
+    "hyperliquid": 0.00035,   # 0.035%
+}
+EXCHANGE_MAKER_RATES: dict[str, float] = {
+    "mexc":        0.0000,    # free
+    "binance":     0.0002,    # 0.02%
+    "okx":         0.0002,    # 0.02%
+    "hyperliquid": 0.0001,    # 0.01%
 }
 
 # MEXC futures minimum lot sizes per pair
@@ -65,6 +71,7 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     exit_price      REAL,
     exit_reason     TEXT,
     gross_pnl_usdt  REAL,
+    slippage_usdt   REAL    DEFAULT 0,
     fees_usdt       REAL    DEFAULT 0,
     funding_usdt    REAL    DEFAULT 0,
     pnl_usdt        REAL,
@@ -106,6 +113,7 @@ def init_paper_db(conn) -> None:
         "ALTER TABLE paper_positions ADD COLUMN gross_pnl_usdt REAL",
         "ALTER TABLE paper_positions ADD COLUMN fees_usdt REAL DEFAULT 0",
         "ALTER TABLE paper_positions ADD COLUMN funding_usdt REAL DEFAULT 0",
+        "ALTER TABLE paper_positions ADD COLUMN slippage_usdt REAL DEFAULT 0",
     ]:
         try:
             conn.execute(migration)
@@ -194,25 +202,37 @@ def _set_state(conn, key: str, value: str) -> None:
 
 # ── Trading cost helpers ──────────────────────────────────────────────────────
 
-def _fee_rate(exchange_id: str) -> float:
-    """Taker fee rate for this exchange; overridable via config."""
-    return cfg().get("paper_trader", {}).get(
-        "taker_fee_pct",
-        EXCHANGE_FEE_RATES.get(exchange_id, EXCHANGE_FEE_RATES["mexc"]),
-    )
+def _taker_rate(exchange_id: str) -> float:
+    """Taker fee rate — config taker_fee_pct overrides the per-exchange default."""
+    pt = cfg().get("paper_trader", {})
+    if "taker_fee_pct" in pt:
+        return pt["taker_fee_pct"]
+    return EXCHANGE_TAKER_RATES.get(exchange_id, EXCHANGE_TAKER_RATES["mexc"])
+
+
+def _maker_rate(exchange_id: str) -> float:
+    """Maker fee rate — used for TP exits (limit order, rests on book)."""
+    pt = cfg().get("paper_trader", {})
+    cfg_makers = pt.get("maker_fee_rates", {})
+    if exchange_id in cfg_makers:
+        return cfg_makers[exchange_id]
+    return EXCHANGE_MAKER_RATES.get(exchange_id, EXCHANGE_MAKER_RATES["mexc"])
 
 
 def _calc_fees(entry_price: float, exit_price: float, contracts: float,
-               exchange_id: str) -> float:
-    """Round-trip taker fees (entry + exit), always negative."""
-    rate = _fee_rate(exchange_id)
-    return -((contracts * entry_price * rate) + (contracts * exit_price * rate))
+               exchange_id: str, exit_reason: str) -> float:
+    """Round-trip fees: entry always taker; exit taker for SL/flip/timeout, maker for TP."""
+    entry_fee = contracts * entry_price * _taker_rate(exchange_id)
+    exit_rate  = _maker_rate(exchange_id) if exit_reason == "take_profit" else _taker_rate(exchange_id)
+    exit_fee   = contracts * exit_price * exit_rate
+    return -(entry_fee + exit_fee)
 
 
-def _calc_funding(direction: str, notional: float, opened_at: str) -> float:
-    """Funding P&L based on hold duration. Longs pay, shorts receive (positive-rate market)."""
+def _calc_funding(direction: str, notional: float, opened_at: str, pair: str) -> float:
+    """Funding P&L using per-pair 8h rate. Positive rate = longs pay; negative = shorts pay."""
     pt = cfg().get("paper_trader", {})
-    rate_8h = pt.get("funding_rate_8h", 0.0001)
+    rates = pt.get("funding_rates_8h", {})
+    rate_8h = rates.get(pair, pt.get("funding_rate_8h", 0.0001))
     try:
         open_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
         hours = (datetime.now(timezone.utc) - open_dt).total_seconds() / 3600
@@ -221,6 +241,22 @@ def _calc_funding(direction: str, notional: float, opened_at: str) -> float:
         return sign * notional * rate_8h * intervals
     except Exception:
         return 0.0
+
+
+def _calc_slippage(price: float, contracts: float, direction: str,
+                   slippage_pct: float, side: str) -> tuple[float, float]:
+    """Return (actual_price_after_slip, slippage_cost_usdt).
+    side='entry': long buys high, short sells low.
+    side='exit':  long sells low (SL), short buys high (SL).
+    slippage_cost is always negative (a cost).
+    """
+    slip = price * slippage_pct
+    if side == "entry":
+        actual = price + slip if direction == "long" else price - slip
+    else:
+        actual = price - slip if direction == "long" else price + slip
+    slip_cost = (actual - price) * contracts if direction == "long" else (price - actual) * contracts
+    return round(actual, 8), round(-abs(slip_cost), 8)
 
 
 # ── Circuit breaker ───────────────────────────────────────────────────────────
@@ -372,38 +408,64 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
 
 
 def close_position(conn, pos, exit_price: float, reason: str) -> float:
-    """Close a position, deduct fees/funding/slippage, return net PnL in USDT."""
-    pos = dict(pos)  # normalise sqlite3.Row → dict
+    """Close a position. Returns net PnL in USDT.
+
+    Cost breakdown stored per-column so the dashboard can show each component:
+      gross_pnl_usdt  — pure price movement (nominal entry → nominal exit)
+      slippage_usdt   — market-impact cost on entry + SL/timeout exit (negative)
+      fees_usdt       — exchange fees: entry taker + exit taker or maker (negative)
+      funding_usdt    — hold-period funding (negative for longs in positive-rate markets)
+      pnl_usdt        — net = sum of all four
+    """
+    pos = dict(pos)
     pt = cfg().get("paper_trader", {})
     exchange_id = pos.get("exchange") or "mexc"
+    direction   = pos["direction"]
+    pair        = pos["pair"]
+    contracts   = pos["contracts"]
+    entry_price = pos["entry_price"]
 
-    # Apply slippage to SL exits: market order fills slightly worse than stop price
-    actual_exit = exit_price
-    if reason == "stop_loss":
-        slip = exit_price * pt.get("slippage_pct", 0.0005)
-        actual_exit = round(
-            exit_price - slip if pos["direction"] == "long" else exit_price + slip, 8
+    # ── Entry slippage (market order at signal price) ─────────────────────────
+    entry_slip_pct = pt.get("entry_slippage_pct", 0.0002)
+    _actual_entry, entry_slip_cost = _calc_slippage(
+        entry_price, contracts, direction, entry_slip_pct, side="entry"
+    )
+
+    # ── Exit slippage: SL/timeout = market order; TP/flip = limit, no slip ────
+    market_exit_reasons = {"stop_loss", "timeout"}
+    if reason in market_exit_reasons:
+        actual_exit, exit_slip_cost = _calc_slippage(
+            exit_price, contracts, direction, pt.get("slippage_pct", 0.0005), side="exit"
         )
-
-    # Gross P&L — pure price movement (slippage already baked into actual_exit)
-    if pos["direction"] == "long":
-        gross_pnl = (actual_exit - pos["entry_price"]) * pos["contracts"]
     else:
-        gross_pnl = (pos["entry_price"] - actual_exit) * pos["contracts"]
+        actual_exit   = exit_price
+        exit_slip_cost = 0.0
 
-    fees_usdt    = _calc_fees(pos["entry_price"], actual_exit, pos["contracts"], exchange_id)
-    funding_usdt = _calc_funding(pos["direction"], pos["contracts"] * pos["entry_price"],
-                                 pos["opened_at"])
-    net_pnl = gross_pnl + fees_usdt + funding_usdt
+    total_slippage = round(entry_slip_cost + exit_slip_cost, 8)
+
+    # ── Gross P&L — nominal price movement, no execution costs ───────────────
+    if direction == "long":
+        gross_pnl = (exit_price - entry_price) * contracts
+    else:
+        gross_pnl = (entry_price - exit_price) * contracts
+
+    # ── Fees — entry taker; exit maker for TP, taker otherwise ───────────────
+    fees_usdt = _calc_fees(entry_price, exit_price, contracts, exchange_id, reason)
+
+    # ── Funding — per-pair rate × 8h intervals held ───────────────────────────
+    funding_usdt = _calc_funding(direction, contracts * entry_price, pos["opened_at"], pair)
+
+    net_pnl = gross_pnl + total_slippage + fees_usdt + funding_usdt
 
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """UPDATE paper_positions
            SET closed_at=?, exit_price=?, exit_reason=?,
-               gross_pnl_usdt=?, fees_usdt=?, funding_usdt=?, pnl_usdt=?
+               gross_pnl_usdt=?, slippage_usdt=?, fees_usdt=?, funding_usdt=?, pnl_usdt=?
            WHERE id=?""",
         (now, actual_exit, reason,
-         round(gross_pnl, 4), round(fees_usdt, 4), round(funding_usdt, 4), round(net_pnl, 4),
+         round(gross_pnl, 4), round(total_slippage, 4),
+         round(fees_usdt, 4), round(funding_usdt, 4), round(net_pnl, 4),
          pos["id"]),
     )
     conn.commit()
@@ -411,9 +473,10 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
 
     outcome = "WIN" if net_pnl >= 0 else "LOSS"
     logger.info(
-        f"Paper CLOSE [{pos['id']}] {pos['direction'].upper()} {pos['pair']} "
+        f"Paper CLOSE [{pos['id']}] {direction.upper()} {pair} "
         f"exit={actual_exit:.4f} reason={reason} "
-        f"gross={gross_pnl:+.2f} fees={fees_usdt:.2f} funding={funding_usdt:+.2f} "
+        f"gross={gross_pnl:+.2f} slip={total_slippage:.2f} "
+        f"fees={fees_usdt:.2f} funding={funding_usdt:+.2f} "
         f"net={net_pnl:+.2f} USDT [{outcome}]"
     )
     return net_pnl
