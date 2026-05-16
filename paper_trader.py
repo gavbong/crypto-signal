@@ -25,6 +25,14 @@ LEVERAGE              = 20       # 20x: liquidation requires ~5% adverse move, s
 RISK_PCT              = 0.01     # 1% per trade; 5 pairs × 1% = 5% max simultaneous exposure
 MIN_REGIME_CONFIDENCE = 0.20     # skip signals where regime classification is very uncertain
 
+# Taker fee rates per exchange (applied to both entry and exit legs)
+EXCHANGE_FEE_RATES: dict[str, float] = {
+    "mexc":        0.0006,   # 0.06%
+    "binance":     0.0004,   # 0.04%
+    "okx":         0.0005,   # 0.05%
+    "hyperliquid": 0.00035,  # 0.035%
+}
+
 # MEXC futures minimum lot sizes per pair
 MIN_CONTRACTS: dict[str, float] = {
     "BTC/USDT:USDT": 0.001,
@@ -41,23 +49,26 @@ LOG_DIR = Path("logs/paper_trade")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_positions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    signal_id   INTEGER NOT NULL,
-    pair        TEXT    NOT NULL,
-    direction   TEXT    NOT NULL,
-    strategy    TEXT    NOT NULL,
-    regime      TEXT    NOT NULL,
-    entry_price REAL    NOT NULL,
-    contracts   REAL    NOT NULL,
-    margin_usdt REAL    NOT NULL,
-    stop_loss   REAL    NOT NULL,
-    take_profit REAL    NOT NULL,
-    opened_at   TIMESTAMP NOT NULL,
-    closed_at   TIMESTAMP,
-    exit_price  REAL,
-    exit_reason TEXT,
-    pnl_usdt    REAL,
-    last_price  REAL
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id       INTEGER NOT NULL,
+    pair            TEXT    NOT NULL,
+    direction       TEXT    NOT NULL,
+    strategy        TEXT    NOT NULL,
+    regime          TEXT    NOT NULL,
+    entry_price     REAL    NOT NULL,
+    contracts       REAL    NOT NULL,
+    margin_usdt     REAL    NOT NULL,
+    stop_loss       REAL    NOT NULL,
+    take_profit     REAL    NOT NULL,
+    opened_at       TIMESTAMP NOT NULL,
+    closed_at       TIMESTAMP,
+    exit_price      REAL,
+    exit_reason     TEXT,
+    gross_pnl_usdt  REAL,
+    fees_usdt       REAL    DEFAULT 0,
+    funding_usdt    REAL    DEFAULT 0,
+    pnl_usdt        REAL,
+    last_price      REAL
 );
 
 CREATE TABLE IF NOT EXISTS paper_daily_pnl (
@@ -92,13 +103,19 @@ def init_paper_db(conn) -> None:
         pass  # column already exists
     for migration in [
         "ALTER TABLE paper_positions ADD COLUMN exchange TEXT NOT NULL DEFAULT 'mexc'",
+        "ALTER TABLE paper_positions ADD COLUMN gross_pnl_usdt REAL",
+        "ALTER TABLE paper_positions ADD COLUMN fees_usdt REAL DEFAULT 0",
+        "ALTER TABLE paper_positions ADD COLUMN funding_usdt REAL DEFAULT 0",
     ]:
         try:
             conn.execute(migration)
             conn.commit()
         except Exception:
             pass  # column already exists
-    for key, default in [("last_signal_id", "0"), ("day_number", "0")]:
+    for key, default in [
+        ("last_signal_id", "0"), ("day_number", "0"),
+        ("consecutive_losses", "0"), ("circuit_breaker_until", "0"),
+    ]:
         conn.execute(
             "INSERT OR IGNORE INTO paper_state (key, value) VALUES (?, ?)",
             (key, default),
@@ -175,6 +192,76 @@ def _set_state(conn, key: str, value: str) -> None:
     conn.commit()
 
 
+# ── Trading cost helpers ──────────────────────────────────────────────────────
+
+def _fee_rate(exchange_id: str) -> float:
+    """Taker fee rate for this exchange; overridable via config."""
+    return cfg().get("paper_trader", {}).get(
+        "taker_fee_pct",
+        EXCHANGE_FEE_RATES.get(exchange_id, EXCHANGE_FEE_RATES["mexc"]),
+    )
+
+
+def _calc_fees(entry_price: float, exit_price: float, contracts: float,
+               exchange_id: str) -> float:
+    """Round-trip taker fees (entry + exit), always negative."""
+    rate = _fee_rate(exchange_id)
+    return -((contracts * entry_price * rate) + (contracts * exit_price * rate))
+
+
+def _calc_funding(direction: str, notional: float, opened_at: str) -> float:
+    """Funding P&L based on hold duration. Longs pay, shorts receive (positive-rate market)."""
+    pt = cfg().get("paper_trader", {})
+    rate_8h = pt.get("funding_rate_8h", 0.0001)
+    try:
+        open_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+        hours = (datetime.now(timezone.utc) - open_dt).total_seconds() / 3600
+        intervals = hours / 8
+        sign = -1 if direction == "long" else +1
+        return sign * notional * rate_8h * intervals
+    except Exception:
+        return 0.0
+
+
+# ── Circuit breaker ───────────────────────────────────────────────────────────
+
+def _circuit_breaker_active(conn) -> bool:
+    """Return True if consecutive-loss pause is in effect."""
+    until = _get_state(conn, "circuit_breaker_until")
+    if until and until != "0":
+        try:
+            until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+            if datetime.now(timezone.utc) < until_dt:
+                return True
+            _set_state(conn, "circuit_breaker_until", "0")
+            _set_state(conn, "consecutive_losses", "0")
+        except Exception:
+            pass
+    return False
+
+
+def _record_close_outcome(conn, net_pnl: float) -> None:
+    """Track consecutive losses; trip circuit breaker when threshold hit."""
+    pt = cfg().get("paper_trader", {})
+    max_losses = pt.get("circuit_breaker_losses", 5)
+    cooldown_h = pt.get("circuit_breaker_cooldown_hours", 4)
+
+    if net_pnl >= 0:
+        _set_state(conn, "consecutive_losses", "0")
+        return
+
+    consecutive = int(_get_state(conn, "consecutive_losses") or "0") + 1
+    _set_state(conn, "consecutive_losses", str(consecutive))
+    if consecutive >= max_losses:
+        from datetime import timedelta
+        until = (datetime.now(timezone.utc) + timedelta(hours=cooldown_h)).isoformat()
+        _set_state(conn, "circuit_breaker_until", until)
+        logger.warning(
+            f"Paper: circuit breaker — {consecutive} consecutive losses. "
+            f"Pausing new entries until {until}"
+        )
+
+
 # ── Position management ───────────────────────────────────────────────────────
 
 def open_position(conn, signal: dict, live_price: float) -> dict | None:
@@ -186,6 +273,11 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     """
     pair      = signal["pair"]
     direction = signal["direction"]
+
+    # Circuit breaker gate
+    if _circuit_breaker_active(conn):
+        logger.debug(f"Paper: circuit breaker active — skipping signal {signal.get('id')}")
+        return None
 
     # Regime confidence gates
     conf = signal.get("regime_confidence")
@@ -280,27 +372,51 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
 
 
 def close_position(conn, pos, exit_price: float, reason: str) -> float:
-    """Close a position and return PnL in USDT."""
+    """Close a position, deduct fees/funding/slippage, return net PnL in USDT."""
+    pos = dict(pos)  # normalise sqlite3.Row → dict
+    pt = cfg().get("paper_trader", {})
+    exchange_id = pos.get("exchange") or "mexc"
+
+    # Apply slippage to SL exits: market order fills slightly worse than stop price
+    actual_exit = exit_price
+    if reason == "stop_loss":
+        slip = exit_price * pt.get("slippage_pct", 0.0005)
+        actual_exit = round(
+            exit_price - slip if pos["direction"] == "long" else exit_price + slip, 8
+        )
+
+    # Gross P&L — pure price movement (slippage already baked into actual_exit)
     if pos["direction"] == "long":
-        pnl = (exit_price - pos["entry_price"]) * pos["contracts"]
+        gross_pnl = (actual_exit - pos["entry_price"]) * pos["contracts"]
     else:
-        pnl = (pos["entry_price"] - exit_price) * pos["contracts"]
+        gross_pnl = (pos["entry_price"] - actual_exit) * pos["contracts"]
+
+    fees_usdt    = _calc_fees(pos["entry_price"], actual_exit, pos["contracts"], exchange_id)
+    funding_usdt = _calc_funding(pos["direction"], pos["contracts"] * pos["entry_price"],
+                                 pos["opened_at"])
+    net_pnl = gross_pnl + fees_usdt + funding_usdt
 
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """UPDATE paper_positions
-           SET closed_at=?, exit_price=?, exit_reason=?, pnl_usdt=?
+           SET closed_at=?, exit_price=?, exit_reason=?,
+               gross_pnl_usdt=?, fees_usdt=?, funding_usdt=?, pnl_usdt=?
            WHERE id=?""",
-        (now, exit_price, reason, pnl, pos["id"]),
+        (now, actual_exit, reason,
+         round(gross_pnl, 4), round(fees_usdt, 4), round(funding_usdt, 4), round(net_pnl, 4),
+         pos["id"]),
     )
     conn.commit()
+    _record_close_outcome(conn, net_pnl)
 
-    outcome = "WIN" if pnl >= 0 else "LOSS"
+    outcome = "WIN" if net_pnl >= 0 else "LOSS"
     logger.info(
         f"Paper CLOSE [{pos['id']}] {pos['direction'].upper()} {pos['pair']} "
-        f"exit={exit_price:.4f} reason={reason} pnl={pnl:+.2f} USDT [{outcome}]"
+        f"exit={actual_exit:.4f} reason={reason} "
+        f"gross={gross_pnl:+.2f} fees={fees_usdt:.2f} funding={funding_usdt:+.2f} "
+        f"net={net_pnl:+.2f} USDT [{outcome}]"
     )
-    return pnl
+    return net_pnl
 
 
 # ── Poll cycle ────────────────────────────────────────────────────────────────
@@ -340,6 +456,29 @@ def check_positions(conn, exchange_map: dict) -> int:
                 close_position(conn, pos, live, "take_profit")
                 closed += 1
     conn.commit()
+    return closed
+
+
+def check_timeouts(conn, exchange_map: dict) -> int:
+    """Close positions open longer than position_timeout_hours at market price."""
+    from datetime import timedelta
+    timeout_h = cfg().get("paper_trader", {}).get("position_timeout_hours", 48)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
+    rows = conn.execute(
+        "SELECT * FROM paper_positions WHERE exit_price IS NULL AND opened_at < ?",
+        (cutoff,),
+    ).fetchall()
+    if not rows:
+        return 0
+    prices = _fetch_tickers(exchange_map, rows)
+    closed = 0
+    for pos in rows:
+        exc_id = (dict(pos).get("exchange") or "mexc")
+        live = prices.get((exc_id, pos["pair"]))
+        if live is None:
+            continue
+        close_position(conn, dict(pos), live, "timeout")
+        closed += 1
     return closed
 
 
@@ -426,8 +565,9 @@ def snapshot_day(conn, exchange_map: dict) -> dict:
 def poll_job(exchange_map: dict) -> None:
     with get_conn() as conn:
         closed = check_positions(conn, exchange_map)
-        if closed:
-            logger.info(f"Paper: closed {closed} position(s) this tick")
+        timed_out = check_timeouts(conn, exchange_map)
+        if closed or timed_out:
+            logger.info(f"Paper: closed {closed} position(s) · timed out {timed_out} this tick")
 
         signals = poll_new_signals(conn)
         for sig in signals:
