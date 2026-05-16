@@ -76,7 +76,7 @@ def _collect_candidates(
     candidates = []
     c = cfg()
     sq_cfg = c.get("signal_quality", {})
-    min_quality = sq_cfg.get("min_quality_score", 55)
+    min_quality = sq_cfg.get("min_quality_score", 40)
     rg_gates = c.get("regime_gates", {}).get("min_regime_age_candles", {})
 
     regime_context_for_llm = {
