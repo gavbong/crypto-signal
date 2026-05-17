@@ -11,6 +11,7 @@ import sys
 import re
 import json
 import requests
+from math import log1p
 from datetime import datetime, timezone
 from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -613,6 +614,113 @@ def poll_positions_job() -> None:
     logger.debug(f"PM poll complete | traders={len(wallets)}")
 
 
+def discover_poly_traders_job() -> None:
+    """Weekly: scan top markets for new high-value traders not yet in poly_traders."""
+    c           = cfg().get("polymarket_trader", {})
+    n_markets   = int(c.get("poly_discovery_markets", 20))
+    min_pos_usdt = float(c.get("poly_min_position_usdt", 1_000))
+    top_n       = int(c.get("poly_discovery_top_n", 5))
+
+    # Step 1: fetch top markets by volume
+    try:
+        resp = requests.get(
+            _GAMMA_MARKETS,
+            params={"limit": n_markets, "_sort": "volume", "_order": "DESC"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        markets = resp.json()
+        if isinstance(markets, dict):
+            markets = markets.get("data") or markets.get("markets") or []
+    except Exception as e:
+        logger.error(f"Discovery: gamma markets fetch failed: {e}")
+        return
+
+    if not markets:
+        logger.warning("Discovery: no markets returned from gamma API — skipping")
+        return
+
+    # Step 2: collect position holders across markets
+    wallet_stats: dict[str, dict] = {}
+
+    for market in markets[:n_markets]:
+        condition_id = market.get("conditionId") or market.get("condition_id")
+        if not condition_id:
+            continue
+        try:
+            resp = requests.get(
+                _PM_POSITIONS,
+                params={"market": condition_id, "limit": 100},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            holders = resp.json()
+            if isinstance(holders, dict):
+                holders = holders.get("data") or holders.get("positions") or []
+        except Exception as e:
+            logger.debug(f"Discovery: positions for {condition_id[:12]}… failed: {e}")
+            continue
+
+        for h in holders:
+            wallet = h.get("proxyWallet") or h.get("proxy_wallet")
+            if not wallet:
+                continue
+            size = float(h.get("size") or h.get("currentValue") or 0)
+            if size < min_pos_usdt:
+                continue
+            if wallet not in wallet_stats:
+                wallet_stats[wallet] = {"total_usdt": 0.0, "markets": set()}
+            wallet_stats[wallet]["total_usdt"] += size
+            wallet_stats[wallet]["markets"].add(condition_id)
+
+    if not wallet_stats:
+        logger.warning("Discovery: no qualifying holders found — skipping")
+        return
+
+    # Step 3: score, filter to new wallets only, add top_n
+    scored = sorted(
+        [
+            {
+                "wallet": w,
+                "score": log1p(s["total_usdt"]) * log1p(len(s["markets"])),
+                "total_usdt": s["total_usdt"],
+                "markets_count": len(s["markets"]),
+            }
+            for w, s in wallet_stats.items()
+        ],
+        key=lambda r: r["score"],
+        reverse=True,
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+
+    with get_conn() as conn:
+        existing = {
+            r["wallet"]
+            for r in conn.execute("SELECT wallet FROM poly_traders").fetchall()
+        }
+        for entry in scored:
+            if added >= top_n:
+                break
+            wallet = entry["wallet"]
+            if wallet in existing:
+                continue
+            conn.execute(
+                """INSERT INTO poly_traders (wallet, alias, pnl_30d, volume_30d, last_refreshed, active)
+                   VALUES (?, NULL, NULL, ?, ?, 1)
+                   ON CONFLICT(wallet) DO NOTHING""",
+                (wallet, entry["total_usdt"], now),
+            )
+            added += 1
+        conn.commit()
+
+    logger.info(
+        f"PM discovery: {len(markets)} markets scanned, "
+        f"{len(wallet_stats)} holders, {added} new wallets added"
+    )
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -655,6 +763,11 @@ def main() -> None:
     scheduler.add_job(
         refresh_leaderboard_job,
         CronTrigger(day_of_week="sun", hour=0, minute=30, timezone="UTC"),
+        misfire_grace_time=3600,
+    )
+    scheduler.add_job(
+        discover_poly_traders_job,
+        CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
         misfire_grace_time=3600,
     )
 

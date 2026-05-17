@@ -24,12 +24,19 @@ from apscheduler.triggers.cron import CronTrigger
 
 from utils.config import get as cfg
 from db.schema import get_conn
-from alerts.telegram import send_copy_open_alert, send_copy_close_alert
+import os
+from alerts.telegram import (
+    send_copy_open_alert, send_copy_close_alert,
+    send_convergence_alert, send_rotation_alert,
+)
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
 _HL_INFO   = "https://api.hyperliquid.xyz/info"
 _HL_LEADER = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
+
+_ARBISCAN_API      = "https://api.arbiscan.io/api"
+_ARBISCAN_USDC     = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"  # native USDC on Arbitrum
 
 # ── DB schema ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +102,14 @@ CREATE TABLE IF NOT EXISTS hl_candidates (
     promoted_at              TIMESTAMP,
     dropped_at               TIMESTAMP,
     status                   TEXT NOT NULL DEFAULT 'watching'
+);
+
+CREATE TABLE IF NOT EXISTS wallet_graph (
+    wallet           TEXT NOT NULL,
+    funder_address   TEXT NOT NULL,
+    chain            TEXT NOT NULL DEFAULT 'arbitrum',
+    detected_at      TIMESTAMP NOT NULL,
+    PRIMARY KEY (wallet, funder_address)
 );
 """
 
@@ -347,6 +362,21 @@ def _copy_open(
     )
     send_copy_open_alert(wallet, coin, pos["side"], margin_usdt, entry, balance_after)
 
+    # Check for convergent algo signal within correlation window
+    window_h = int(cfg().get("correlation_window_hours", 4))
+    sig = conn.execute(
+        """SELECT id, strategy, fired_at FROM signals
+           WHERE pair LIKE ? AND direction=?
+             AND backtest_run_id IS NULL
+             AND fired_at >= datetime(?, ?)
+             AND fired_at <= datetime(?, ?)
+           ORDER BY fired_at DESC LIMIT 1""",
+        (f"{coin}/%", pos["side"], now, f"-{window_h} hours", now, f"+{window_h} hours"),
+    ).fetchone()
+    if sig:
+        logger.info(f"Convergence: {coin} {pos['side']} copy + signal [{sig['strategy']}]")
+        send_convergence_alert(wallet, coin, pos["side"], now, sig["strategy"], sig["fired_at"])
+
 
 def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) -> None:
     pair = _coin_to_pair(coin)
@@ -501,6 +531,87 @@ def refresh_leaderboard_job() -> None:
     )
 
 
+def _fetch_arbiscan_funder(wallet: str, api_key: str) -> str | None:
+    """Return the first USDC sender to this wallet on Arbitrum, or None on error/not-found."""
+    params = {
+        "module": "account",
+        "action": "tokentx",
+        "address": wallet,
+        "contractaddress": _ARBISCAN_USDC,
+        "sort": "asc",
+        "page": "1",
+        "offset": "5",
+    }
+    if api_key:
+        params["apikey"] = api_key
+    try:
+        resp = requests.get(_ARBISCAN_API, params=params, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("status") != "1":
+            return None
+        for tx in data.get("result", []):
+            if tx.get("to", "").lower() == wallet.lower():
+                return tx.get("from", "").lower()
+    except Exception as e:
+        logger.warning(f"Arbiscan lookup failed for {wallet[:12]}…: {e}")
+    return None
+
+
+def _run_arbiscan_lookups(conn, c: dict) -> None:
+    """Fetch Arbiscan funder for up to 3 new watching candidates per daily cycle.
+    Fast-tracks candidates whose funder matches an already-promoted wallet's funder."""
+    api_key = os.environ.get("ARBISCAN_API_KEY") or c.get("arbiscan_api_key", "")
+    promote_cycles = int(c.get("candidate_promote_cycles", 3))
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Candidates not yet in wallet_graph (sentinel "" counts as looked-up)
+    new_cands = conn.execute(
+        """SELECT wallet FROM hl_candidates
+           WHERE status='watching'
+             AND wallet NOT IN (SELECT wallet FROM wallet_graph)
+           LIMIT 3"""
+    ).fetchall()
+
+    if not new_cands:
+        return
+
+    # Funder → wallet map for already-promoted wallets
+    promoted_funders: dict[str, str] = {
+        r["funder_address"]: r["wallet"]
+        for r in conn.execute(
+            """SELECT wg.funder_address, wg.wallet
+               FROM wallet_graph wg
+               JOIN hl_candidates hc ON hc.wallet = wg.wallet
+               WHERE hc.status = 'promoted' AND wg.funder_address != ''"""
+        ).fetchall()
+    }
+
+    for row in new_cands:
+        wallet = row["wallet"]
+        funder = _fetch_arbiscan_funder(wallet, api_key)
+        # Record result — empty string = looked up but no funder found (sentinel)
+        conn.execute(
+            """INSERT OR REPLACE INTO wallet_graph (wallet, funder_address, chain, detected_at)
+               VALUES (?, ?, 'arbitrum', ?)""",
+            (wallet, funder or "", now),
+        )
+        conn.commit()
+
+        if funder and funder in promoted_funders:
+            known_wallet = promoted_funders[funder]
+            conn.execute(
+                "UPDATE hl_candidates SET cycles_above_threshold=? WHERE wallet=?",
+                (promote_cycles, wallet),
+            )
+            conn.commit()
+            logger.info(
+                f"Rotation detected: {wallet[:12]}… funded by same source as "
+                f"{known_wallet[:12]}… — fast-tracked ({promote_cycles} cycles)"
+            )
+            send_rotation_alert(wallet, known_wallet, funder)
+
+
 def score_candidates_job() -> None:
     """Daily: increment cycle counters, promote/drop hl_candidates."""
     c = cfg().get("copy_trader", {})
@@ -572,6 +683,10 @@ def score_candidates_job() -> None:
         logger.info(f"Score candidates: promoted={promoted} dropped={dropped}")
     else:
         logger.debug("Score candidates: no promotions or drops this cycle")
+
+    # Run Arbiscan lookups for new candidates (max 3 per cycle, rate-limited)
+    with get_conn() as conn:
+        _run_arbiscan_lookups(conn, c)
 
 
 def _check_copy_timeouts(conn, mids: dict) -> int:

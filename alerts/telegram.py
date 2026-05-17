@@ -263,6 +263,45 @@ def send_poly_close_alert(
     return _send_copy(text)
 
 
+def send_convergence_alert(
+    wallet: str, coin: str, direction: str,
+    copy_opened_at: str, signal_strategy: str, signal_fired_at: str,
+) -> bool:
+    colour = "🟢" if direction == "long" else "🔴"
+    hl_url = f"https://app.hyperliquid.xyz/explorer/address/{wallet}"
+    short_wallet = f'<a href="{hl_url}">{wallet[:6]}…{wallet[-4:]}</a>'
+    text = (
+        f"⚡ <b>CONVERGENCE</b>  <code>{coin}</code>  {colour} {direction.upper()}\n"
+        f"\n"
+        f"<b>Trader  </b>  <code>{short_wallet}</code>\n"
+        f"<b>Strategy</b>  {signal_strategy}\n"
+        f"<b>Signal  </b>  <code>{signal_fired_at[:16]}</code>\n"
+        f"<b>Copied  </b>  <code>{copy_opened_at[:16]}</code>\n"
+        f"\n"
+        f"<i>Copy + algo signal agree · high confidence</i>"
+    )
+    return _send_copy(text)
+
+
+def send_rotation_alert(
+    new_wallet: str, known_wallet: str, funder: str,
+) -> bool:
+    hl_url_new   = f"https://app.hyperliquid.xyz/explorer/address/{new_wallet}"
+    hl_url_known = f"https://app.hyperliquid.xyz/explorer/address/{known_wallet}"
+    short_new   = f'<a href="{hl_url_new}">{new_wallet[:6]}…{new_wallet[-4:]}</a>'
+    short_known = f'<a href="{hl_url_known}">{known_wallet[:6]}…{known_wallet[-4:]}</a>'
+    text = (
+        f"🔄 <b>ROTATION DETECTED</b>\n"
+        f"\n"
+        f"<b>New wallet  </b>  <code>{short_new}</code>\n"
+        f"<b>Known wallet</b>  <code>{short_known}</code>\n"
+        f"<b>Funder      </b>  <code>{funder[:10]}…</code>\n"
+        f"\n"
+        f"<i>Fast-tracked to promotion · same funding source</i>"
+    )
+    return _send_copy(text)
+
+
 def send_copy_close_alert(
     wallet: str, coin: str, direction: str,
     entry_price: float, exit_price: float,
