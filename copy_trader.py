@@ -208,7 +208,7 @@ def fetch_leaderboard(min_pnl: float, top_n: int) -> tuple[list[dict], int]:
                 roi_7d = raw_roi
             elif window == "month":
                 pnl_30d = float(stats.get("pnl", 0) or 0)
-                trade_count = int(stats.get("vlm", 0) or 0)  # vlm used as trade proxy
+                trade_count = int(float(stats.get("vlm", 0) or 0))  # vlm is USD volume float
 
         if pnl_30d is None or pnl_30d < min_pnl:
             continue
