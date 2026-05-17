@@ -27,6 +27,8 @@ exchanges:
 
 shadow_mode: false             # true = log only, false = live alerts
 
+correlation_window_hours: 4    # ±hours window to match a copy position open with an algo signal
+
 timeframe: "15m"
 candle_limit: 100
 
@@ -157,6 +159,7 @@ copy_trader:
   candidate_drop_cycles: 2      # consecutive daily cycles below threshold → drop from watchlist
   max_candidates: 50            # hard cap on hl_candidates rows in 'watching' status; evict lowest scorer
   min_leaderboard_rows: 10000   # outage guard — skip refresh if raw HL response has fewer rows than this
+  arbiscan_api_key: ""          # optional; free tier (5 req/s, 100K/day) works without key. Set via ARBISCAN_API_KEY env var.
 
 paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
@@ -205,3 +208,6 @@ polymarket_trader:
   # Polymarket has no public leaderboard API — add top trader wallet addresses here.
   # Find them at polymarket.com/leaderboard. The service will track their positions.
   watched_wallets: []
+  poly_discovery_markets: 20    # top markets by volume to scan for wallet discovery
+  poly_min_position_usdt: 1000  # min position value (shares × price) to qualify
+  poly_discovery_top_n: 5       # max new wallets to add per weekly discovery run

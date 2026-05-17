@@ -573,6 +573,16 @@ body{
     </div>
   </div>
 
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Watching</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">candidates · composite score · promotes after 3 cycles</span>
+    </div>
+    <div class="panel-body" id="copy-candidates-body">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    </div>
+  </div>
+
   <div class="mid-grid">
 
     <div class="panel" id="copy-positions-panel">
@@ -1633,8 +1643,11 @@ function renderCopyPositions(positions) {
     const pnl = p.unrealized_pnl != null
       ? `<span class="${p.unrealized_pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.unrealized_pnl >= 0 ? '+' : ''}${p.unrealized_pnl.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
+    const corrBadge = p.corr_signal_id
+      ? `<span class="badge" style="background:rgba(240,165,0,0.15);color:var(--accent);border:1px solid var(--accent)" title="Algo signal: ${p.corr_strategy || ''}">CORR</span>`
+      : '';
     return `<div class="pos-row">
-      <div class="pos-pair">${fmtPair(p.pair)} <span class="copy-wallet">${fmtWallet(p.trader_wallet, 'hl')}</span></div>
+      <div class="pos-pair">${fmtPair(p.pair)} <span class="copy-wallet">${fmtWallet(p.trader_wallet, 'hl')}</span>${corrBadge}</div>
       <div class="pos-meta">
         <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
         <span class="pos-entry">entry ${fmt(p.entry_price)}</span>
@@ -1643,6 +1656,45 @@ function renderCopyPositions(positions) {
       <div class="pos-pnl">${pnl}</div>
     </div>`;
   }).join('');
+}
+
+function renderCopyCandidates(data) {
+  const body = document.getElementById('copy-candidates-body');
+  const candidates = data.candidates || [];
+  if (!candidates.length) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No candidates watching — leaderboard scores weekly.</span>';
+    return;
+  }
+  body.innerHTML = `<table class="copy-tbl" style="width:100%">
+    <thead><tr>
+      <th>Wallet</th>
+      <th class="r">Score</th>
+      <th class="r">7d PnL</th>
+      <th class="r">30d PnL</th>
+      <th class="r">Cycles left</th>
+      <th>Since</th>
+    </tr></thead>
+    <tbody>${candidates.map(c => {
+      const rotBadge = c.is_rotation
+        ? `<span class="badge" style="background:rgba(240,165,0,0.15);color:var(--accent);border:1px solid var(--accent);margin-left:4px" title="Shares funder with a promoted wallet">↺ rotation</span>`
+        : '';
+      const cycles = c.cycles_until_promotion;
+      const cyclesStr = cycles === 0
+        ? '<span style="color:var(--long)">Promoting…</span>'
+        : `${cycles} day${cycles !== 1 ? 's' : ''}`;
+      const pnl7 = c.pnl_7d != null ? (c.pnl_7d >= 0 ? '+' : '') + '$' + Math.abs(c.pnl_7d).toLocaleString(undefined, {maximumFractionDigits: 0}) : '—';
+      const pnl7Color = c.pnl_7d > 0 ? 'var(--long)' : c.pnl_7d < 0 ? 'var(--short)' : 'var(--muted)';
+      return `<tr>
+        <td><span class="copy-wallet">${fmtWallet(c.wallet, 'hl')}</span>${rotBadge}</td>
+        <td class="r td-mono" style="color:var(--accent)">${c.composite_score.toFixed(2)}</td>
+        <td class="r td-mono" style="color:${pnl7Color}">${pnl7}</td>
+        <td class="r td-mono" style="color:var(--long)">+$${(c.pnl_30d||0).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+        <td class="r td-mono">${cyclesStr}</td>
+        <td class="td-date">${c.first_seen ? fmtDT(c.first_seen) : '—'}</td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
 }
 
 function renderCopyHistory(trades) {
@@ -1922,18 +1974,20 @@ async function refreshPoly() {
 
 async function refreshCopy() {
   try {
-    const [accRes, tradersRes, posRes, histRes, cmpRes] = await Promise.all([
+    const [accRes, tradersRes, posRes, histRes, cmpRes, candRes] = await Promise.all([
       fetch('/api/copy/account'),
       fetch('/api/copy/traders'),
       fetch('/api/copy/positions'),
       fetch('/api/copy/history'),
       fetch('/api/copy/comparison'),
+      fetch('/api/copy/candidates'),
     ]);
-    const [acc, traders, pos, hist, cmp] = await Promise.all([
-      accRes.json(), tradersRes.json(), posRes.json(), histRes.json(), cmpRes.json(),
+    const [acc, traders, pos, hist, cmp, cand] = await Promise.all([
+      accRes.json(), tradersRes.json(), posRes.json(), histRes.json(), cmpRes.json(), candRes.json(),
     ]);
     renderCopyAccount(acc);
     renderCopyTraders(traders.traders || []);
+    renderCopyCandidates(cand);
     renderCopyPositions(pos.positions || []);
     renderCopyHistory(hist.trades || []);
     renderCopyChart(cmp.copy || [], cmp.paper || []);

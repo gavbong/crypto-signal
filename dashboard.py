@@ -606,11 +606,34 @@ def create_app() -> Flask:
     @app.route("/api/copy/positions")
     def api_copy_positions():
         _auth()
+        window_h = int(cfg().get("correlation_window_hours", 4))
+        win_neg = f"-{window_h} hours"
+        win_pos = f"+{window_h} hours"
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT id, trader_wallet, pair, direction, entry_price, last_price,
-                          contracts, margin_usdt, opened_at
-                   FROM copy_positions WHERE closed_at IS NULL ORDER BY opened_at DESC"""
+                """SELECT cp.id, cp.trader_wallet, cp.pair, cp.direction,
+                          cp.entry_price, cp.last_price, cp.contracts,
+                          cp.margin_usdt, cp.opened_at,
+                          (SELECT s.id FROM signals s
+                           WHERE INSTR(cp.pair, '/') > 0
+                             AND s.pair LIKE SUBSTR(cp.pair, 1, INSTR(cp.pair, '/') - 1) || '/%'
+                             AND s.direction = cp.direction
+                             AND s.backtest_run_id IS NULL
+                             AND s.fired_at >= datetime(cp.opened_at, ?)
+                             AND s.fired_at <= datetime(cp.opened_at, ?)
+                           ORDER BY s.fired_at DESC LIMIT 1) as corr_signal_id,
+                          (SELECT s.strategy FROM signals s
+                           WHERE INSTR(cp.pair, '/') > 0
+                             AND s.pair LIKE SUBSTR(cp.pair, 1, INSTR(cp.pair, '/') - 1) || '/%'
+                             AND s.direction = cp.direction
+                             AND s.backtest_run_id IS NULL
+                             AND s.fired_at >= datetime(cp.opened_at, ?)
+                             AND s.fired_at <= datetime(cp.opened_at, ?)
+                           ORDER BY s.fired_at DESC LIMIT 1) as corr_strategy
+                   FROM copy_positions cp
+                   WHERE cp.closed_at IS NULL
+                   ORDER BY cp.opened_at DESC""",
+                (win_neg, win_pos, win_neg, win_pos),
             ).fetchall()
 
         def _unrealized(r):
@@ -632,9 +655,50 @@ def create_app() -> Flask:
                     "margin_usdt": r["margin_usdt"],
                     "unrealized_pnl": _unrealized(r),
                     "opened_at": _normalize_ts(r["opened_at"]),
+                    "corr_signal_id": r["corr_signal_id"],
+                    "corr_strategy": r["corr_strategy"],
                 }
                 for r in rows
             ]
+        })
+
+    @app.route("/api/copy/candidates")
+    def api_copy_candidates():
+        _auth()
+        promote_cycles = int(cfg().get("copy_trader", {}).get("candidate_promote_cycles", 3))
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT hc.wallet, hc.composite_score, hc.pnl_7d, hc.pnl_30d,
+                          hc.cycles_above_threshold, hc.first_seen,
+                          CASE WHEN wg.funder_address IS NOT NULL
+                               AND wg.funder_address != ''
+                               AND EXISTS (
+                                   SELECT 1 FROM wallet_graph wg2
+                                   JOIN hl_candidates hc2 ON hc2.wallet = wg2.wallet
+                                   WHERE hc2.status = 'promoted'
+                                     AND wg2.funder_address = wg.funder_address
+                               )
+                          THEN 1 ELSE 0 END as is_rotation
+                   FROM hl_candidates hc
+                   LEFT JOIN wallet_graph wg ON wg.wallet = hc.wallet AND wg.funder_address != ''
+                   WHERE hc.status = 'watching'
+                   ORDER BY hc.composite_score DESC"""
+            ).fetchall()
+        return jsonify({
+            "candidates": [
+                {
+                    "wallet": r["wallet"],
+                    "composite_score": r["composite_score"],
+                    "pnl_7d": r["pnl_7d"],
+                    "pnl_30d": r["pnl_30d"],
+                    "cycles": r["cycles_above_threshold"],
+                    "cycles_until_promotion": max(0, promote_cycles - r["cycles_above_threshold"]),
+                    "first_seen": _normalize_ts(r["first_seen"]),
+                    "is_rotation": bool(r["is_rotation"]),
+                }
+                for r in rows
+            ],
+            "promote_cycles": promote_cycles,
         })
 
     @app.route("/api/copy/history")
