@@ -590,7 +590,7 @@ body{
         <span class="panel-title">Open Copy Positions</span>
         <span class="badge b-live"><span style="font-size:7px">●</span> Shadow</span>
       </div>
-      <div id="copy-positions-body" style="padding:14px 16px">
+      <div id="copy-positions-body" style="padding:0;max-height:320px;overflow-y:auto">
         <div class="sig-empty">
           <span class="sig-empty-label">No open positions</span>
           <span class="sig-empty-ts">waiting for tracked traders to open positions</span>
@@ -1638,24 +1638,35 @@ function renderCopyPositions(positions) {
     </div>`;
     return;
   }
-  body.innerHTML = positions.map(p => {
-    const dc = p.direction === 'long' ? 'b-long' : 'b-short';
-    const pnl = p.unrealized_pnl != null
-      ? `<span class="${p.unrealized_pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${p.unrealized_pnl >= 0 ? '+' : ''}${p.unrealized_pnl.toFixed(2)}</span>`
-      : '<span style="color:var(--muted)">—</span>';
-    const corrBadge = p.corr_signal_id
-      ? `<span class="badge" style="background:rgba(240,165,0,0.15);color:var(--accent);border:1px solid var(--accent)" title="Algo signal: ${p.corr_strategy || ''}">CORR</span>`
-      : '';
-    return `<div class="pos-row">
-      <div class="pos-pair">${fmtPair(p.pair)} <span class="copy-wallet">${fmtWallet(p.trader_wallet, 'hl')}</span>${corrBadge}</div>
-      <div class="pos-meta">
-        <span class="badge ${dc}">${p.direction.toUpperCase()}</span>
-        <span class="pos-entry">entry ${fmt(p.entry_price)}</span>
-        ${p.last_price != null ? `<span class="pos-live">now ${fmt(p.last_price)}</span>` : ''}
-      </div>
-      <div class="pos-pnl">${pnl}</div>
-    </div>`;
-  }).join('');
+  body.innerHTML = `<table class="copy-tbl" style="width:100%">
+    <thead><tr>
+      <th></th>
+      <th>Pair</th>
+      <th class="r">Entry</th>
+      <th class="r">Now</th>
+      <th class="r">uPnL</th>
+      <th>Trader</th>
+    </tr></thead>
+    <tbody>${positions.map(p => {
+      const dc = p.direction === 'long' ? 'b-long' : 'b-short';
+      const pnlCls = p.unrealized_pnl == null ? '' : p.unrealized_pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      const pnlStr = p.unrealized_pnl != null
+        ? `<span class="${pnlCls}">${p.unrealized_pnl >= 0 ? '+' : ''}${p.unrealized_pnl.toFixed(2)}</span>`
+        : '<span style="color:var(--muted)">—</span>';
+      const corrBadge = p.corr_signal_id
+        ? ` <span class="badge" style="background:rgba(240,165,0,0.15);color:var(--accent);border:1px solid var(--accent)" title="Algo signal: ${p.corr_strategy || ''}">CORR</span>`
+        : '';
+      return `<tr>
+        <td><span class="badge ${dc}">${p.direction.toUpperCase()}</span></td>
+        <td class="td-mono" style="font-size:12px">${fmtPair(p.pair)}${corrBadge}</td>
+        <td class="r td-mono">${fmt(p.entry_price)}</td>
+        <td class="r td-mono" style="color:var(--muted)">${p.last_price != null ? fmt(p.last_price) : '—'}</td>
+        <td class="r td-mono">${pnlStr}</td>
+        <td><span class="copy-wallet">${fmtWallet(p.trader_wallet, 'hl')}</span></td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table>`;
 }
 
 function renderCopyCandidates(data) {
