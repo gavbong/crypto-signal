@@ -578,8 +578,8 @@ body{
       <span class="panel-title">Watching</span>
       <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">candidates · composite score · promotes after 3 cycles</span>
     </div>
-    <div class="panel-body" id="copy-candidates-body">
-      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    <div class="panel-body" id="copy-candidates-body" style="padding:0;max-height:260px;overflow-y:auto">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
     </div>
   </div>
 
@@ -1662,7 +1662,7 @@ function renderCopyCandidates(data) {
   const body = document.getElementById('copy-candidates-body');
   const candidates = data.candidates || [];
   if (!candidates.length) {
-    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No candidates watching — leaderboard scores weekly.</span>';
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No candidates watching — leaderboard scores weekly.</span>';
     return;
   }
   body.innerHTML = `<table class="copy-tbl" style="width:100%">
