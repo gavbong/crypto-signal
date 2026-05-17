@@ -1750,9 +1750,9 @@ function renderCopyChart(copy, paper) {
   function buildPath(dataMap) {
     const pts = allDates.map((d, i) => {
       const v = dataMap[d] ?? null;
-      return v !== null ? `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(v).toFixed(1)}` : null;
+      return v !== null ? { x: toX(i).toFixed(1), y: toY(v).toFixed(1) } : null;
     }).filter(Boolean);
-    return pts.join(' ');
+    return pts.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
   }
 
   const zeroY = toY(0).toFixed(1);
@@ -2385,10 +2385,11 @@ function btRenderEquityOverlay(pointsA, pointsB) {
   const toY = v => H - ((v - minV) / range) * H;
   const toX = i => (i / (allDates.length - 1 || 1)) * W;
   function buildPath(dataMap) {
-    return allDates.map((d,i) => {
+    const pts = allDates.map((d, i) => {
       const v = dataMap[d] ?? null;
-      return v !== null ? `${i===0?'M':'L'}${toX(i).toFixed(1)},${toY(v).toFixed(1)}` : null;
-    }).filter(Boolean).join(' ');
+      return v !== null ? { x: toX(i).toFixed(1), y: toY(v).toFixed(1) } : null;
+    }).filter(Boolean);
+    return pts.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
   }
   const zeroY = toY(0).toFixed(1);
   body.innerHTML = `<div class="bt-equity-wrap">
