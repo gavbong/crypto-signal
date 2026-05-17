@@ -126,6 +126,14 @@ def init_db(path: Path | None = None) -> None:
             );
         """)
 
+        try:
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_signals_correlation ON signals(fired_at, direction)"
+            )
+            conn.commit()
+        except Exception:
+            pass
+
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS regime_log (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,

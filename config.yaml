@@ -150,6 +150,13 @@ copy_trader:
   poll_interval_minutes: 2      # how often to check HL positions (was 15 — top traders open/close in minutes)
   min_position_usdt: 15         # hard floor per trade — below this, skip the open (HL minimum notional ~$10-15)
   reset_balance: false          # set true + restart to reset DB balance to initial_balance (only if no open positions)
+  position_timeout_hours: 24    # force-close copy positions open longer than this
+  trader_silence_threshold: 3   # consecutive empty-position polls before deactivating a trader
+  candidate_score_threshold: 2.0  # composite score floor to enter hl_candidates watchlist
+  candidate_promote_cycles: 3   # consecutive daily cycles above threshold → promote to copy_traders
+  candidate_drop_cycles: 2      # consecutive daily cycles below threshold → drop from watchlist
+  max_candidates: 50            # hard cap on hl_candidates rows in 'watching' status; evict lowest scorer
+  min_leaderboard_rows: 10000   # outage guard — skip refresh if raw HL response has fewer rows than this
 
 paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
