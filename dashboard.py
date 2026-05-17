@@ -305,7 +305,7 @@ def create_app() -> Flask:
                 "SELECT direction, entry_price, contracts, last_price FROM paper_positions WHERE exit_price IS NULL"
             ).fetchall()
             gross_realized = conn.execute(
-                "SELECT COALESCE(SUM(gross_pnl_usdt), SUM(pnl_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+                "SELECT COALESCE(SUM(COALESCE(gross_pnl_usdt, pnl_usdt)), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
             ).fetchone()[0]
             total_fees = conn.execute(
                 "SELECT COALESCE(SUM(fees_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
