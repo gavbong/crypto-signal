@@ -1,9 +1,11 @@
 """
 copy_trader.py — Shadow copy-trader following top Hyperliquid leaderboard traders.
 
-Weekly: refreshes top N traders by 30d PnL from HL leaderboard.
-Every 15 min: polls their open positions, shadow-copies opens/closes/reversals
-into copy_positions table for comparison against the paper trader.
+Weekly:  refresh_leaderboard_job() — fetches 35K-row leaderboard, scores top 500
+         wallets by composite formula, updates hl_candidates + copy_traders.
+Daily:   score_candidates_job() — increments cycle counters, promotes/drops candidates.
+Every N: poll_positions_job() — syncs open positions; closes timed-out positions;
+         deactivates silent traders.
 
 Budget: pool-based — each new position draws position_size_pct of current balance.
 Stop-loss: auto-closes any position that loses > stop_loss_pct of its margin.
@@ -13,10 +15,10 @@ Always shadow mode — no real execution regardless of global config flag.
 Runs as 4th systemd service: mexc-copy-trader (starts at :07/:22/:37/:52).
 """
 import sys
-import requests
-from datetime import datetime, timezone
-from pathlib import Path
+from math import log1p
+from datetime import datetime, timedelta, timezone
 from loguru import logger
+import requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -39,7 +41,8 @@ CREATE TABLE IF NOT EXISTS copy_traders (
     pnl_30d         REAL,
     tracked_since   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_refreshed  TIMESTAMP,
-    active          INTEGER NOT NULL DEFAULT 1
+    active          INTEGER NOT NULL DEFAULT 1,
+    silence_cycles  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS copy_positions (
@@ -78,21 +81,45 @@ CREATE TABLE IF NOT EXISTS copy_account (
     balance    REAL NOT NULL,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS hl_candidates (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    wallet                   TEXT NOT NULL UNIQUE,
+    composite_score          REAL NOT NULL,
+    pnl_7d                   REAL,
+    pnl_30d                  REAL,
+    trade_count_30d          INTEGER,
+    roi_7d                   REAL,
+    cycles_above_threshold   INTEGER NOT NULL DEFAULT 0,
+    first_seen               TIMESTAMP NOT NULL,
+    promoted_at              TIMESTAMP,
+    dropped_at               TIMESTAMP,
+    status                   TEXT NOT NULL DEFAULT 'watching'
+);
 """
 
 
 def init_copy_db(conn) -> None:
     conn.executescript(_SCHEMA)
     conn.commit()
+    # Migrations for columns added after initial production schema
+    for migration in [
+        "ALTER TABLE copy_traders ADD COLUMN silence_cycles INTEGER NOT NULL DEFAULT 0",
+    ]:
+        try:
+            conn.execute(migration)
+            conn.commit()
+        except Exception:
+            pass  # column already exists — safe to ignore
     c = cfg().get("copy_trader", {})
     initial = float(c.get("initial_balance", 10_000))
-    # Seed initial balance if account row doesn't exist yet
     if conn.execute("SELECT COUNT(*) FROM copy_account").fetchone()[0] == 0:
         _set_copy_balance(conn, initial)
         conn.commit()
-    # Honour reset_balance flag — only resets if no open positions to avoid data loss
     elif c.get("reset_balance", False):
-        open_pos = conn.execute("SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NULL").fetchone()[0]
+        open_pos = conn.execute(
+            "SELECT COUNT(*) FROM copy_positions WHERE closed_at IS NULL"
+        ).fetchone()[0]
         if open_pos == 0:
             _set_copy_balance(conn, initial)
             conn.commit()
@@ -123,35 +150,84 @@ def _adjust_copy_balance(conn, delta: float) -> None:
 
 # ── HL API helpers ─────────────────────────────────────────────────────────────
 
-def fetch_leaderboard(min_pnl: float, top_n: int) -> list[dict]:
+def _composite_score(pnl_7d: float, pnl_30d: float, trade_count_30d: int, roi_7d: float) -> float:
     """
-    Returns up to top_n traders with 30d PnL >= min_pnl, sorted descending.
-    Each entry: {wallet, pnl_30d, alias}. Returns [] on error.
+    Composite leaderboard score across time windows.
+    All terms use log1p(value / baseline_unit) so each contributes ~0.69 at baseline.
+    Baselines: $5K 7d PnL, $20K 30d PnL, 5 trades, 1% ROI.
+    """
+    # API may return roi as percentage (5.0) or decimal (0.05) — normalise to decimal
+    if roi_7d > 1.0:
+        roi_7d = roi_7d / 100.0
+    return round(
+        0.40 * log1p(max(0.0, pnl_7d) / 5_000) +
+        0.30 * log1p(max(0.0, pnl_30d) / 20_000) +
+        0.15 * log1p(max(0.0, trade_count_30d) / 5) +
+        0.15 * log1p(max(0.0, roi_7d * 100)),
+        4,
+    )
+
+
+def fetch_leaderboard(min_pnl: float, top_n: int) -> tuple[list[dict], int]:
+    """
+    Downloads the full HL leaderboard and returns:
+      (scored_rows, raw_count)
+
+    scored_rows: all wallets with pnl_30d >= min_pnl, sorted descending by composite
+                 score. Each entry: {wallet, alias, pnl_7d, pnl_30d, trade_count_30d,
+                 roi_7d, composite_score}.
+    raw_count:   total rows returned by the API (used for outage guard).
+    Returns ([], 0) on network error.
     """
     try:
         resp = requests.get(_HL_LEADER, timeout=20)
         resp.raise_for_status()
-        rows = resp.json().get("leaderboardRows", [])
+        raw_rows = resp.json().get("leaderboardRows", [])
     except Exception as e:
         logger.error(f"Leaderboard fetch failed: {e}")
-        return []
+        return [], 0
 
+    raw_count = len(raw_rows)
+    _roi_logged = False
     result = []
-    for row in rows:
+
+    for row in raw_rows:
         wallet = row.get("ethAddress")
         if not wallet:
             continue
-        pnl_30d = None
+
+        pnl_7d = pnl_30d = roi_7d = None
+        trade_count = 0
         for window, stats in row.get("windowPerformances", []):
-            if window == "month":
-                pnl_30d = float(stats["pnl"])
-                break
+            if window == "week":
+                pnl_7d = float(stats.get("pnl", 0) or 0)
+                raw_roi = float(stats.get("roi", 0) or 0)
+                if not _roi_logged:
+                    logger.debug(f"Leaderboard roi raw sample: {raw_roi} (wallet {wallet[:10]}…)")
+                    _roi_logged = True
+                roi_7d = raw_roi
+            elif window == "month":
+                pnl_30d = float(stats.get("pnl", 0) or 0)
+                trade_count = int(stats.get("vlm", 0) or 0)  # vlm used as trade proxy
+
         if pnl_30d is None or pnl_30d < min_pnl:
             continue
-        result.append({"wallet": wallet, "pnl_30d": pnl_30d, "alias": row.get("displayName")})
 
-    result.sort(key=lambda r: r["pnl_30d"], reverse=True)
-    return result[:top_n]
+        score = _composite_score(
+            pnl_7d or 0.0, pnl_30d, trade_count, roi_7d or 0.0
+        )
+        result.append({
+            "wallet": wallet,
+            "alias": row.get("displayName"),
+            "pnl_7d": pnl_7d or 0.0,
+            "pnl_30d": pnl_30d,
+            "trade_count_30d": trade_count,
+            "roi_7d": roi_7d or 0.0,
+            "composite_score": score,
+        })
+
+    result.sort(key=lambda r: r["composite_score"], reverse=True)
+    return result, raw_count
 
 
 def fetch_hl_positions(wallet: str) -> dict | None:
@@ -206,6 +282,10 @@ def fetch_all_mids() -> dict:
 
 def _coin_to_pair(coin: str) -> str:
     return f"{coin}/USDC:USDC"
+
+
+def _pair_to_coin(pair: str) -> str:
+    return pair.split("/")[0]
 
 
 def load_copy_state(conn, wallet: str) -> dict:
@@ -325,18 +405,36 @@ def _update_last_price(conn, wallet: str, coin: str, price: float) -> None:
 
 def refresh_leaderboard_job() -> None:
     c = cfg().get("copy_trader", {})
-    top_n   = c.get("top_n", 5)
-    min_pnl = float(c.get("min_pnl_30d", 10_000))
+    top_n           = int(c.get("top_n", 5))
+    min_pnl         = float(c.get("min_pnl_30d", 10_000))
+    min_raw_rows    = int(c.get("min_leaderboard_rows", 10_000))
+    score_threshold = float(c.get("candidate_score_threshold", 2.0))
+    max_candidates  = int(c.get("max_candidates", 50))
 
-    traders = fetch_leaderboard(min_pnl, top_n)
-    if not traders:
-        logger.warning("Leaderboard refresh: no qualifying traders returned")
+    scored, raw_count = fetch_leaderboard(min_pnl, top_n=999_999)
+    if raw_count < min_raw_rows:
+        logger.warning(
+            f"Leaderboard returned only {raw_count} raw rows (expected >={min_raw_rows}) "
+            f"— skipping refresh to protect candidate state"
+        )
+        return
+    if not scored:
+        logger.warning("Leaderboard refresh: no qualifying traders above min_pnl")
         return
 
     now = datetime.now(timezone.utc).isoformat()
+
     with get_conn() as conn:
-        conn.execute("UPDATE copy_traders SET active=0")
-        for t in traders:
+        # ── Update active copy_traders (top-N by composite score) ─────────────
+        # Scope deactivation to wallets NOT promoted from hl_candidates — they
+        # should remain active across weekly refreshes.
+        conn.execute("""
+            UPDATE copy_traders SET active=0
+            WHERE wallet NOT IN (
+                SELECT wallet FROM hl_candidates WHERE status='promoted'
+            )
+        """)
+        for t in scored[:top_n]:
             conn.execute(
                 """INSERT INTO copy_traders (wallet, alias, pnl_30d, last_refreshed, active)
                    VALUES (?, ?, ?, ?, 1)
@@ -347,11 +445,161 @@ def refresh_leaderboard_job() -> None:
             )
         conn.commit()
 
+        # ── Update hl_candidates (top 500 above score threshold) ──────────────
+        candidates = [t for t in scored if t["composite_score"] >= score_threshold][:500]
+        candidate_wallets = {t["wallet"] for t in candidates}
+
+        for t in candidates:
+            conn.execute(
+                """INSERT INTO hl_candidates
+                     (wallet, composite_score, pnl_7d, pnl_30d, trade_count_30d, roi_7d,
+                      cycles_above_threshold, first_seen, status)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'watching')
+                   ON CONFLICT(wallet) DO UPDATE SET
+                     composite_score=excluded.composite_score,
+                     pnl_7d=excluded.pnl_7d,
+                     pnl_30d=excluded.pnl_30d,
+                     trade_count_30d=excluded.trade_count_30d,
+                     roi_7d=excluded.roi_7d
+                   WHERE status='watching'""",
+                (t["wallet"], t["composite_score"], t["pnl_7d"], t["pnl_30d"],
+                 t["trade_count_30d"], t["roi_7d"], now),
+            )
+
+        # Drop wallets that fell out of the scored set entirely
+        conn.execute(
+            """UPDATE hl_candidates SET status='dropped', dropped_at=?
+               WHERE status='watching'
+                 AND wallet NOT IN ({})""".format(
+                ",".join("?" * len(candidate_wallets))
+            ),
+            [now] + list(candidate_wallets),
+        )
+
+        # Trim to max_candidates if exceeded (evict lowest-scored watching wallets)
+        watching = conn.execute(
+            """SELECT wallet FROM hl_candidates WHERE status='watching'
+               ORDER BY composite_score DESC"""
+        ).fetchall()
+        if len(watching) > max_candidates:
+            evict = [r["wallet"] for r in watching[max_candidates:]]
+            conn.execute(
+                "UPDATE hl_candidates SET status='dropped', dropped_at=? WHERE wallet IN ({})".format(
+                    ",".join("?" * len(evict))
+                ),
+                [now] + evict,
+            )
+            logger.info(f"Evicted {len(evict)} lowest-scored candidates (max_candidates={max_candidates})")
+
+        conn.commit()
+
     logger.info(
-        f"Leaderboard refreshed | active={len(traders)} "
-        f"top={traders[0]['wallet'][:12]}… "
-        f"pnl=${traders[0]['pnl_30d']:,.0f}"
+        f"Leaderboard refreshed | active={min(top_n, len(scored))} "
+        f"top={scored[0]['wallet'][:12]}… "
+        f"score={scored[0]['composite_score']:.2f} "
+        f"candidates={len(candidates)} raw_rows={raw_count}"
     )
+
+
+def score_candidates_job() -> None:
+    """Daily: increment cycle counters, promote/drop hl_candidates."""
+    c = cfg().get("copy_trader", {})
+    score_threshold   = float(c.get("candidate_score_threshold", 2.0))
+    promote_cycles    = int(c.get("candidate_promote_cycles", 3))
+    drop_cycles       = int(c.get("candidate_drop_cycles", 2))
+
+    now = datetime.now(timezone.utc).isoformat()
+    promoted = dropped = 0
+
+    with get_conn() as conn:
+        candidates = conn.execute(
+            "SELECT * FROM hl_candidates WHERE status='watching'"
+        ).fetchall()
+
+        for cand in candidates:
+            wallet = cand["wallet"]
+            score = cand["composite_score"]
+            cycles = cand["cycles_above_threshold"]
+
+            if score >= score_threshold:
+                new_cycles = cycles + 1
+                conn.execute(
+                    "UPDATE hl_candidates SET cycles_above_threshold=? WHERE wallet=?",
+                    (new_cycles, wallet),
+                )
+                if new_cycles >= promote_cycles:
+                    # Promote: add to copy_traders if not already there
+                    conn.execute(
+                        """INSERT INTO copy_traders (wallet, alias, pnl_30d, last_refreshed, active)
+                           VALUES (?, ?, ?, ?, 1)
+                           ON CONFLICT(wallet) DO UPDATE SET active=1, last_refreshed=excluded.last_refreshed""",
+                        (wallet, None, cand["pnl_30d"], now),
+                    )
+                    conn.execute(
+                        "UPDATE hl_candidates SET status='promoted', promoted_at=? WHERE wallet=?",
+                        (now, wallet),
+                    )
+                    promoted += 1
+                    logger.info(
+                        f"Candidate PROMOTED {wallet[:12]}… "
+                        f"score={score:.2f} cycles={new_cycles}"
+                    )
+            else:
+                # Below threshold — check consecutive drop cycles
+                # We reuse cycles_above_threshold as a negative counter when score drops
+                # To track consecutive drops, reset to 0 when below, count down from promote threshold
+                # Simple approach: if score drops below threshold, decrement cycles toward 0;
+                # if cycles reach -drop_cycles, mark dropped.
+                new_cycles = cycles - 1
+                conn.execute(
+                    "UPDATE hl_candidates SET cycles_above_threshold=? WHERE wallet=?",
+                    (new_cycles, wallet),
+                )
+                if new_cycles <= -drop_cycles:
+                    conn.execute(
+                        "UPDATE hl_candidates SET status='dropped', dropped_at=? WHERE wallet=?",
+                        (now, wallet),
+                    )
+                    dropped += 1
+                    logger.info(
+                        f"Candidate DROPPED {wallet[:12]}… "
+                        f"score={score:.2f} cycles={new_cycles}"
+                    )
+
+        conn.commit()
+
+    if promoted or dropped:
+        logger.info(f"Score candidates: promoted={promoted} dropped={dropped}")
+    else:
+        logger.debug("Score candidates: no promotions or drops this cycle")
+
+
+def _check_copy_timeouts(conn, mids: dict) -> int:
+    """Close copy positions that have been open longer than position_timeout_hours.
+    Returns the number of positions closed."""
+    c = cfg().get("copy_trader", {})
+    timeout_h = int(c.get("position_timeout_hours", 24))
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
+
+    stale = conn.execute(
+        """SELECT trader_wallet, pair FROM copy_positions
+           WHERE closed_at IS NULL AND opened_at < ?""",
+        (cutoff,),
+    ).fetchall()
+
+    closed = 0
+    for pos in stale:
+        coin = _pair_to_coin(pos["pair"])
+        live = mids.get(coin)
+        if live:
+            _copy_close(conn, pos["trader_wallet"], coin, live, "timeout")
+            closed += 1
+        else:
+            logger.warning(f"Timeout: no live price for {coin} — skipping close")
+
+    if closed:
+        logger.info(f"Timeout: closed {closed} stale position(s) (>{timeout_h}h)")
+    return closed
 
 
 def poll_positions_job() -> None:
@@ -360,11 +608,16 @@ def poll_positions_job() -> None:
     stop_loss_pct      = float(c.get("stop_loss_pct", 0.20))
     max_concurrent     = int(c.get("max_concurrent_positions", 15))
     min_position_usdt  = float(c.get("min_position_usdt", 15.0))
+    silence_threshold  = int(c.get("trader_silence_threshold", 3))
 
     mids = fetch_all_mids()
     if not mids:
         logger.warning("allMids empty — skipping poll cycle")
         return
+
+    # ── Close positions that have exceeded the timeout ─────────────────────────
+    with get_conn() as conn:
+        _check_copy_timeouts(conn, mids)
 
     with get_conn() as conn:
         wallet_rows = conn.execute("""
@@ -384,6 +637,46 @@ def poll_positions_job() -> None:
             continue  # API error — skip, retry next cycle
 
         with get_conn() as conn:
+            # ── Silence detection ──────────────────────────────────────────────
+            if positions == {}:
+                row = conn.execute(
+                    "SELECT silence_cycles FROM copy_traders WHERE wallet=?", (wallet,)
+                ).fetchone()
+                if row is not None:
+                    new_silence = row["silence_cycles"] + 1
+                    conn.execute(
+                        "UPDATE copy_traders SET silence_cycles=? WHERE wallet=?",
+                        (new_silence, wallet),
+                    )
+                    conn.commit()
+                    if new_silence >= silence_threshold:
+                        # Deactivate trader and close all their open positions
+                        open_coins = conn.execute(
+                            """SELECT pair FROM copy_positions
+                               WHERE trader_wallet=? AND closed_at IS NULL""",
+                            (wallet,),
+                        ).fetchall()
+                        for p in open_coins:
+                            coin = _pair_to_coin(p["pair"])
+                            live = mids.get(coin, 0.0)
+                            if live:
+                                _copy_close(conn, wallet, coin, live, "trader_silent")
+                        conn.execute(
+                            "UPDATE copy_traders SET active=0, silence_cycles=0 WHERE wallet=?",
+                            (wallet,),
+                        )
+                        conn.commit()
+                        logger.info(
+                            f"Trader SILENCED {wallet[:12]}… "
+                            f"({new_silence} consecutive empty polls) — deactivated"
+                        )
+                continue  # no positions to diff
+
+            # Reset silence counter when positions are present
+            conn.execute(
+                "UPDATE copy_traders SET silence_cycles=0 WHERE wallet=?", (wallet,)
+            )
+
             previous = load_copy_state(conn, wallet)
 
             # ── Stop-loss check on active (non-stopped) copy positions ─────────
@@ -411,13 +704,10 @@ def poll_positions_job() -> None:
                 prev = previous.get(coin)
 
                 if prev is None:
-                    # New position appeared
                     _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent, min_position_usdt)
                 elif prev["side"] == "stopped" or coin in sl_closed:
-                    # Stopped out — don't re-enter while HL trader holds same position
-                    pass
+                    pass  # stopped out — don't re-enter while trader holds same position
                 elif pos["side"] != prev["side"]:
-                    # Trader reversed direction
                     _copy_close(conn, wallet, coin, last_price, "trader_reversed")
                     _copy_open(conn, wallet, coin, pos, position_size_pct, max_concurrent, min_position_usdt)
                 else:
@@ -429,10 +719,8 @@ def poll_positions_job() -> None:
                     if prev_pos["side"] != "stopped":
                         last_price = mids.get(coin, 0.0)
                         _copy_close(conn, wallet, coin, last_price, "trader_closed")
-                    # "stopped" entries are cleaned up by save_copy_state below
 
             # ── Persist new state ─────────────────────────────────────────────
-            # Stopped-out coins kept as "stopped" while HL trader still holds them
             new_state: dict = {}
             for coin, pos in positions.items():
                 if coin in sl_closed or previous.get(coin, {}).get("side") == "stopped":
@@ -470,7 +758,8 @@ def main() -> None:
         f"pos_size={float(c.get('position_size_pct', 0.05))*100:.0f}% "
         f"sl={float(c.get('stop_loss_pct', 0.20))*100:.0f}% "
         f"max_pos={c.get('max_concurrent_positions', 15)} "
-        f"min_30d_pnl=${float(c.get('min_pnl_30d', 10_000)):,.0f}"
+        f"min_30d_pnl=${float(c.get('min_pnl_30d', 10_000)):,.0f} "
+        f"timeout_h={c.get('position_timeout_hours', 24)}"
     )
 
     refresh_leaderboard_job()
@@ -488,6 +777,12 @@ def main() -> None:
     scheduler.add_job(
         refresh_leaderboard_job,
         CronTrigger(day_of_week="sun", hour=0, minute=0, timezone="UTC"),
+        misfire_grace_time=3600,
+    )
+
+    scheduler.add_job(
+        score_candidates_job,
+        CronTrigger(hour=2, minute=0, timezone="UTC"),
         misfire_grace_time=3600,
     )
 
