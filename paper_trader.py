@@ -9,6 +9,7 @@ State is persisted to signals.db (paper_* tables) — crash-safe and restartable
 import sys
 import json
 import math
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from loguru import logger
@@ -200,6 +201,44 @@ def _set_state(conn, key: str, value: str) -> None:
     conn.commit()
 
 
+# ── Live funding rate cache ───────────────────────────────────────────────────
+
+_funding_cache: dict[str, tuple[float, float]] = {}  # pair → (rate_8h, fetched_ts)
+_FUNDING_TTL = 8 * 3600  # rates are published every 8h
+_mexc_swap: object = None  # lazy ccxt exchange for funding rate lookups
+
+
+def _get_mexc_swap():
+    global _mexc_swap
+    if _mexc_swap is None:
+        _mexc_swap = make_exchange("mexc")
+    return _mexc_swap
+
+
+def _live_funding_rate(pair: str) -> float:
+    """Return MEXC 8h funding rate for pair, cached for 8h. Falls back to config on error."""
+    pt = cfg().get("paper_trader", {})
+    config_rate = pt.get("funding_rates_8h", {}).get(pair, pt.get("funding_rate_8h", 0.0001))
+
+    now = time.time()
+    cached = _funding_cache.get(pair)
+    if cached and now - cached[1] < _FUNDING_TTL:
+        return cached[0]
+
+    try:
+        ex = _get_mexc_swap()
+        data = ex.fetch_funding_rate(pair)
+        rate = float(data.get("fundingRate") or config_rate)
+        _funding_cache[pair] = (rate, now)
+        logger.debug(f"Funding rate {pair}: {rate:.6f} (live)")
+        return rate
+    except Exception as exc:
+        logger.debug(f"Funding rate fetch failed for {pair}: {exc} — using config fallback")
+
+    _funding_cache[pair] = (config_rate, now)
+    return config_rate
+
+
 # ── Trading cost helpers ──────────────────────────────────────────────────────
 
 def _taker_rate(exchange_id: str) -> float:
@@ -229,10 +268,8 @@ def _calc_fees(entry_price: float, exit_price: float, contracts: float,
 
 
 def _calc_funding(direction: str, notional: float, opened_at: str, pair: str) -> float:
-    """Funding P&L using per-pair 8h rate. Positive rate = longs pay; negative = shorts pay."""
-    pt = cfg().get("paper_trader", {})
-    rates = pt.get("funding_rates_8h", {})
-    rate_8h = rates.get(pair, pt.get("funding_rate_8h", 0.0001))
+    """Funding P&L using live 8h rate from MEXC API (cached per funding period)."""
+    rate_8h = _live_funding_rate(pair)
     try:
         open_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
         hours = (datetime.now(timezone.utc) - open_dt).total_seconds() / 3600
