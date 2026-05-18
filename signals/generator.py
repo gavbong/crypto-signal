@@ -271,6 +271,14 @@ def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
 
 def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
                    timeframe: str) -> Optional[dict]:
+    # Confidence gates — derived from backtest (n=1496 choppy, n=878 high-vol):
+    # choppy <0.30: WR=40.8%, avg_r=-0.078 → skip
+    # high-vol ≥0.50: WR=43.7%, avg_r=-0.245 → trending move, not reversal → skip
+    if regime.label == "choppy" and regime.confidence < 0.30:
+        return None
+    if regime.label == "high-volatility" and regime.confidence >= 0.50:
+        return None
+
     c = cfg()["signals"]
     atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
     if atr_series is None:
@@ -284,16 +292,17 @@ def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if len(prior) < 8:
         return None
 
-    # Use last 20 prior candles for swing detection
-    swing_window = prior.iloc[-20:]
+    # 30 prior candles (was 20) — captures 7.5h of meaningful liquidity levels at 15min
+    swing_window = prior.iloc[-30:]
     swing_low = swing_window["low"].min()
     swing_high = swing_window["high"].max()
 
     curr = df.iloc[-1]
 
-    if curr["low"] < swing_low - 0.3 * atr and curr["close"] > swing_low + 0.2 * atr:
+    # Reversal threshold raised from 0.2 → 0.25 ATR — filters weak rejections
+    if curr["low"] < swing_low - 0.3 * atr and curr["close"] > swing_low + 0.25 * atr:
         return _signal(pair, "long", "liquidity_grab", regime, df, timeframe)
-    if curr["high"] > swing_high + 0.3 * atr and curr["close"] < swing_high - 0.2 * atr:
+    if curr["high"] > swing_high + 0.3 * atr and curr["close"] < swing_high - 0.25 * atr:
         return _signal(pair, "short", "liquidity_grab", regime, df, timeframe)
 
     return None

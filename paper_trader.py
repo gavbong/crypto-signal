@@ -391,6 +391,27 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
             )
             return None
 
+    # Correlated pairs guard for liquidity_grab — BTC/ETH/SOL/BNB move together.
+    # Stacking same-direction positions across correlated pairs multiplies loss
+    # when the market moves against the thesis (all stop out simultaneously).
+    _CORR_CLUSTER = {"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
+                     "BNB/USDT:USDT", "ETH/USDC:USDC", "BTC/USDC:USDC"}
+    strategy = signal.get("strategy", "")
+    if strategy == "liquidity_grab" and pair in _CORR_CLUSTER:
+        cluster_peers = _CORR_CLUSTER - {pair}
+        peer_placeholders = ",".join("?" * len(cluster_peers))
+        corr_open = conn.execute(
+            f"SELECT pair FROM paper_positions WHERE strategy='liquidity_grab' "
+            f"AND direction=? AND exit_price IS NULL AND pair IN ({peer_placeholders})",
+            (direction, *cluster_peers),
+        ).fetchone()
+        if corr_open:
+            logger.debug(
+                f"Paper: correlated pair guard — {pair} {direction} liquidity_grab skipped "
+                f"(already open on {corr_open['pair']})"
+            )
+            return None
+
     stop = signal.get("suggested_stop_loss")
     tp   = signal.get("suggested_take_profit")
     if not stop or not tp:
