@@ -2666,7 +2666,7 @@ async function refreshSettings() {
       const pairsData = await pairsRes.json();
       const pairs = pairsData.pairs || [];
       document.getElementById('settings-pairs-body').innerHTML = pairs.length
-        ? pairs.map(p => `<div style="margin-bottom:4px">${p}</div>`).join('')
+        ? pairs.map(p => `<div style="margin-bottom:4px">${p.pair} <span style="color:var(--muted);font-size:10px">${p.exchange}</span></div>`).join('')
         : '<span style="color:var(--muted)">No pairs configured.</span>';
     }
     document.getElementById('settings-params-body').innerHTML =
