@@ -362,7 +362,7 @@ body{
   <button class="nav-btn active" data-view="dashboard" title="Dashboard">
     <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="1" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="1" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/><rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" opacity=".8"/></svg>
   </button>
-  <button class="nav-btn" data-view="dashboard" title="Signals">
+  <button class="nav-btn" data-view="signals" title="Signals">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1,10 5,6 8,9 12,4 15,7"/></svg>
   </button>
   <button class="nav-btn" data-view="copy" title="Copy Trader">
@@ -374,7 +374,7 @@ body{
   <button class="nav-btn" data-view="backtest" title="Backtest">
     <svg viewBox="0 0 16 16" fill="none"><rect x="1" y="10" width="2" height="5" rx=".5" fill="currentColor"/><rect x="5" y="7" width="2" height="8" rx=".5" fill="currentColor"/><rect x="9" y="4" width="2" height="11" rx=".5" fill="currentColor"/><rect x="13" y="2" width="2" height="13" rx=".5" fill="currentColor" opacity=".35"/></svg>
   </button>
-  <button class="nav-btn bottom" title="Settings">
+  <button class="nav-btn bottom" data-view="settings" title="Settings">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="2.3"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.1 3.1l1.4 1.4M11.5 11.5l1.4 1.4M3.1 12.9l1.4-1.4M11.5 4.5l1.4-1.4"/></svg>
   </button>
 </aside>
@@ -871,6 +871,55 @@ body{
   </div>
 
 </div><!-- /view-backtest -->
+
+<div id="view-signals" class="view">
+  <div class="stats-row-hdr">
+    <span class="stats-row-title">Signals</span>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">all fired signals · live &amp; shadow</span>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-hdr">
+      <span class="panel-title">Recent Signals</span>
+      <span id="sig-view-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+    </div>
+    <div id="sig-view-body" style="padding:0;overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="padding:6px 12px;text-align:left;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Fired</th>
+            <th style="padding:6px 12px;text-align:left;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Pair</th>
+            <th style="padding:6px 12px;text-align:left;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Dir</th>
+            <th style="padding:6px 12px;text-align:left;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Strategy</th>
+            <th style="padding:6px 12px;text-align:left;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Regime</th>
+            <th style="padding:6px 12px;text-align:right;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Entry</th>
+            <th style="padding:6px 12px;text-align:right;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Stop</th>
+            <th style="padding:6px 12px;text-align:right;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Target</th>
+            <th style="padding:6px 12px;text-align:left;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">Outcome</th>
+            <th style="padding:6px 12px;text-align:right;font-family:var(--font-ui);font-size:10px;color:var(--muted);font-weight:500">P&amp;L R</th>
+          </tr>
+        </thead>
+        <tbody id="sig-view-rows">
+          <tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted)">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div><!-- /view-signals -->
+
+<div id="view-settings" class="view">
+  <div class="stats-row-hdr">
+    <span class="stats-row-title">Settings</span>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">engine configuration</span>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-hdr"><span class="panel-title">Active Pairs</span></div>
+    <div id="settings-pairs-body" style="padding:14px 16px;font-family:var(--font-mono);font-size:12px;color:var(--muted)">Loading…</div>
+  </div>
+  <div class="panel" style="margin-top:14px">
+    <div class="panel-hdr"><span class="panel-title">Signal Parameters</span></div>
+    <div id="settings-params-body" style="padding:14px 16px;font-family:var(--font-mono);font-size:12px;color:var(--muted)">Loading…</div>
+  </div>
+</div><!-- /view-settings -->
 
 </main>
 
@@ -1568,6 +1617,8 @@ function setPageContext(view) {
       if (view === 'copy') refreshCopy();
       if (view === 'polymarket') refreshPoly();
       if (view === 'backtest') refreshBacktest();
+      if (view === 'signals') refreshSignalsView();
+      if (view === 'settings') refreshSettings();
     });
   });
 })();
@@ -2567,6 +2618,79 @@ async function refreshBacktest() {
     const status = await statusRes.json();
     if (status.running && !_btPollInterval) btPollStatus();
   } catch (e) { console.error('refreshBacktest error', e); }
+}
+
+// ─── SIGNALS VIEW ────────────────────────────────────────────────────────────
+async function refreshSignalsView() {
+  try {
+    const res = await fetch('/api/signals?filter=all&limit=200');
+    const data = await res.json();
+    const sigs = data.signals || [];
+    document.getElementById('sig-view-count').textContent = sigs.length + ' signals';
+    const rows = sigs.map(s => {
+      const dir = s.direction === 'long'
+        ? `<span style="color:var(--long);font-weight:600">LONG</span>`
+        : `<span style="color:var(--short);font-weight:600">SHORT</span>`;
+      const outcome = s.outcome
+        ? (s.outcome === 'win' || s.outcome === 'tp_hit'
+            ? `<span style="color:var(--long)">${s.outcome}</span>`
+            : `<span style="color:var(--short)">${s.outcome}</span>`)
+        : '<span style="color:var(--muted)">open</span>';
+      const pnlR = s.pnl_r != null
+        ? `<span style="color:${s.pnl_r >= 0 ? 'var(--long)' : 'var(--short)'}">${s.pnl_r >= 0 ? '+' : ''}${s.pnl_r.toFixed(2)}R</span>`
+        : '—';
+      const fired = s.fired_at ? s.fired_at.slice(0,16).replace('T',' ') : '—';
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 12px;color:var(--muted)">${fired}</td>
+        <td style="padding:5px 12px">${(s.pair||'').replace(':USDT','').replace(':USDC','')}</td>
+        <td style="padding:5px 12px">${dir}</td>
+        <td style="padding:5px 12px;color:var(--text)">${(s.strategy||'').replace(/_/g,' ')}</td>
+        <td style="padding:5px 12px">${fmtRegime(s.regime||'')}</td>
+        <td style="padding:5px 12px;text-align:right">${s.entry_price != null ? fmt(s.entry_price) : '—'}</td>
+        <td style="padding:5px 12px;text-align:right;color:var(--short)">${s.suggested_stop_loss != null ? fmt(s.suggested_stop_loss) : '—'}</td>
+        <td style="padding:5px 12px;text-align:right;color:var(--long)">${s.suggested_take_profit != null ? fmt(s.suggested_take_profit) : '—'}</td>
+        <td style="padding:5px 12px">${outcome}</td>
+        <td style="padding:5px 12px;text-align:right">${pnlR}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('sig-view-rows').innerHTML = rows ||
+      '<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--muted)">No signals yet.</td></tr>';
+  } catch (e) { console.error('refreshSignalsView error', e); }
+}
+
+// ─── SETTINGS VIEW ───────────────────────────────────────────────────────────
+async function refreshSettings() {
+  try {
+    const pairsRes = await fetch('/api/config/pairs');
+    if (pairsRes.ok) {
+      const pairsData = await pairsRes.json();
+      const pairs = pairsData.pairs || [];
+      document.getElementById('settings-pairs-body').innerHTML = pairs.length
+        ? pairs.map(p => `<div style="margin-bottom:4px">${p}</div>`).join('')
+        : '<span style="color:var(--muted)">No pairs configured.</span>';
+    }
+    const cfgRes = await fetch('/api/config');
+    if (cfgRes.ok) {
+      const cfg = await cfgRes.json();
+      const params = [
+        ['Timeframe', cfg.timeframe || '—'],
+        ['Candle limit', cfg.candle_limit ?? '—'],
+        ['Min quality score', cfg.signal_quality?.min_quality_score ?? '—'],
+        ['RSI period', cfg.signals?.rsi_period ?? '—'],
+        ['ATR period', cfg.signals?.atr_period ?? '—'],
+        ['Volume spike mult', cfg.signals?.volume_spike_multiplier ?? '—'],
+      ];
+      document.getElementById('settings-params-body').innerHTML = `
+        <table style="border-collapse:collapse;width:100%">
+          ${params.map(([k,v]) => `<tr>
+            <td style="padding:3px 12px 3px 0;color:var(--muted);font-family:var(--font-ui);font-size:11px">${k}</td>
+            <td style="padding:3px 0">${v}</td>
+          </tr>`).join('')}
+        </table>`;
+    } else {
+      document.getElementById('settings-params-body').textContent = 'Config API not available.';
+    }
+  } catch (e) { console.error('refreshSettings error', e); }
 }
 </script>
 </body>
