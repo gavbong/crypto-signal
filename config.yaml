@@ -19,7 +19,7 @@ exchanges:
       - ETH/USDT:USDT
       - SOL/USDT:USDT
   hyperliquid:
-    enabled: true
+    enabled: false              # excluded — high slippage + USDC funding costs vs USDT pairs
     pairs:
       - BTC/USDC:USDC
       - ETH/USDC:USDC
