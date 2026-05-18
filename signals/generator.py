@@ -33,16 +33,23 @@ def _calc_stop_loss(df: pd.DataFrame, direction: str, regime_label: str = "") ->
     return round(entry - atr * mult, 8) if direction == "long" else round(entry + atr * mult, 8)
 
 
-def _calc_take_profit(entry: float, stop: float, direction: str, regime_label: str = "") -> float:
+def _calc_take_profit(entry: float, stop: float, direction: str,
+                      regime_label: str = "", strategy: str = "") -> float:
     risk = abs(entry - stop)
     c = cfg()["signals"]
     rr_map = {
-        "choppy":       c.get("rr_ratio_choppy",   c["rr_ratio"]),
-        "trending-up":  c.get("rr_ratio_trending",  c["rr_ratio"]),
-        "trending-down": c.get("rr_ratio_trending", c["rr_ratio"]),
-        "high-volatility": c.get("rr_ratio_high_vol", c["rr_ratio"]),
+        "choppy":          c.get("rr_ratio_choppy",   c["rr_ratio"]),
+        "trending-up":     c.get("rr_ratio_trending",  c["rr_ratio"]),
+        "trending-down":   c.get("rr_ratio_trending",  c["rr_ratio"]),
+        "high-volatility": c.get("rr_ratio_high_vol",  c["rr_ratio"]),
     }
     rr = rr_map.get(regime_label, c["rr_ratio"])
+    # Per-strategy override takes precedence over regime-level value.
+    # Used when a strategy's real cost structure (gap slippage, fee drag)
+    # is atypically high and the regime ratio doesn't compensate adequately.
+    strategy_rr = c.get("rr_ratio_strategy", {})
+    if strategy and strategy in strategy_rr:
+        rr = strategy_rr[strategy]
     return round(entry + risk * rr, 8) if direction == "long" else round(entry - risk * rr, 8)
 
 
@@ -53,7 +60,7 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
     if stop is None:
         logger.warning(f"ATR is NaN for {pair} — skipping stop-loss")
         return None
-    take_profit = _calc_take_profit(entry, stop, direction, regime.label)
+    take_profit = _calc_take_profit(entry, stop, direction, regime.label, strategy)
     return {
         "pair": pair,
         "direction": direction,
