@@ -2645,7 +2645,7 @@ async function refreshSignalsView() {
         <td style="padding:5px 12px">${(s.pair||'').replace(':USDT','').replace(':USDC','')}</td>
         <td style="padding:5px 12px">${dir}</td>
         <td style="padding:5px 12px;color:var(--text)">${(s.strategy||'').replace(/_/g,' ')}</td>
-        <td style="padding:5px 12px">${fmtRegime(s.regime||'')}</td>
+        <td style="padding:5px 12px">${fmtRegimeBadge(s.regime||'')}</td>
         <td style="padding:5px 12px;text-align:right">${s.entry_price != null ? fmt(s.entry_price) : '—'}</td>
         <td style="padding:5px 12px;text-align:right;color:var(--short)">${s.suggested_stop_loss != null ? fmt(s.suggested_stop_loss) : '—'}</td>
         <td style="padding:5px 12px;text-align:right;color:var(--long)">${s.suggested_take_profit != null ? fmt(s.suggested_take_profit) : '—'}</td>
@@ -2669,27 +2669,8 @@ async function refreshSettings() {
         ? pairs.map(p => `<div style="margin-bottom:4px">${p}</div>`).join('')
         : '<span style="color:var(--muted)">No pairs configured.</span>';
     }
-    const cfgRes = await fetch('/api/config');
-    if (cfgRes.ok) {
-      const cfg = await cfgRes.json();
-      const params = [
-        ['Timeframe', cfg.timeframe || '—'],
-        ['Candle limit', cfg.candle_limit ?? '—'],
-        ['Min quality score', cfg.signal_quality?.min_quality_score ?? '—'],
-        ['RSI period', cfg.signals?.rsi_period ?? '—'],
-        ['ATR period', cfg.signals?.atr_period ?? '—'],
-        ['Volume spike mult', cfg.signals?.volume_spike_multiplier ?? '—'],
-      ];
-      document.getElementById('settings-params-body').innerHTML = `
-        <table style="border-collapse:collapse;width:100%">
-          ${params.map(([k,v]) => `<tr>
-            <td style="padding:3px 12px 3px 0;color:var(--muted);font-family:var(--font-ui);font-size:11px">${k}</td>
-            <td style="padding:3px 0">${v}</td>
-          </tr>`).join('')}
-        </table>`;
-    } else {
-      document.getElementById('settings-params-body').textContent = 'Config API not available.';
-    }
+    document.getElementById('settings-params-body').innerHTML =
+      '<span style="color:var(--muted)">Signal parameters are configured in <code>config.yaml</code> on the server. Edit and restart <code>mexc-signal-engine</code> to apply changes.</span>';
   } catch (e) { console.error('refreshSettings error', e); }
 }
 </script>
