@@ -395,7 +395,7 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     # Stacking same-direction positions across correlated pairs multiplies loss
     # when the market moves against the thesis (all stop out simultaneously).
     _CORR_CLUSTER = {"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
-                     "BNB/USDT:USDT", "ETH/USDC:USDC", "BTC/USDC:USDC"}
+                     "BNB/USDT:USDT"}
     strategy = signal.get("strategy", "")
     if strategy == "liquidity_grab" and pair in _CORR_CLUSTER:
         cluster_peers = _CORR_CLUSTER - {pair}
