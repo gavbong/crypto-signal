@@ -289,6 +289,75 @@ def review_job() -> None:
         logger.error(f"Strategy review failed: {e}")
 
 
+def daily_digest_job() -> None:
+    try:
+        from alerts.telegram import send_telegram
+        from paper_trader import INITIAL_BALANCE
+
+        conn = get_conn()
+
+        state = conn.execute(
+            "SELECT value FROM paper_state WHERE key='balance'"
+        ).fetchone()
+        balance = float(state[0]) if state else INITIAL_BALANCE
+
+        trades = conn.execute("""
+            SELECT exit_reason, COUNT(*) as n, COALESCE(SUM(pnl_usdt), 0) as pnl
+            FROM paper_positions
+            WHERE closed_at >= datetime('now', '-1 day') AND closed_at IS NOT NULL
+            GROUP BY exit_reason
+        """).fetchall()
+
+        wrs = conn.execute("""
+            SELECT strategy, COUNT(*) as n,
+                   SUM(CASE WHEN exit_reason='take_profit' THEN 1 ELSE 0 END) as wins
+            FROM paper_positions
+            WHERE closed_at >= datetime('now', '-7 days') AND closed_at IS NOT NULL
+            GROUP BY strategy HAVING n >= 2
+        """).fetchall()
+
+        cb = conn.execute(
+            "SELECT value FROM paper_state WHERE key='circuit_breaker_until'"
+        ).fetchone()
+
+        today_pnl = sum(r["pnl"] for r in trades)
+        today_n   = sum(r["n"] for r in trades)
+        tp_n  = next((r["n"] for r in trades if r["exit_reason"] == "take_profit"), 0)
+        sl_n  = next((r["n"] for r in trades if r["exit_reason"] == "stop_loss"), 0)
+        flip_n = next((r["n"] for r in trades if r["exit_reason"] == "signal_flip"), 0)
+
+        cb_val = cb[0] if cb else "0"
+        try:
+            from datetime import datetime, timezone
+            cb_active = cb_val != "0" and datetime.now(timezone.utc) < datetime.fromisoformat(cb_val.replace("Z", "+00:00"))
+        except Exception:
+            cb_active = False
+
+        sign = "+" if today_pnl >= 0 else ""
+        lines = [
+            f"📊 Signal Engine — Daily Report {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+            "",
+            f"Paper account: {balance:.0f} USDT ({balance - INITIAL_BALANCE:+.0f} all-time)",
+            f"Today ({today_n} trades): {sign}{today_pnl:.2f} USDT  "
+            f"({tp_n} TP · {sl_n} SL · {flip_n} flip)",
+            "",
+            "7d WR by strategy:",
+        ]
+
+        for r in sorted(wrs, key=lambda x: x["n"], reverse=True):
+            wr = r["wins"] / r["n"] if r["n"] else 0
+            icon = "✅" if wr >= 0.40 else ("⚠️" if wr >= 0.30 else "❌")
+            lines.append(f"  {r['strategy']:<18} {r['wins']}/{r['n']}  {wr:.0%} {icon}")
+
+        lines.append("")
+        lines.append(f"Circuit breaker: {'ON' if cb_active else 'OFF'}")
+
+        send_telegram("\n".join(lines))
+        logger.info("Daily digest sent")
+    except Exception as e:
+        logger.error(f"Daily digest failed: {e}")
+
+
 def main() -> None:
     import os
     os.makedirs("logs", exist_ok=True)
@@ -352,6 +421,14 @@ def main() -> None:
     scheduler.add_job(
         review_job,
         CronTrigger(hour=6, minute=0, timezone="UTC"),
+        misfire_grace_time=3600,
+    )
+
+    scheduler.add_job(
+        daily_digest_job,
+        CronTrigger(hour=0, minute=0, timezone="UTC"),
+        id="daily_digest",
+        replace_existing=True,
         misfire_grace_time=3600,
     )
 

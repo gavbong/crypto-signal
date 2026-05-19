@@ -350,3 +350,77 @@ class TestIndexRoute:
     def test_index_serves_dashboard_html(self, client):
         r = client.get("/")
         assert r.status_code == 200
+
+
+# ── /api/diagnostics/wr-comparison ───────────────────────────────────────────
+
+class TestWrComparison:
+    def test_empty_db_returns_empty_list(self, client, tmp_db):
+        r = client.get("/api/diagnostics/wr-comparison")
+        assert r.status_code == 200
+        data = json.loads(r.data)
+        assert data == []
+
+    def test_live_signals_appear_without_backtest(self, client, tmp_db):
+        from datetime import datetime, timezone, timedelta
+        fired = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        with get_conn(tmp_db) as conn:
+            conn.execute("""
+                INSERT INTO signals (pair, direction, strategy, regime, entry_price,
+                    suggested_stop_loss, suggested_take_profit, timeframe, fired_at,
+                    shadow_mode, pnl_r)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """, ("BTC/USDT:USDT", "long", "supply_demand", "choppy",
+                  50000.0, 49000.0, 52000.0, "15m", fired, 0, 1.5))
+            conn.commit()
+
+        r = client.get("/api/diagnostics/wr-comparison")
+        assert r.status_code == 200
+        data = json.loads(r.data)
+        assert len(data) == 1
+        row = data[0]
+        assert row["strategy"] == "supply_demand"
+        assert row["regime"] == "choppy"
+        assert row["live_signal_wr"] == pytest.approx(1.0)
+        assert row["live_n"] == 1
+        assert row["backtest_signal_wr"] is None
+
+    def test_divergence_computed_when_both_present(self, client, tmp_db):
+        from datetime import datetime, timezone, timedelta
+        fired = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        with get_conn(tmp_db) as conn:
+            # Insert a completed backtest run
+            conn.execute(
+                "INSERT INTO backtest_runs (since_date, status) VALUES ('2025-01-01', 'done')"
+            )
+            run_id = conn.execute("SELECT MAX(id) FROM backtest_runs").fetchone()[0]
+
+            # Backtest signal: 3 wins out of 4 = 75% WR
+            for win in [1.0, 1.0, 1.0, -1.0]:
+                conn.execute("""
+                    INSERT INTO signals (pair, direction, strategy, regime, entry_price,
+                        suggested_stop_loss, suggested_take_profit, timeframe, fired_at,
+                        shadow_mode, pnl_r, backtest_run_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                """, ("BTC/USDT:USDT", "long", "supply_demand", "choppy",
+                      50000.0, 49000.0, 52000.0, "15m", "2025-06-01T00:00:00",
+                      0, win, run_id))
+
+            # Live signal: 1 win out of 2 = 50% WR
+            for win in [1.0, -1.0]:
+                conn.execute("""
+                    INSERT INTO signals (pair, direction, strategy, regime, entry_price,
+                        suggested_stop_loss, suggested_take_profit, timeframe, fired_at,
+                        shadow_mode, pnl_r)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """, ("BTC/USDT:USDT", "long", "supply_demand", "choppy",
+                      50000.0, 49000.0, 52000.0, "15m", fired, 0, win))
+            conn.commit()
+
+        r = client.get("/api/diagnostics/wr-comparison")
+        assert r.status_code == 200
+        data = json.loads(r.data)
+        row = next(d for d in data if d["strategy"] == "supply_demand")
+        assert row["backtest_signal_wr"] == pytest.approx(0.75)
+        assert row["live_signal_wr"] == pytest.approx(0.5)
+        assert row["signal_divergence"] == pytest.approx(25.0, abs=0.1)  # 75-50 = 25pp

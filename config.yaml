@@ -180,6 +180,22 @@ paper_trader:
   circuit_breaker_losses: 5       # pause new entries after N consecutive losses
   circuit_breaker_cooldown_hours: 4  # hours to wait before resuming after circuit breaker trips
 
+  # ── Gap-risk cap ──────────────────────────────────────────────────────────────
+  # Prevents a single candle gap from exceeding N× the intended risk on that trade.
+  # Uses risk_usdt_at_open stored when the position was opened (not live balance).
+  max_loss_mult: 3.0              # cap gross loss at 3× the intended risk_usdt
+
+  # ── Per-regime position sizing ────────────────────────────────────────────────
+  # risk_pct_default applies when regime is not listed below.
+  # high-volatility uses 0.7% to reduce gap exposure (wider candles = bigger gap risk).
+  # Trending is kept neutral at 1% for first pass — increase after WR stabilises.
+  risk_pct_default: 0.010
+  risk_pct_by_regime:
+    trending-up:       0.010
+    trending-down:     0.010
+    choppy:            0.010
+    high-volatility:   0.007      # smaller: gap risk higher in high-vol regimes
+
   # ── Fees ─────────────────────────────────────────────────────────────────────
   # Taker rate used for: entry (market order) + SL/flip/timeout exits (market order)
   # Maker rate used for: TP exits (limit order resting on book)

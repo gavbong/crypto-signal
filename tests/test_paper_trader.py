@@ -390,3 +390,81 @@ def test_check_positions_ticker_fail_returns_zero(conn):
     with patch("paper_trader.fetch_ticker_safe", return_value=None):
         closed = pt.check_positions(conn, MagicMock())
     assert closed == 0
+
+
+# ── Gap-risk cap ──────────────────────────────────────────────────────────────
+
+def test_gap_cap_limits_catastrophic_long_loss(conn):
+    """A candle that gaps far past the SL should be capped at 3× risk_usdt_at_open."""
+    sig = _signal(conn, "long", entry=100.0, stop=95.0, tp=120.0)
+    with patch("paper_trader.get_free_balance", return_value=1000.0):
+        pos = pt.open_position(conn, sig, 100.0)
+    assert pos is not None
+
+    # risk_usdt_at_open should be ~$10 (1% of 1000)
+    row = conn.execute("SELECT risk_usdt_at_open FROM paper_positions WHERE id=?", (pos["id"],)).fetchone()
+    assert row["risk_usdt_at_open"] == pytest.approx(10.0, rel=0.05)
+
+    # Exit at a price so far below entry that gross loss >> 3× risk
+    # Gross loss = (100 - 40) * contracts. With contracts ~2 for this setup that's ~$120 loss.
+    with patch("paper_trader.cfg", return_value={"paper_trader": {"max_loss_mult": 3.0, "risk_pct_default": 0.01}}):
+        net = pt.close_position(conn, dict(conn.execute(
+            "SELECT * FROM paper_positions WHERE id=?", (pos["id"],)).fetchone()), 40.0, "stop_loss")
+
+    # Net pnl may include fees/slippage but gross_pnl_usdt in DB must be capped
+    row2 = conn.execute("SELECT gross_pnl_usdt FROM paper_positions WHERE id=?", (pos["id"],)).fetchone()
+    cap = -(10.0 * 3.0)
+    assert row2["gross_pnl_usdt"] >= cap - 1.0  # cap applied (small tolerance for lot rounding)
+
+
+def test_gap_cap_does_not_trigger_on_normal_loss(conn):
+    """A normal stop-loss within 3× risk should not be capped."""
+    sig = _signal(conn, "long", entry=100.0, stop=95.0, tp=120.0)
+    with patch("paper_trader.get_free_balance", return_value=1000.0):
+        pos = pt.open_position(conn, sig, 100.0)
+    assert pos is not None
+
+    before_row = conn.execute("SELECT * FROM paper_positions WHERE id=?", (pos["id"],)).fetchone()
+    with patch("paper_trader.cfg", return_value={"paper_trader": {"max_loss_mult": 3.0, "risk_pct_default": 0.01}}):
+        pt.close_position(conn, dict(before_row), 95.0, "stop_loss")
+
+    row = conn.execute("SELECT gross_pnl_usdt FROM paper_positions WHERE id=?", (pos["id"],)).fetchone()
+    # gross loss = (100-95)*contracts — well within cap
+    assert row["gross_pnl_usdt"] > -(10.0 * 3.0)
+
+
+def test_risk_pct_for_high_volatility_is_smaller(conn):
+    """high-volatility regime should open a smaller position than choppy."""
+    base_cfg = {
+        "paper_trader": {
+            "risk_pct_default": 0.010,
+            "risk_pct_by_regime": {"choppy": 0.010, "high-volatility": 0.007},
+        },
+        "signals": {"trending_max_confidence": 0.65},
+    }
+
+    def make_sig(regime):
+        cur = conn.execute(
+            """INSERT INTO signals (pair, direction, strategy, regime, entry_price,
+               suggested_stop_loss, suggested_take_profit, timeframe, fired_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            ("ZEC/USDT:USDT", "long", "rsi_extreme", regime, 100.0, 95.0, 110.0, "15m", "2026-01-01"),
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "pair": "ZEC/USDT:USDT", "direction": "long",
+                "strategy": "rsi_extreme", "regime": regime, "entry_price": 100.0,
+                "suggested_stop_loss": 95.0, "suggested_take_profit": 110.0}
+
+    with patch("paper_trader.cfg", return_value=base_cfg), \
+         patch("paper_trader.get_free_balance", return_value=1000.0):
+        sig_choppy = make_sig("choppy")
+        pos_choppy = pt.open_position(conn, sig_choppy, 100.0)
+        risk_choppy = pos_choppy["risk_usdt_at_open"]
+        conn.execute("DELETE FROM paper_positions")  # reset so next open isn't blocked as duplicate
+        conn.commit()
+
+        sig_hv = make_sig("high-volatility")
+        pos_hv = pt.open_position(conn, sig_hv, 100.0)
+        risk_hv = pos_hv["risk_usdt_at_open"]
+
+    assert risk_hv < risk_choppy

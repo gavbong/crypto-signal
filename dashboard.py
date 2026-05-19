@@ -1299,6 +1299,90 @@ def create_app() -> Flask:
             conn.commit()
         return jsonify({"run_id": run_id})
 
+    @app.route("/api/diagnostics/wr-comparison")
+    def api_wr_comparison():
+        try:
+            with get_conn() as conn:
+                # Latest completed backtest run id
+                bt_run = conn.execute(
+                    "SELECT id FROM backtest_runs WHERE status='done' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                bt_run_id = bt_run[0] if bt_run else None
+
+                # Backtest signal WR (directional accuracy, no costs)
+                if bt_run_id is not None:
+                    bt_rows = conn.execute("""
+                        SELECT strategy, regime, direction,
+                               COUNT(*) as n,
+                               SUM(CASE WHEN pnl_r > 0 THEN 1 ELSE 0 END) as wins
+                        FROM signals
+                        WHERE backtest_run_id = ?
+                        GROUP BY strategy, regime, direction
+                    """, (bt_run_id,)).fetchall()
+                else:
+                    bt_rows = []
+
+                # Live signal WR (last 30 days, no backtest_run_id)
+                live_rows = conn.execute("""
+                    SELECT strategy, regime, direction,
+                           COUNT(*) as n,
+                           SUM(CASE WHEN pnl_r > 0 THEN 1 ELSE 0 END) as wins
+                    FROM signals
+                    WHERE backtest_run_id IS NULL
+                      AND fired_at >= datetime('now', '-30 days')
+                    GROUP BY strategy, regime, direction
+                """).fetchall()
+
+                # Paper P&L WR (last 30 days, actual account performance)
+                # Table may not exist if paper trader has never run
+                try:
+                    paper_rows = conn.execute("""
+                        SELECT strategy, regime, direction,
+                               COUNT(*) as n,
+                               SUM(CASE WHEN exit_reason='take_profit' THEN 1 ELSE 0 END) as wins
+                        FROM paper_positions
+                        WHERE closed_at >= datetime('now', '-30 days')
+                          AND closed_at IS NOT NULL
+                        GROUP BY strategy, regime, direction
+                    """).fetchall()
+                except Exception:
+                    paper_rows = []
+
+            # Index into dicts for easy lookup
+            bt_map = {(r["strategy"], r["regime"], r["direction"]): r for r in bt_rows}
+            live_map = {(r["strategy"], r["regime"], r["direction"]): r for r in live_rows}
+            paper_map = {(r["strategy"], r["regime"], r["direction"]): r for r in paper_rows}
+
+            all_keys = set(bt_map) | set(live_map) | set(paper_map)
+            result = []
+            for key in sorted(all_keys):
+                strat, regime, direction = key
+                bt   = bt_map.get(key)
+                live = live_map.get(key)
+                ppr  = paper_map.get(key)
+
+                bt_wr   = (bt["wins"] / bt["n"]) if bt and bt["n"] else None
+                live_wr = (live["wins"] / live["n"]) if live and live["n"] else None
+                paper_wr = (ppr["wins"] / ppr["n"]) if ppr and ppr["n"] else None
+                divergence = round((bt_wr - live_wr) * 100, 1) if (bt_wr is not None and live_wr is not None) else None
+
+                result.append({
+                    "strategy":          strat,
+                    "regime":            regime,
+                    "direction":         direction,
+                    "backtest_signal_wr": round(bt_wr, 3) if bt_wr is not None else None,
+                    "live_signal_wr":    round(live_wr, 3) if live_wr is not None else None,
+                    "paper_wr":          round(paper_wr, 3) if paper_wr is not None else None,
+                    "signal_divergence": divergence,
+                    "backtest_n":        bt["n"] if bt else 0,
+                    "live_n":            live["n"] if live else 0,
+                    "paper_n":           ppr["n"] if ppr else 0,
+                })
+
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     # Stale run detection: mark any run stuck in 'running' for >2 min as failed on startup
     with get_conn() as conn:
         conn.execute(
