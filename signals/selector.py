@@ -44,12 +44,14 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
 # Per-direction blocks applied AFTER REGIME_STRATEGY_MAP says FIRE.
 # Format: {regime: {strategy: set_of_blocked_directions}}
 # Updated 2026-05-14: live evidence (n=48-51) overrides backtest — all three were backwards.
+# Updated 2026-05-19: vol_breakout high-vol short blocked — 0/3 live (0% WR) vs 41.8% BT (42pp gap).
 DIRECTION_BLOCK: dict[str, dict[str, set]] = {
     "choppy": {
-        "rsi_divergence": {"short"},  # live: short WR=35% -11.86R | long WR=56% -0.39R
+        "rsi_divergence": {"short"},  # live: short WR=35% -11.86R | long WR=53% (n=53)
     },
     "high-volatility": {
-        "rsi_extreme": {"long"},      # live: short WR=62% +5.77R | long WR=33% -2.22R
+        "rsi_extreme": {"long"},      # live: short WR=57% +4.77R | long WR=33% -2.22R
+        "vol_breakout": {"short"},    # live: short WR=0% n=3 | BT WR=41.8% — 42pp divergence
     },
 }
 

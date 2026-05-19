@@ -4,6 +4,38 @@ Deferred work captured during plan reviews. Each item has context so it can be p
 
 ---
 
+## T6: Reduce RISK_PCT from 1% to 0.5% once WR stabilises
+
+**What:** Halve per-trade risk from `RISK_PCT=0.01` to `0.005` (or update `risk_pct_default` in config to 0.005).
+
+**Why:** At 20× leverage, 1% risk still exposes the account to multi-percent drawdowns when slippage is high (0.52% SL slip ≈ 50–70% of intended risk). Halving reduces max drawdown per bad sequence. Deferred until WR improves because lower risk also lowers reward — need the WR improvement first.
+
+**When to act:** After recalibrated REGIME_STRATEGY_MAP runs for 50+ live trades and rolling 30d WR exceeds 40%. Check `pnl_check.py` output and the dashboard WR comparison panel.
+
+---
+
+## T7: Regime accuracy tracker
+
+**What:** Track what % of regime labels turned out to be correct. A candle labelled "choppy" that subsequently trended strongly is a mislabel. Aggregate by regime+strategy to surface systematic labelling errors.
+
+**Why:** The CEO review identified that vol_breakout short losses in high-volatility may be because the regime is labelled "high-vol" at open but the actual move was trending (momentum, not reversal). Regime mislabelling would explain the live/backtest divergence.
+
+**Implementation sketch:** In `eval/outcomes.py`, after an outcome is resolved, compare the regime at signal time against the actual price move over the TP/SL window. Define "mislabelled" as: labelled choppy but price moved >1 ATR in one direction, or labelled trending but price reversed within 1h.
+
+**Depends on:** eval/outcomes.py already tagging outcomes. No new infrastructure needed — just an analysis addition.
+
+---
+
+## T8: Automated selector recalibration script
+
+**What:** A script that reads `pnl_check.py` output + backtest breakdown, computes per-combo divergence scores, and prints a recommended REGIME_STRATEGY_MAP diff ready to paste into `selector.py`.
+
+**Why:** The current recalibration workflow (CEO plan step 4) is fully manual — requires running pnl_check.py, running backtest, then manually cross-referencing. This can be scripted to reduce operator overhead from ~30 min to <5 min.
+
+**Context:** Place at `scripts/recalibrate_selector.py`. Reads backtest breakdown from API (`/api/backtest/breakdown?run_id=<latest>`), reads live WR from `pnl_check.py` logic, outputs diff. Flag combos with divergence >15pp or n≥3 live WR=0%.
+
+---
+
 ## T1: Polymarket wallet rotation detection (Poly funder graph)
 
 **What:** Extend the `wallet_graph` Arbiscan lookup to also check Poly trader wallets. If two Poly wallets are funded from the same source address, flag them as potential same-operator siblings.
