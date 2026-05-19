@@ -870,6 +870,17 @@ body{
     </div>
   </div>
 
+  <!-- Live vs Backtest WR comparison -->
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Live vs Backtest WR</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">signal accuracy · last 30d live · last completed backtest</span>
+    </div>
+    <div id="wr-comparison-body" style="padding:0;overflow-x:auto">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
+    </div>
+  </div>
+
 </div><!-- /view-backtest -->
 
 <div id="view-signals" class="view">
@@ -2617,7 +2628,57 @@ async function refreshBacktest() {
     const statusRes = await fetch('/api/backtest/status');
     const status = await statusRes.json();
     if (status.running && !_btPollInterval) btPollStatus();
+
+    // WR comparison panel
+    try {
+      const wrRes = await fetch('/api/diagnostics/wr-comparison');
+      const wrData = await wrRes.json();
+      renderWrComparison(wrData);
+    } catch (e) { console.error('wr-comparison error', e); }
   } catch (e) { console.error('refreshBacktest error', e); }
+}
+
+function renderWrComparison(rows) {
+  const el = document.getElementById('wr-comparison-body');
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No data — run a backtest and accumulate 30d of live signals.</span>';
+    return;
+  }
+  const pct = v => v !== null && v !== undefined ? (v * 100).toFixed(1) + '%' : '—';
+  const divColor = d => {
+    if (d === null || d === undefined) return 'var(--muted)';
+    if (d > 15) return 'var(--short)';
+    if (d > 5)  return '#F0A500';
+    return 'var(--long)';
+  };
+  const th = s => `<th style="font-family:var(--font-ui);font-size:10px;font-weight:600;color:var(--muted);padding:6px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--border)">${s}</th>`;
+  const td = (s, style='') => `<td style="font-family:var(--font-mono);font-size:11px;padding:5px 12px;border-bottom:1px solid var(--border);${style}">${s}</td>`;
+  let html = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr>
+      ${th('Strategy')}${th('Regime')}${th('Dir')}
+      ${th('BT WR')}${th('BT n')}
+      ${th('Live WR')}${th('Live n')}
+      ${th('Paper WR')}${th('Paper n')}
+      ${th('Divergence')}
+    </tr></thead><tbody>`;
+  for (const r of rows) {
+    const div = r.signal_divergence;
+    const divStr = div !== null && div !== undefined ? (div > 0 ? '+' : '') + div.toFixed(1) + 'pp' : '—';
+    html += `<tr>
+      ${td(r.strategy)}
+      ${td(r.regime, 'color:var(--muted)')}
+      ${td(r.direction, r.direction === 'long' ? 'color:var(--long)' : 'color:var(--short)')}
+      ${td(pct(r.backtest_signal_wr))}
+      ${td(r.backtest_n, 'color:var(--muted)')}
+      ${td(pct(r.live_signal_wr))}
+      ${td(r.live_n, 'color:var(--muted)')}
+      ${td(pct(r.paper_wr))}
+      ${td(r.paper_n, 'color:var(--muted)')}
+      ${td(divStr, 'color:' + divColor(div) + ';font-weight:600')}
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
 
 // ─── SIGNALS VIEW ────────────────────────────────────────────────────────────

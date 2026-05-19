@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     fees_usdt       REAL    DEFAULT 0,
     funding_usdt    REAL    DEFAULT 0,
     pnl_usdt        REAL,
-    last_price      REAL
+    last_price      REAL,
+    risk_usdt_at_open REAL  DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS paper_daily_pnl (
@@ -115,6 +116,7 @@ def init_paper_db(conn) -> None:
         "ALTER TABLE paper_positions ADD COLUMN fees_usdt REAL DEFAULT 0",
         "ALTER TABLE paper_positions ADD COLUMN funding_usdt REAL DEFAULT 0",
         "ALTER TABLE paper_positions ADD COLUMN slippage_usdt REAL DEFAULT 0",
+        "ALTER TABLE paper_positions ADD COLUMN risk_usdt_at_open REAL DEFAULT 0",
     ]:
         try:
             conn.execute(migration)
@@ -337,6 +339,14 @@ def _record_close_outcome(conn, net_pnl: float) -> None:
 
 # ── Position management ───────────────────────────────────────────────────────
 
+def _risk_pct_for_regime(regime: str) -> float:
+    """Return the risk fraction for this regime, falling back to RISK_PCT."""
+    pt = cfg().get("paper_trader", {})
+    by_regime = pt.get("risk_pct_by_regime", {})
+    default = pt.get("risk_pct_default", RISK_PCT)
+    return by_regime.get(regime, default)
+
+
 def open_position(conn, signal: dict, live_price: float) -> dict | None:
     """
     Attempt to open a paper position for a signal.
@@ -429,8 +439,10 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         return None
 
     min_contract = MIN_CONTRACTS.get(pair, DEFAULT_MIN_CONTRACT)
+    regime_label = signal.get("regime", "")
 
-    risk_usdt     = free * RISK_PCT
+    risk_pct      = _risk_pct_for_regime(regime_label)
+    risk_usdt     = free * risk_pct
     raw_contracts = risk_usdt / risk_per_contract
     max_contracts = (free * LEVERAGE) / live_price
     contracts     = max(min_contract, min(raw_contracts, max_contracts))
@@ -445,10 +457,12 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     cur = conn.execute(
         """INSERT INTO paper_positions
            (signal_id, pair, direction, strategy, regime,
-            entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at, exchange)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            entry_price, contracts, margin_usdt, stop_loss, take_profit, opened_at, exchange,
+            risk_usdt_at_open)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (signal["id"], pair, direction, signal["strategy"], signal["regime"],
-         live_price, contracts, margin, stop, tp, now, signal.get("exchange", "mexc")),
+         live_price, contracts, margin, stop, tp, now, signal.get("exchange", "mexc"),
+         round(risk_usdt, 4)),
     )
     conn.commit()
     pos_id = cur.lastrowid
@@ -461,7 +475,9 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     return {
         "id": pos_id, "pair": pair, "direction": direction,
         "entry_price": live_price, "contracts": contracts,
+        "margin_usdt": margin, "risk_usdt_at_open": round(risk_usdt, 4),
         "stop_loss": stop, "take_profit": tp,
+        "opened_at": now, "exchange": signal.get("exchange", "mexc"),
     }
 
 
@@ -506,6 +522,17 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
         gross_pnl = (exit_price - entry_price) * contracts
     else:
         gross_pnl = (entry_price - exit_price) * contracts
+
+    # ── Gap-risk cap — prevent single candle gap from exceeding N× intended risk ──
+    max_loss_mult = pt.get("max_loss_mult", 3.0)
+    risk_at_open = pos.get("risk_usdt_at_open") or (pos["margin_usdt"] * RISK_PCT)
+    gap_cap = -(risk_at_open * max_loss_mult)
+    if gross_pnl < gap_cap:
+        logger.warning(
+            f"Gap cap triggered on {pair}: gross_pnl {gross_pnl:.2f} → capped at {gap_cap:.2f} "
+            f"(risk_at_open={risk_at_open:.2f} × {max_loss_mult})"
+        )
+        gross_pnl = gap_cap
 
     # ── Fees — entry taker; exit maker for TP, taker otherwise ───────────────
     fees_usdt = _calc_fees(entry_price, exit_price, contracts, exchange_id, reason)
