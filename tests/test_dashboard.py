@@ -424,3 +424,44 @@ class TestWrComparison:
         assert row["backtest_signal_wr"] == pytest.approx(0.75)
         assert row["live_signal_wr"] == pytest.approx(0.5)
         assert row["signal_divergence"] == pytest.approx(25.0, abs=0.1)  # 75-50 = 25pp
+
+
+# ── login / logout ────────────────────────────────────────────────────────────
+
+class TestLoginFlow:
+    def test_login_page_accessible_without_auth(self, client_auth):
+        r = client_auth.get("/login")
+        assert r.status_code == 200
+        assert b"Signal Engine" in r.data
+
+    def test_correct_password_sets_session_and_redirects(self, client_auth):
+        r = client_auth.post("/login", data={"password": "test-secret-xyz", "next": "/"})
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith("/")
+
+    def test_wrong_password_redirects_with_error(self, client_auth):
+        r = client_auth.post("/login", data={"password": "wrong-password", "next": "/"})
+        assert r.status_code == 302
+        assert "error=1" in r.headers["Location"]
+
+    def test_unauthenticated_index_redirects_to_login(self, client_auth):
+        r = client_auth.get("/")
+        assert r.status_code == 302
+        assert "/login" in r.headers["Location"]
+
+    def test_authenticated_session_serves_dashboard(self, client_auth):
+        with client_auth.session_transaction() as sess:
+            sess["authed"] = True
+        r = client_auth.get("/")
+        assert r.status_code == 200
+        assert b"dashboard" in r.data.lower()
+
+    def test_logout_clears_session_and_redirects(self, client_auth):
+        with client_auth.session_transaction() as sess:
+            sess["authed"] = True
+        r = client_auth.get("/logout")
+        assert r.status_code == 302
+        assert "/login" in r.headers["Location"]
+        # session should be cleared — index should now redirect
+        r2 = client_auth.get("/")
+        assert r2.status_code == 302
