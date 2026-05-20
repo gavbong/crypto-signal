@@ -95,6 +95,10 @@ def create_app() -> Flask:
             return r
         return send_from_directory(str(_STATIC), "dashboard.html")
 
+    @app.route("/landing")
+    def landing():
+        return send_from_directory(str(_STATIC), "landing.html")
+
     @app.route("/favicon.ico")
     def favicon():
         from flask import Response
