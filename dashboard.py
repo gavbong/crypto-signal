@@ -1,13 +1,14 @@
+import hmac
 import json
 import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, abort, jsonify, redirect, request, send_from_directory, session
 
 from db.schema import get_conn, init_db
 from utils.config import get as cfg
@@ -36,18 +37,57 @@ def create_app() -> Flask:
     host = dash_cfg.get("host", "127.0.0.1")
 
     token = os.environ.get("DASHBOARD_TOKEN")
-    require_token = bool(token) and host != "127.0.0.1"
+    require_token = bool(token)
 
     app = Flask(__name__, static_folder=str(_STATIC), static_url_path="/static")
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(32).hex())
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+    def _is_authed() -> bool:
+        if not require_token:
+            return True
+        if session.get("authed"):
+            return True
+        if request.headers.get("Authorization") == f"Bearer {token}":
+            return True
+        return False
 
     def _auth():
-        if not require_token:
-            return
-        if request.headers.get("Authorization") != f"Bearer {token}":
+        if not _is_authed():
             abort(401)
+
+    def _auth_html():
+        """For HTML routes: redirect to /login instead of 401."""
+        if not _is_authed():
+            return redirect(f"/login?next={request.path}")
+        return None
+
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if not require_token:
+            return redirect("/")
+        if request.method == "POST":
+            pw = request.form.get("password", "")
+            if token and hmac.compare_digest(pw, token):
+                session.permanent = True
+                session["authed"] = True
+                next_url = request.form.get("next", "/")
+                return redirect(next_url if next_url.startswith("/") else "/")
+            return redirect("/login?error=1")
+        return send_from_directory(str(_STATIC), "login.html")
+
+    @app.route("/logout")
+    def logout():
+        session.clear()
+        return redirect("/login")
 
     @app.route("/")
     def index():
+        r = _auth_html()
+        if r:
+            return r
         return send_from_directory(str(_STATIC), "dashboard.html")
 
     @app.route("/favicon.ico")
