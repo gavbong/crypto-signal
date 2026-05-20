@@ -82,6 +82,13 @@ signals:
     supply_demand: 2.0
     rsi_extreme: 2.0
     ema_9_21_crossover: 2.0
+
+  # ── Slippage-adjusted TP ─────────────────────────────────────────────────────
+  # When true: TP is extended so effective RR (after entry + SL exit fill costs)
+  # equals the target RR. Without this, slippage eats into wins while losses are
+  # larger than intended — net EV is lower than the RR target implies.
+  slip_adjust_tp: true
+
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
 
 signal_quality:
@@ -176,6 +183,7 @@ copy_trader:
 
 paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
+  slip_adjust_sizing: true        # size on effective_risk (sl_dist + entry/exit slip) so actual $ risk = target %
   position_timeout_hours: 48      # close stale positions at market after 2 days
   circuit_breaker_losses: 5       # pause new entries after N consecutive losses
   circuit_breaker_cooldown_hours: 4  # hours to wait before resuming after circuit breaker trips

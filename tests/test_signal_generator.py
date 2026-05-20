@@ -72,19 +72,44 @@ class TestRsiDivergence:
             assert result["direction"] in ("long", "short")
 
 
+def _effective_rr_at_tp(tp: float, entry: float, stop: float, direction: str = "long") -> float:
+    """Compute the actual RR achieved at tp after entry and SL exit slippage."""
+    from utils.config import get as cfg
+    pt = cfg().get("paper_trader", {})
+    entry_slip = pt.get("entry_slippage_pct", 0.0005)
+    exit_slip  = pt.get("slippage_pct", 0.0052)
+    if direction == "long":
+        actual_entry = entry * (1 + entry_slip)
+        actual_sl    = stop  * (1 - exit_slip)
+        effective_loss = actual_entry - actual_sl
+        effective_gain = tp - actual_entry
+    else:
+        actual_entry = entry * (1 - entry_slip)
+        actual_sl    = stop  * (1 + exit_slip)
+        effective_loss = actual_sl - actual_entry
+        effective_gain = actual_entry - tp
+    return effective_gain / effective_loss
+
+
 class TestCalcTakeProfit:
-    """Verify per-regime RR ratios are applied by _calc_take_profit."""
+    """Verify per-regime RR ratios are applied by _calc_take_profit.
+
+    With slip_adjust_tp=true, TP is extended so effective RR (after fill
+    costs) equals the target. Tests verify the effective-RR guarantee, not
+    raw price distance, which changes with the slippage config.
+    """
 
     def test_choppy_uses_lower_rr(self):
         from utils.config import get as cfg
         c = cfg()["signals"]
-        entry, stop = 100.0, 98.0  # risk = 2.0
-        tp_choppy = _calc_take_profit(entry, stop, "long", "choppy")
+        entry, stop = 100.0, 98.0
+        tp_choppy  = _calc_take_profit(entry, stop, "long", "choppy")
         tp_default = _calc_take_profit(entry, stop, "long", "")
-        rr_choppy = c.get("rr_ratio_choppy", c["rr_ratio"])
+        rr_choppy  = c.get("rr_ratio_choppy", c["rr_ratio"])
         rr_default = c["rr_ratio"]
-        assert abs(tp_choppy - (entry + 2.0 * rr_choppy)) < 1e-6
         assert rr_choppy < rr_default, "choppy RR should be lower (tighter target)"
+        assert tp_choppy < tp_default, "choppy TP must be closer than default"
+        assert abs(_effective_rr_at_tp(tp_choppy, entry, stop) - rr_choppy) < 0.001
 
     def test_trending_uses_higher_rr(self):
         from utils.config import get as cfg
@@ -92,18 +117,18 @@ class TestCalcTakeProfit:
         entry, stop = 100.0, 98.0
         tp_trending = _calc_take_profit(entry, stop, "long", "trending-up")
         rr_trending = c.get("rr_ratio_trending", c["rr_ratio"])
-        assert abs(tp_trending - (entry + 2.0 * rr_trending)) < 1e-6
+        assert abs(_effective_rr_at_tp(tp_trending, entry, stop) - rr_trending) < 0.001
 
     def test_high_vol_rr_between_choppy_and_trending(self):
         from utils.config import get as cfg
         c = cfg()["signals"]
         entry, stop = 100.0, 98.0
         tp_hv = _calc_take_profit(entry, stop, "long", "high-volatility")
-        rr_hv = c.get("rr_ratio_high_vol", c["rr_ratio"])
-        rr_choppy = c.get("rr_ratio_choppy", c["rr_ratio"])
-        rr_trending = c.get("rr_ratio_trending", c["rr_ratio"])
+        rr_hv      = c.get("rr_ratio_high_vol", c["rr_ratio"])
+        rr_choppy  = c.get("rr_ratio_choppy",   c["rr_ratio"])
+        rr_trending = c.get("rr_ratio_trending",  c["rr_ratio"])
         assert rr_choppy <= rr_hv <= rr_trending, "high-vol RR should be between choppy and trending"
-        assert abs(tp_hv - (entry + 2.0 * rr_hv)) < 1e-6
+        assert abs(_effective_rr_at_tp(tp_hv, entry, stop) - rr_hv) < 0.001
 
     def test_short_direction_tp_below_entry(self):
         entry, stop = 100.0, 102.0
@@ -116,7 +141,7 @@ class TestCalcTakeProfit:
         c = cfg()["signals"]
         entry, stop = 100.0, 98.0
         tp = _calc_take_profit(entry, stop, "long", "nonexistent-regime")
-        assert abs(tp - (entry + 2.0 * c["rr_ratio"])) < 1e-6
+        assert abs(_effective_rr_at_tp(tp, entry, stop) - c["rr_ratio"]) < 0.001
 
 
 class TestVolBreakout:

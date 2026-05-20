@@ -433,6 +433,15 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         logger.warning(f"Paper: zero risk_per_contract for signal {signal['id']}")
         return None
 
+    # Size on effective risk so actual $ loss on SL = target %, not larger.
+    # Without this: slippage is accounted in PnL but not in sizing, so we're
+    # implicitly over-leveraged vs our target risk fraction.
+    _pt_cfg = cfg().get("paper_trader", {})
+    if _pt_cfg.get("slip_adjust_sizing", False):
+        _entry_slip = _pt_cfg.get("entry_slippage_pct", 0.0005)
+        _exit_slip  = _pt_cfg.get("slippage_pct", 0.0052)
+        risk_per_contract += live_price * (_entry_slip + _exit_slip)
+
     free = get_free_balance(conn)
     if free <= 0:
         logger.warning("Paper: no free balance — skipping")

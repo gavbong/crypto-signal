@@ -50,7 +50,22 @@ def _calc_take_profit(entry: float, stop: float, direction: str,
     strategy_rr = c.get("rr_ratio_strategy", {})
     if strategy and strategy in strategy_rr:
         rr = strategy_rr[strategy]
-    return round(entry + risk * rr, 8) if direction == "long" else round(entry - risk * rr, 8)
+
+    if c.get("slip_adjust_tp", False):
+        # Extend TP so effective RR (after fill costs) equals the target rr.
+        # Net gain at TP (long):  tp - entry*(1+slip) — limit exit, no exit slip
+        # Effective loss at SL:   (entry+entry_slip*entry) - (stop-exit_slip*stop)
+        #                       = risk + entry*entry_slip + stop*exit_slip
+        # Solve: net_gain = rr * effective_loss
+        pt = cfg().get("paper_trader", {})
+        entry_slip = pt.get("entry_slippage_pct", 0.0005)
+        exit_slip  = pt.get("slippage_pct", 0.0052)
+        effective_risk = risk + entry * entry_slip + stop * exit_slip
+        tp_offset = entry * entry_slip + rr * effective_risk
+    else:
+        tp_offset = risk * rr
+
+    return round(entry + tp_offset, 8) if direction == "long" else round(entry - tp_offset, 8)
 
 
 def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,

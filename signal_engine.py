@@ -137,7 +137,8 @@ def _collect_candidates(
                 signal["entry_price"] = round(live_price, 8)
                 signal["suggested_stop_loss"] = live_stop
                 signal["suggested_take_profit"] = _calc_take_profit(
-                    live_price, live_stop, signal["direction"], regime.label
+                    live_price, live_stop, signal["direction"], regime.label,
+                    signal.get("strategy", ""),
                 )
 
             # Stop distance hard gate (per asset class)
