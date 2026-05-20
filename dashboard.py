@@ -60,9 +60,9 @@ def create_app() -> Flask:
             abort(401)
 
     def _auth_html():
-        """For HTML routes: redirect to /login instead of 401."""
+        """For HTML routes: redirect to /landing instead of 401."""
         if not _is_authed():
-            return redirect(f"/login?next={request.path}")
+            return redirect("/landing")
         return None
 
     @app.route("/login", methods=["GET", "POST"])
@@ -86,7 +86,7 @@ def create_app() -> Flask:
     @app.route("/logout")
     def logout():
         session.clear()
-        return redirect("/login")
+        return redirect("/landing")
 
     @app.route("/")
     def index():

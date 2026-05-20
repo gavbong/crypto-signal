@@ -554,14 +554,95 @@
       color: var(--muted);
     }
 
+    /* ── Nav ── */
+    #nav {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: calc(100% - 48px);
+      max-width: 1100px;
+      padding: 10px 16px 10px 20px;
+      background: rgba(17,19,24,0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+    }
+
+    .nav-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.35; }
+    }
+
+    .nav-name {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    .btn-signin {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      color: #0A0B0D;
+      font-family: var(--font-ui);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 150ms ease;
+    }
+
+    .btn-signin:hover  { opacity: 0.88; }
+    .btn-signin:active { opacity: 0.75; }
+
     /* ── Reduced motion ── */
     @media (prefers-reduced-motion: reduce) {
       .scroll-arrow { animation: none; }
-      .bento-card, .btn-enter { transition: none; }
+      .nav-dot { animation: none; }
+      .bento-card, .btn-enter, .btn-signin { transition: none; }
     }
   </style>
 </head>
 <body>
+
+<!-- ═══ NAV ═══ -->
+<nav id="nav">
+  <a href="/landing" class="nav-brand">
+    <div class="nav-dot"></div>
+    <span class="nav-name">Signal Engine</span>
+  </a>
+  <a href="/login" class="btn-signin">
+    Sign In
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" width="12" height="12"><path fill-rule="evenodd" d="M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z" clip-rule="evenodd"/></svg>
+  </a>
+</nav>
 
 <!-- ═══ HERO ═══ -->
 <section id="hero">
