@@ -102,6 +102,7 @@
       margin-bottom: 6px;
     }
 
+    input[type="text"],
     input[type="password"] {
       width: 100%;
       padding: 9px 11px;
@@ -115,16 +116,20 @@
       transition: border-color 100ms ease-in-out;
     }
 
+    input[type="text"]:focus,
     input[type="password"]:focus {
       border-color: var(--accent);
     }
 
+    input[type="text"]::placeholder,
     input[type="password"]::placeholder {
       color: var(--muted);
       font-family: var(--font-ui);
       font-size: 13px;
       opacity: 0.6;
     }
+
+    .field + .field { margin-top: 14px; }
 
     .error-msg {
       display: none;
@@ -173,18 +178,32 @@
 
     <form method="POST" action="/login" id="login-form">
       <input type="hidden" name="next" id="next-input" value="/">
-      <label for="password">Access password</label>
-      <input
-        type="password"
-        id="password"
-        name="password"
-        placeholder="Enter password"
-        autocomplete="current-password"
-        autofocus
-      >
+      <div class="field">
+        <label for="username">Username</label>
+        <input
+          type="text"
+          id="username"
+          name="username"
+          placeholder="Enter username"
+          autocomplete="username"
+          autofocus
+          spellcheck="false"
+          autocapitalize="none"
+        >
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input
+          type="password"
+          id="password"
+          name="password"
+          placeholder="Enter password"
+          autocomplete="current-password"
+        >
+      </div>
       <div class="error-msg" id="error-msg">
         <span class="error-icon">✕</span>
-        <span>Invalid password</span>
+        <span>Invalid credentials</span>
       </div>
       <button type="submit" class="btn">Sign in</button>
     </form>

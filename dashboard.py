@@ -37,6 +37,7 @@ def create_app() -> Flask:
     host = dash_cfg.get("host", "127.0.0.1")
 
     token = os.environ.get("DASHBOARD_TOKEN")
+    username = os.environ.get("DASHBOARD_USERNAME", "")
     require_token = bool(token)
 
     app = Flask(__name__, static_folder=str(_STATIC), static_url_path="/static")
@@ -69,8 +70,12 @@ def create_app() -> Flask:
         if not require_token:
             return redirect("/")
         if request.method == "POST":
-            pw = request.form.get("password", "")
-            if token and hmac.compare_digest(pw, token):
+            submitted_user = request.form.get("username", "")
+            submitted_pw = request.form.get("password", "")
+            # Always compare both fields to prevent timing-based enumeration.
+            user_ok = (not username) or hmac.compare_digest(submitted_user, username)
+            pw_ok = bool(token) and hmac.compare_digest(submitted_pw, token)
+            if user_ok and pw_ok:
                 session.permanent = True
                 session["authed"] = True
                 next_url = request.form.get("next", "/")
