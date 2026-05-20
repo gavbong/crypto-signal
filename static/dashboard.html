@@ -1355,7 +1355,7 @@ function renderOpenPositions(positions, isFiltered) {
         <span>Notional ${notionalStr}</span>
       </div>` : ''}
       <div class="sig-footer">
-        <span>${p.contracts} contracts · ${p.strategy || '—'}</span>
+        <span>${+p.contracts.toPrecision(6)} contracts · ${p.strategy || '—'}</span>
         <span>${p.margin_usdt != null ? p.margin_usdt.toFixed(2) + ' USDT margin' : '—'}</span>
       </div>
     </div>`;
