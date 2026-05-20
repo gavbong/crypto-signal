@@ -199,7 +199,7 @@ paper_trader:
   # ── Fees ─────────────────────────────────────────────────────────────────────
   # Taker rate used for: entry (market order) + SL/flip/timeout exits (market order)
   # Maker rate used for: TP exits (limit order resting on book)
-  taker_fee_pct: 0.0006           # 0.06% — MEXC default; per-exchange constants override when known
+  taker_fee_pct: 0.0002           # 0.02% — MEXC futures taker (Level 0); verify at mexc.com/fee if your tier differs
   # Per-exchange maker rates (TP exits); 0 = free maker on MEXC futures
   maker_fee_rates:
     mexc:        0.0000            # MEXC futures maker: free
