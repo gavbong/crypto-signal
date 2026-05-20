@@ -494,7 +494,7 @@ def create_app() -> Flask:
 
     @app.route("/api/health")
     def api_health():
-        _auth()
+        pass  # intentionally public — no sensitive data, needed for monitoring
         with get_conn() as conn:
             row = conn.execute(
                 "SELECT MAX(logged_at) as last_write FROM regime_log"
