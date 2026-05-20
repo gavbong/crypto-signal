@@ -6,975 +6,591 @@
   <title>Signal Engine</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Outfit:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Outfit:wght@300;400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg:         #0A0B0D;
-      --surface:    #111318;
-      --surface-up: #1A1D26;
-      --border:     #1F2330;
-      --text:       #F0F2F7;
-      --muted:      #6B7280;
-      --accent:     #F0A500;
-      --long:       #22C55E;
-      --short:      #EF4444;
-      --radius:     4px;
-      --radius-sm:  2px;
-      --font-display: 'Instrument Sans', sans-serif;
-      --font-ui:    'Outfit', sans-serif;
-      --font-mono:  'JetBrains Mono', monospace;
+      --accent: #F0A500;
+      --long:   #22C55E;
+      --text:   #F0F2F7;
+      --muted:  rgba(240,242,247,0.45);
+      --border: rgba(255,255,255,0.07);
     }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    html { scroll-behavior: auto; }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--font-ui);
-      font-size: 14px;
-      -webkit-font-smoothing: antialiased;
-      overflow-x: hidden;
-    }
-
-    /* ── Hero ── */
-    #hero {
-      position: relative;
-      width: 100%;
-      min-height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-start;
-      overflow: hidden;
-    }
-
-    /* Background grid texture */
-    #hero::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(240,165,0,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(240,165,0,0.03) 1px, transparent 1px);
-      background-size: 40px 40px;
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    #bg-overlay {
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(240,165,0,0.06) 0%, transparent 70%);
-      pointer-events: none;
-      z-index: 0;
-    }
-
-    /* Title row above media */
-    #hero-title {
-      position: relative;
-      z-index: 10;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 24px;
-      padding-top: 80px;
-      width: 100%;
-      pointer-events: none;
-      user-select: none;
-    }
-
-    .title-word {
-      font-family: var(--font-display);
-      font-weight: 600;
-      font-size: clamp(32px, 6vw, 72px);
-      letter-spacing: -0.03em;
-      color: var(--text);
-      transition: transform 0.05s linear;
-      will-change: transform;
-    }
-
-    .title-word.accent { color: var(--accent); }
-
-    /* Scroll hint */
-    #scroll-hint {
-      position: absolute;
-      bottom: 28px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-      pointer-events: none;
-      opacity: 1;
-      transition: opacity 200ms ease;
-    }
-
-    #scroll-hint span {
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-    }
-
-    .scroll-arrow {
-      width: 16px;
-      height: 16px;
-      border-right: 1.5px solid var(--muted);
-      border-bottom: 1.5px solid var(--muted);
-      transform: rotate(45deg);
-      animation: bounce 1.6s ease-in-out infinite;
-    }
-
-    @keyframes bounce {
-      0%, 100% { transform: rotate(45deg) translateY(0); }
-      50%       { transform: rotate(45deg) translateY(4px); }
-    }
-
-    /* Expanding media container */
-    #media-wrap {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 5;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 0 80px rgba(0,0,0,0.6), 0 0 0 1px var(--border);
-      transition: none;
-      will-change: width, height;
-    }
-
-    #media-wrap img {
-      width: 100%;
+    html, body {
       height: 100%;
-      object-fit: cover;
-      object-position: top center;
+      background: #000;
+      color: var(--text);
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── WebGL canvas ── */
+    #bg-canvas {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       display: block;
-      pointer-events: none;
+      z-index: 0;
     }
 
-    /* Dark overlay on media that fades as it expands */
-    #media-overlay {
-      position: absolute;
+    /* ── Depth overlays ── */
+    #vignette {
+      position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.55);
-      border-radius: 8px;
+      background:
+        radial-gradient(ellipse 70% 55% at 50% 50%, transparent 25%, rgba(0,0,0,0.55) 100%),
+        linear-gradient(to bottom, rgba(0,0,0,0.25) 0%, transparent 30%, transparent 65%, rgba(0,0,0,0.6) 100%);
+      z-index: 1;
       pointer-events: none;
-      transition: none;
-      will-change: opacity;
     }
 
-    /* Subtitle below media (moves outward as scroll increases) */
-    #hero-sub {
-      position: absolute;
-      bottom: 72px;
-      left: 50%;
-      transform: translateX(-50%);
+    /* ── App layer ── */
+    #app {
+      position: relative;
       z-index: 10;
+      height: 100vh;
       display: flex;
-      align-items: center;
-      gap: 32px;
-      pointer-events: none;
-      user-select: none;
-      white-space: nowrap;
+      flex-direction: column;
     }
 
-    .sub-left, .sub-right {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--accent);
-      opacity: 0.8;
-      transition: none;
-      will-change: transform;
-    }
-
-    /* ── Content (appears after full expansion) ── */
-    #content {
-      position: relative;
-      z-index: 20;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 600ms ease;
-    }
-
-    #content.visible {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    /* ── Features section ── */
-    #features {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 80px 24px 40px;
-    }
-
-    .section-label {
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--accent);
-      margin-bottom: 12px;
-    }
-
-    .section-title {
-      font-family: var(--font-display);
-      font-size: clamp(24px, 4vw, 40px);
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text);
-      margin-bottom: 8px;
-      line-height: 1.15;
-    }
-
-    .section-subtitle {
-      font-family: var(--font-ui);
-      font-size: 15px;
-      color: var(--muted);
-      max-width: 480px;
-      line-height: 1.6;
-      margin-bottom: 48px;
-    }
-
-    /* Bento grid */
-    .bento {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      grid-template-rows: auto;
-      gap: 12px;
-    }
-
-    .bento-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 24px;
-      cursor: default;
-      transition: border-color 200ms ease, background 200ms ease;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .bento-card:hover {
-      border-color: rgba(240,165,0,0.3);
-      background: var(--surface-up);
-    }
-
-    .bento-card::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(240,165,0,0.04) 0%, transparent 60%);
-      opacity: 0;
-      transition: opacity 200ms ease;
-      pointer-events: none;
-    }
-
-    .bento-card:hover::before { opacity: 1; }
-
-    /* Grid spans */
-    .span-5  { grid-column: span 5; }
-    .span-7  { grid-column: span 7; }
-    .span-4  { grid-column: span 4; }
-    .span-8  { grid-column: span 8; }
-    .span-6  { grid-column: span 6; }
-    .span-12 { grid-column: span 12; }
-
-    @media (max-width: 900px) {
-      .span-5, .span-7, .span-4, .span-8, .span-6, .span-12 { grid-column: span 12; }
-    }
-
-    @media (max-width: 600px) {
-      .bento { grid-template-columns: 1fr; }
-      .span-5, .span-7, .span-4, .span-8, .span-6, .span-12 { grid-column: span 1; }
-    }
-
-    .bento-icon {
-      width: 32px;
-      height: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(240,165,0,0.1);
-      border: 1px solid rgba(240,165,0,0.2);
-      border-radius: var(--radius-sm);
-      margin-bottom: 16px;
-      flex-shrink: 0;
-    }
-
-    .bento-icon svg { width: 16px; height: 16px; color: var(--accent); }
-
-    .bento-card h3 {
-      font-family: var(--font-display);
-      font-size: 15px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
-      color: var(--text);
-      margin-bottom: 6px;
-    }
-
-    .bento-card p {
-      font-family: var(--font-ui);
-      font-size: 13px;
-      color: var(--muted);
-      line-height: 1.6;
-    }
-
-    /* Stat chips inside bento */
-    .stat-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 16px;
-    }
-
-    .stat-chip {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      padding: 3px 8px;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      color: var(--muted);
-    }
-
-    .stat-chip.green { border-color: rgba(34,197,94,0.3); color: var(--long); background: rgba(34,197,94,0.06); }
-    .stat-chip.amber { border-color: rgba(240,165,0,0.3); color: var(--accent); background: rgba(240,165,0,0.06); }
-    .stat-chip.red   { border-color: rgba(239,68,68,0.3);  color: var(--short); background: rgba(239,68,68,0.06); }
-
-    /* Regime dots mini vis */
-    .regime-dots {
-      display: flex;
-      gap: 3px;
-      margin-top: 14px;
-      flex-wrap: wrap;
-    }
-
-    .rdot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      opacity: 0.85;
-    }
-
-    .rdot.choppy    { background: #6B7280; }
-    .rdot.up        { background: var(--long); }
-    .rdot.down      { background: var(--short); }
-    .rdot.highvol   { background: var(--accent); }
-
-    /* Big number display */
-    .big-num {
-      font-family: var(--font-mono);
-      font-size: clamp(28px, 4vw, 48px);
-      font-weight: 500;
-      letter-spacing: -0.02em;
-      color: var(--text);
-      line-height: 1;
-      margin-top: 12px;
-    }
-
-    .big-num .unit { font-size: 0.45em; color: var(--muted); margin-left: 4px; }
-
-    /* Exchange badges */
-    .exch-row {
-      display: flex;
-      gap: 6px;
-      margin-top: 12px;
-      flex-wrap: wrap;
-    }
-
-    .exch-badge {
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.06em;
-      padding: 3px 7px;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      color: var(--muted);
-      text-transform: uppercase;
-    }
-
-    /* ── Stats bar ── */
-    #stats-bar {
-      max-width: 1100px;
-      margin: 0 auto 80px;
-      padding: 0 24px;
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 12px;
-    }
-
-    @media (max-width: 700px) {
-      #stats-bar { grid-template-columns: repeat(2, 1fr); }
-    }
-
-    .stats-item {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-    }
-
-    .stats-item-label {
-      font-family: var(--font-ui);
-      font-size: 10px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-
-    .stats-item-value {
-      font-family: var(--font-mono);
-      font-size: 22px;
-      font-weight: 500;
-      color: var(--text);
-      letter-spacing: -0.02em;
-    }
-
-    .stats-item-sub {
-      font-size: 11px;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-
-    /* ── CTA section ── */
-    #cta-section {
-      max-width: 1100px;
-      margin: 0 auto 100px;
-      padding: 0 24px;
-    }
-
-    .cta-card {
-      background: var(--surface);
-      border: 1px solid rgba(240,165,0,0.2);
-      border-radius: var(--radius);
-      padding: 48px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 32px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .cta-card::before {
-      content: '';
-      position: absolute;
-      top: -60px; right: -60px;
-      width: 200px; height: 200px;
-      background: radial-gradient(circle, rgba(240,165,0,0.08) 0%, transparent 70%);
-      pointer-events: none;
-    }
-
-    @media (max-width: 600px) {
-      .cta-card { flex-direction: column; align-items: flex-start; padding: 28px; }
-    }
-
-    .cta-text h2 {
-      font-family: var(--font-display);
-      font-size: clamp(20px, 3vw, 28px);
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: var(--text);
-      margin-bottom: 6px;
-    }
-
-    .cta-text p {
-      font-size: 14px;
-      color: var(--muted);
-      max-width: 360px;
-    }
-
-    .btn-enter {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 11px 24px;
-      background: var(--accent);
-      border: none;
-      border-radius: var(--radius);
-      color: #0A0B0D;
-      font-family: var(--font-ui);
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      text-decoration: none;
-      white-space: nowrap;
-      transition: opacity 150ms ease;
-      flex-shrink: 0;
-    }
-
-    .btn-enter:hover { opacity: 0.88; }
-    .btn-enter:active { opacity: 0.75; }
-
-    .btn-enter svg { width: 14px; height: 14px; }
-
-    /* ── Footer ── */
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      max-width: 1100px;
-      margin: 0 auto 24px;
-    }
-
-    .footer-brand {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .footer-dot {
-      width: 6px;
-      height: 6px;
-      background: var(--accent);
-      border-radius: 50%;
-    }
-
-    .footer-name {
-      font-family: var(--font-display);
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .footer-copy {
-      font-size: 11px;
-      color: var(--muted);
-    }
-
-    /* ── Nav ── */
+    /* ── NAV ── */
     #nav {
       position: fixed;
       top: 16px;
       left: 50%;
       transform: translateX(-50%);
       z-index: 100;
+      width: calc(100% - 48px);
+      max-width: 1100px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      width: calc(100% - 48px);
-      max-width: 1100px;
-      padding: 10px 16px 10px 20px;
-      background: rgba(17,19,24,0.75);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      padding: 10px 14px 10px 20px;
+      background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
       border: 1px solid var(--border);
-      border-radius: var(--radius);
+      border-radius: 6px;
     }
 
     .nav-brand {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      display: flex; align-items: center; gap: 9px;
       text-decoration: none;
     }
 
-    .nav-dot {
-      width: 6px;
-      height: 6px;
+    .brand-dot {
+      width: 7px; height: 7px;
       background: var(--accent);
       border-radius: 50%;
-      animation: pulse 2s ease-in-out infinite;
+      box-shadow: 0 0 8px var(--accent), 0 0 18px rgba(240,165,0,0.4);
+      animation: brand-pulse 2.4s ease-in-out infinite;
     }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50%       { opacity: 0.35; }
+    @keyframes brand-pulse {
+      0%, 100% { box-shadow: 0 0 8px var(--accent), 0 0 18px rgba(240,165,0,0.4); }
+      50%       { box-shadow: 0 0 4px rgba(240,165,0,0.5); }
     }
 
     .nav-name {
-      font-family: var(--font-display);
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: -0.01em;
+      font-family: 'Outfit', sans-serif;
+      font-size: 14px; font-weight: 500;
+      letter-spacing: 0.03em;
       color: var(--text);
     }
 
-    .btn-signin {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
+    .nav-signin {
+      display: inline-flex; align-items: center; gap: 6px;
       padding: 7px 16px;
       background: var(--accent);
-      border: none;
-      border-radius: var(--radius);
-      color: #0A0B0D;
-      font-family: var(--font-ui);
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      text-decoration: none;
+      border: none; border-radius: 4px;
+      color: #000;
+      font-family: 'Outfit', sans-serif;
+      font-size: 13px; font-weight: 500;
+      letter-spacing: 0.01em;
+      text-decoration: none; cursor: pointer;
       transition: opacity 150ms ease;
     }
+    .nav-signin:hover  { opacity: 0.85; }
+    .nav-signin:active { opacity: 0.7; }
+    .nav-signin svg { width: 12px; height: 12px; }
 
-    .btn-signin:hover  { opacity: 0.88; }
-    .btn-signin:active { opacity: 0.75; }
+    /* ── HERO ── */
+    #hero {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 100px 24px 80px;
+      text-align: center;
+    }
+
+    .hero-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Live badge */
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 5px 14px 5px 10px;
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: 999px;
+      background: rgba(34,197,94,0.06);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      margin-bottom: 36px;
+    }
+
+    .live-indicator {
+      position: relative;
+      width: 9px; height: 9px;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .live-ping {
+      position: absolute;
+      inset: 0;
+      background: var(--long);
+      border-radius: 50%;
+      animation: live-ping 1.8s ease-in-out infinite;
+    }
+
+    @keyframes live-ping {
+      0%   { transform: scale(1);   opacity: 0.7; }
+      100% { transform: scale(2.6); opacity: 0; }
+    }
+
+    .live-dot {
+      position: relative;
+      width: 6px; height: 6px;
+      background: var(--long);
+      border-radius: 50%;
+      box-shadow: 0 0 6px var(--long);
+    }
+
+    .live-text {
+      font-family: 'Outfit', sans-serif;
+      font-size: 11px; font-weight: 500;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--long);
+    }
+
+    /* Hero headline — Orbitron for web3 identity */
+    .hero-h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 900;
+      font-size: clamp(52px, 10.5vw, 116px);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      line-height: 0.88;
+      margin-bottom: 28px;
+    }
+
+    .hero-h1 .word-signal {
+      display: block;
+      color: #fff;
+      text-shadow:
+        0 0 40px rgba(240,165,0,0.18),
+        0 0 80px rgba(240,165,0,0.07);
+    }
+
+    .hero-h1 .word-engine {
+      display: block;
+      color: var(--accent);
+      text-shadow:
+        0 0 20px rgba(240,165,0,0.55),
+        0 0 55px rgba(240,165,0,0.28),
+        0 0 100px rgba(240,165,0,0.10);
+    }
+
+    /* Tagline */
+    .hero-tagline {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(13px, 1.4vw, 16px);
+      font-weight: 300;
+      line-height: 1.7;
+      color: var(--muted);
+      max-width: 460px;
+      margin-bottom: 44px;
+    }
+
+    /* ── Liquid Glass CTA ── */
+    .liquid-btn {
+      position: relative;
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 9px;
+      padding: 15px 44px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.14);
+      color: #fff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px; font-weight: 500;
+      letter-spacing: 0.02em;
+      text-decoration: none; cursor: pointer;
+      overflow: hidden;
+      margin-bottom: 48px;
+      /* Liquid glass depth shadows */
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.04),
+        inset  3px  3px 0.5px -3.5px rgba(255,255,255,0.08),
+        inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.80),
+        inset  1px  1px  1px -0.5px rgba(255,255,255,0.45),
+        inset -1px -1px  1px -0.5px rgba(255,255,255,0.45),
+        inset  0    0   6px   6px   rgba(255,255,255,0.09),
+        inset  0    0   2px   2px   rgba(255,255,255,0.04),
+        0 0 28px rgba(240,165,0,0.18),
+        0 10px 40px rgba(0,0,0,0.45);
+      transition: box-shadow 280ms ease, transform 280ms ease;
+    }
+
+    /* Glass backdrop layer */
+    .liquid-btn::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      z-index: 0;
+    }
+
+    /* Subtle inner gradient */
+    .liquid-btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: linear-gradient(160deg, rgba(255,255,255,0.06) 0%, transparent 50%);
+      z-index: 1;
+      pointer-events: none;
+    }
+
+    .liquid-btn:hover {
+      transform: translateY(-2px);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.07),
+        inset  3px  3px 0.5px -3.5px rgba(255,255,255,0.12),
+        inset -3px -3px 0.5px -3.5px rgba(255,255,255,0.90),
+        inset  1px  1px  1px -0.5px rgba(255,255,255,0.55),
+        inset -1px -1px  1px -0.5px rgba(255,255,255,0.55),
+        inset  0    0   6px   6px   rgba(255,255,255,0.13),
+        inset  0    0   2px   2px   rgba(255,255,255,0.06),
+        0 0 40px rgba(240,165,0,0.30),
+        0 14px 50px rgba(0,0,0,0.55);
+    }
+
+    .liquid-btn:active { transform: translateY(0); }
+
+    .btn-content {
+      position: relative;
+      z-index: 2;
+      display: flex; align-items: center; gap: 9px;
+    }
+
+    .btn-content svg { width: 14px; height: 14px; }
+
+    /* ── Stats bar ── */
+    .hero-stats {
+      display: flex;
+      align-items: stretch;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: rgba(0,0,0,0.35);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 26px;
+      gap: 3px;
+    }
+
+    .stat-item + .stat-item {
+      border-left: 1px solid var(--border);
+    }
+
+    .stat-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 17px; font-weight: 500;
+      color: #fff;
+      letter-spacing: -0.01em;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-family: 'Outfit', sans-serif;
+      font-size: 9px; font-weight: 400;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: rgba(240,242,247,0.3);
+    }
+
+    /* ── Footer ── */
+    #footer {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 32px;
+      border-top: 1px solid var(--border);
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    .footer-brand {
+      display: flex; align-items: center; gap: 7px;
+    }
+
+    .footer-dot {
+      width: 5px; height: 5px;
+      background: var(--accent);
+      border-radius: 50%;
+      opacity: 0.7;
+    }
+
+    .footer-name {
+      font-family: 'Outfit', sans-serif;
+      font-size: 12px; font-weight: 500;
+      color: rgba(240,242,247,0.35);
+    }
+
+    .footer-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      color: rgba(240,242,247,0.18);
+      text-transform: uppercase;
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      #nav { width: calc(100% - 32px); }
+      .hero-stats { display: none; }
+      .hero-h1 { letter-spacing: 0.06em; }
+      .liquid-btn { padding: 14px 36px; font-size: 15px; }
+      #footer { padding: 12px 20px; }
+      .footer-tag { display: none; }
+    }
 
     /* ── Reduced motion ── */
     @media (prefers-reduced-motion: reduce) {
-      .scroll-arrow { animation: none; }
-      .nav-dot { animation: none; }
-      .bento-card, .btn-enter, .btn-signin { transition: none; }
+      .brand-dot  { animation: none; }
+      .live-ping  { animation: none; }
+      .liquid-btn { transition: none; }
+      .nav-signin { transition: none; }
     }
   </style>
 </head>
 <body>
 
+<!-- WebGL canvas — full-screen animated shader background -->
+<canvas id="bg-canvas" aria-hidden="true"></canvas>
+
+<!-- Depth vignette -->
+<div id="vignette" aria-hidden="true"></div>
+
 <!-- ═══ NAV ═══ -->
-<nav id="nav">
-  <a href="/landing" class="nav-brand">
-    <div class="nav-dot"></div>
+<nav id="nav" aria-label="Main navigation">
+  <a href="/landing" class="nav-brand" aria-label="Signal Engine home">
+    <div class="brand-dot"></div>
     <span class="nav-name">Signal Engine</span>
   </a>
-  <a href="/login" class="btn-signin">
+  <a href="/login" class="nav-signin">
     Sign In
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" width="12" height="12"><path fill-rule="evenodd" d="M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z" clip-rule="evenodd"/></svg>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path fill-rule="evenodd" d="M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z" clip-rule="evenodd"/>
+    </svg>
   </a>
 </nav>
 
 <!-- ═══ HERO ═══ -->
-<section id="hero">
-  <div id="bg-overlay"></div>
+<main id="app">
+  <section id="hero">
+    <div class="hero-inner">
 
-  <div id="hero-title">
-    <span class="title-word" id="title-left">Signal</span>
-    <span class="title-word accent" id="title-right">Engine</span>
-  </div>
-
-  <div id="media-wrap">
-    <img src="/static/dashboard-preview.png" alt="Signal Engine Dashboard">
-    <div id="media-overlay"></div>
-  </div>
-
-  <div id="hero-sub">
-    <span class="sub-left" id="sub-left">Live · Multi-Exchange</span>
-    <span class="sub-right" id="sub-right">Scroll to expand</span>
-  </div>
-
-  <div id="scroll-hint">
-    <span>Scroll</span>
-    <div class="scroll-arrow"></div>
-  </div>
-</section>
-
-<!-- ═══ CONTENT (shown after expansion) ═══ -->
-<div id="content">
-
-  <!-- Features bento -->
-  <section id="features">
-    <div class="section-label">Capabilities</div>
-    <h2 class="section-title">Precision signal detection<br>across every regime</h2>
-    <p class="section-subtitle">Six adaptive strategies. Regime-gated entry. Slippage-calibrated sizing. Runs 24/7 on MEXC, Binance, and OKX.</p>
-
-    <div class="bento">
-
-      <!-- Multi-exchange -->
-      <div class="bento-card span-5">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      <!-- Live status badge -->
+      <div class="live-badge" role="status" aria-label="Engine is running">
+        <div class="live-indicator" aria-hidden="true">
+          <span class="live-ping"></span>
+          <span class="live-dot"></span>
         </div>
-        <h3>Multi-Exchange Coverage</h3>
-        <p>Monitors futures markets across three exchanges simultaneously. Best-quality signal per asset wins each cycle.</p>
-        <div class="exch-row">
-          <span class="exch-badge">MEXC</span>
-          <span class="exch-badge">Binance</span>
-          <span class="exch-badge">OKX</span>
-        </div>
+        <span class="live-text">Engine Live</span>
       </div>
 
-      <!-- Regime classification -->
-      <div class="bento-card span-7">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-        </div>
-        <h3>Real-Time Regime Classification</h3>
-        <p>1h MTF classifier labels every market as Choppy, Trending Up/Down, or High-Volatility. Each regime activates only the strategies that perform in it.</p>
-        <div class="regime-dots">
-          <span class="rdot choppy"></span><span class="rdot choppy"></span><span class="rdot up"></span><span class="rdot up"></span>
-          <span class="rdot up"></span><span class="rdot highvol"></span><span class="rdot highvol"></span><span class="rdot choppy"></span>
-          <span class="rdot down"></span><span class="rdot down"></span><span class="rdot choppy"></span><span class="rdot choppy"></span>
-          <span class="rdot up"></span><span class="rdot choppy"></span><span class="rdot highvol"></span><span class="rdot up"></span>
-          <span class="rdot choppy"></span><span class="rdot choppy"></span><span class="rdot down"></span><span class="rdot up"></span>
-        </div>
-      </div>
+      <!-- Main headline -->
+      <h1 class="hero-h1">
+        <span class="word-signal">SIGNAL</span>
+        <span class="word-engine">ENGINE</span>
+      </h1>
 
-      <!-- Six strategies -->
-      <div class="bento-card span-7">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-        </div>
-        <h3>Six Adaptive Strategies</h3>
-        <p>Liquidity grab, supply/demand, RSI divergence, RSI extreme, EMA crossover, volume breakout. Each with per-regime RR ratios and auto-disable on poor win rate.</p>
-        <div class="stat-row">
-          <span class="stat-chip green">supply_demand</span>
-          <span class="stat-chip green">liquidity_grab</span>
-          <span class="stat-chip amber">rsi_divergence</span>
-          <span class="stat-chip amber">rsi_extreme</span>
-          <span class="stat-chip">vol_breakout</span>
-          <span class="stat-chip">ema_9_21</span>
-        </div>
-      </div>
+      <!-- Tagline -->
+      <p class="hero-tagline">
+        Algorithmic futures signals across MEXC, Binance &amp; OKX.<br>
+        Six regime-aware strategies, slippage-calibrated sizing.
+      </p>
 
-      <!-- Paper trader -->
-      <div class="bento-card span-5">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-        </div>
-        <h3>Live Paper Trader</h3>
-        <p>Executes every signal with slippage-calibrated sizing. Tracks fees, funding, and real fill costs.</p>
-        <div class="big-num">2.5<span class="unit">R avg target</span></div>
-      </div>
-
-      <!-- Copy trader -->
-      <div class="bento-card span-4">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        </div>
-        <h3>Copy Trader</h3>
-        <p>Tracks top Hyperliquid performers. Correlates their entries with algo signals.</p>
-        <div class="stat-row">
-          <span class="stat-chip amber">Top 5 traders</span>
-          <span class="stat-chip">2m poll</span>
-        </div>
-      </div>
-
-      <!-- Slippage calibration -->
-      <div class="bento-card span-4">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-        </div>
-        <h3>Slippage-Adjusted TP</h3>
-        <p>TP extended so effective RR equals target after real fill costs. Entry and SL exit slippage are both priced in.</p>
-        <div class="stat-row">
-          <span class="stat-chip">0.05% entry</span>
-          <span class="stat-chip red">0.52% SL exit</span>
-        </div>
-      </div>
-
-      <!-- LLM commentary -->
-      <div class="bento-card span-4">
-        <div class="bento-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        </div>
-        <h3>LLM Commentary</h3>
-        <p>Claude Haiku generates a one-line rationale for each signal. Cached and delivered via Telegram.</p>
-        <div class="stat-row">
-          <span class="stat-chip amber">Haiku 4.5</span>
-          <span class="stat-chip">Telegram</span>
-        </div>
-      </div>
-
-    </div>
-  </section>
-
-  <!-- Stats bar -->
-  <div id="stats-bar">
-    <div class="stats-item">
-      <div class="stats-item-label">Exchanges</div>
-      <div class="stats-item-value">3</div>
-      <div class="stats-item-sub">MEXC · Binance · OKX</div>
-    </div>
-    <div class="stats-item">
-      <div class="stats-item-label">Signal cycle</div>
-      <div class="stats-item-value">15m</div>
-      <div class="stats-item-sub">APScheduler, 24/7</div>
-    </div>
-    <div class="stats-item">
-      <div class="stats-item-label">Strategies</div>
-      <div class="stats-item-value">6</div>
-      <div class="stats-item-sub">Auto-disable on poor WR</div>
-    </div>
-    <div class="stats-item">
-      <div class="stats-item-label">Fee model</div>
-      <div class="stats-item-value">0.02%</div>
-      <div class="stats-item-sub">MEXC futures taker</div>
-    </div>
-  </div>
-
-  <!-- CTA -->
-  <section id="cta-section">
-    <div class="cta-card">
-      <div class="cta-text">
-        <h2>Ready to trade the signals?</h2>
-        <p>Live engine running. Paper positions open. Enter the dashboard to monitor in real time.</p>
-      </div>
-      <a href="/login" class="btn-enter">
-        Enter Dashboard
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      <!-- Liquid glass CTA -->
+      <a href="/login" class="liquid-btn" aria-label="Sign in to enter the dashboard">
+        <span class="btn-content">
+          Enter Dashboard
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z" clip-rule="evenodd"/>
+          </svg>
+        </span>
       </a>
+
+      <!-- Stats bar -->
+      <div class="hero-stats" role="list" aria-label="Engine statistics">
+        <div class="stat-item" role="listitem">
+          <span class="stat-val">6</span>
+          <span class="stat-label">Strategies</span>
+        </div>
+        <div class="stat-item" role="listitem">
+          <span class="stat-val">3</span>
+          <span class="stat-label">Exchanges</span>
+        </div>
+        <div class="stat-item" role="listitem">
+          <span class="stat-val">24/7</span>
+          <span class="stat-label">Runtime</span>
+        </div>
+        <div class="stat-item" role="listitem">
+          <span class="stat-val">0.02%</span>
+          <span class="stat-label">Taker Fee</span>
+        </div>
+      </div>
+
     </div>
   </section>
+</main>
 
-  <footer>
-    <div class="footer-brand">
-      <div class="footer-dot"></div>
-      <span class="footer-name">Signal Engine</span>
-    </div>
-    <span class="footer-copy">Private · gavintong.com</span>
-  </footer>
-
-</div><!-- /content -->
+<!-- ═══ FOOTER ═══ -->
+<footer id="footer">
+  <div class="footer-brand">
+    <div class="footer-dot"></div>
+    <span class="footer-name">Signal Engine</span>
+  </div>
+  <span class="footer-tag">Private · Authorized Access Only</span>
+</footer>
 
 <script>
+// ── WebGL Shader Background ──
+// Vanilla JS port of the WebGLShader React component.
+// No THREE.js — raw WebGL only, zero external dependencies.
 (function () {
   'use strict';
 
-  const mediaWrap   = document.getElementById('media-wrap');
-  const mediaOverlay = document.getElementById('media-overlay');
-  const titleLeft   = document.getElementById('title-left');
-  const titleRight  = document.getElementById('title-right');
-  const subLeft     = document.getElementById('sub-left');
-  const subRight    = document.getElementById('sub-right');
-  const scrollHint  = document.getElementById('scroll-hint');
-  const content     = document.getElementById('content');
+  var canvas = document.getElementById('bg-canvas');
+  var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) return;
 
-  let progress = 0;          // 0 → 1
-  let expanded = false;
-  let touchStartY = 0;
-  let isMobile = window.innerWidth < 768;
-  let raf = null;
+  var VERT = [
+    'attribute vec3 position;',
+    'void main() { gl_Position = vec4(position, 1.0); }'
+  ].join('\n');
 
-  function getTargetSize() {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    if (isMobile) {
-      return {
-        initW: Math.min(300, vw * 0.85),
-        initH: 200,
-        maxW:  Math.min(vw * 0.96, 960),
-        maxH:  vh * 0.75,
-      };
-    }
-    return {
-      initW: 400,
-      initH: 240,
-      maxW:  Math.min(vw * 0.92, 1280),
-      maxH:  vh * 0.84,
-    };
+  var FRAG = [
+    'precision highp float;',
+    'uniform vec2  resolution;',
+    'uniform float time;',
+    'uniform float xScale;',
+    'uniform float yScale;',
+    'uniform float distortion;',
+    'void main() {',
+    '  vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / min(resolution.x, resolution.y);',
+    '  float d = length(p) * distortion;',
+    '  float rx = p.x * (1.0 + d);',
+    '  float gx = p.x;',
+    '  float bx = p.x * (1.0 - d);',
+    '  float r = 0.05 / abs(p.y + sin((rx + time) * xScale) * yScale);',
+    '  float g = 0.05 / abs(p.y + sin((gx + time) * xScale) * yScale);',
+    '  float b = 0.05 / abs(p.y + sin((bx + time) * xScale) * yScale);',
+    '  gl_FragColor = vec4(r, g, b, 1.0);',
+    '}'
+  ].join('\n');
+
+  function mkShader(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s); return s;
   }
 
-  function render() {
-    const { initW, initH, maxW, maxH } = getTargetSize();
-    const p = progress;
+  var prog = gl.createProgram();
+  gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog); gl.useProgram(prog);
 
-    const w = initW + (maxW - initW) * p;
-    const h = initH + (maxH - initH) * p;
+  var quad = new Float32Array([
+    -1,-1,0,  1,-1,0, -1,1,0,
+     1,-1,0, -1, 1,0,  1,1,0
+  ]);
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
 
-    mediaWrap.style.width  = w + 'px';
-    mediaWrap.style.height = h + 'px';
+  var posLoc = gl.getAttribLocation(prog, 'position');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
 
-    // Overlay fades out
-    const overlayOpacity = 0.55 - p * 0.45;
-    mediaOverlay.style.opacity = Math.max(overlayOpacity, 0.05);
+  var uRes  = gl.getUniformLocation(prog, 'resolution');
+  var uTime = gl.getUniformLocation(prog, 'time');
+  var uXS   = gl.getUniformLocation(prog, 'xScale');
+  var uYS   = gl.getUniformLocation(prog, 'yScale');
+  var uDist = gl.getUniformLocation(prog, 'distortion');
 
-    // Title words spread apart
-    const spread = p * (isMobile ? 12 : 10);
-    titleLeft.style.transform  = `translateX(-${spread}vw)`;
-    titleRight.style.transform = `translateX(${spread}vw)`;
+  gl.uniform1f(uXS,  1.0);
+  gl.uniform1f(uYS,  0.5);
+  gl.uniform1f(uDist, 0.05);
 
-    // Subtitle also spreads
-    const subSpread = p * (isMobile ? 20 : 14);
-    subLeft.style.transform  = `translateX(-${subSpread}vw)`;
-    subRight.style.transform = `translateX(${subSpread}vw)`;
+  var t = 0, rafId;
+  var prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    // Scroll hint fades
-    scrollHint.style.opacity = Math.max(1 - p * 3, 0);
-
-    // Shadow grows
-    const glowA = Math.round(p * 60);
-    mediaWrap.style.boxShadow = `0 0 ${40 + glowA}px rgba(0,0,0,0.7), 0 0 0 1px rgba(31,35,48,${1 - p * 0.5})`;
-
-    // Show content when fully expanded
-    if (p >= 1 && !content.classList.contains('visible')) {
-      content.classList.add('visible');
-    } else if (p < 0.8 && content.classList.contains('visible')) {
-      content.classList.remove('visible');
-    }
+  function resize() {
+    var dpr = window.devicePixelRatio || 1;
+    var w = window.innerWidth, h = window.innerHeight;
+    canvas.width  = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width  = w + 'px';
+    canvas.style.height = h + 'px';
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
   }
 
-  function applyDelta(delta) {
-    if (expanded) return;
-    progress = Math.min(Math.max(progress + delta, 0), 1);
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(render);
-    if (progress >= 1) {
-      expanded = true;
-    }
+  function draw() {
+    gl.uniform1f(uTime, t);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
   }
 
-  // Wheel
-  window.addEventListener('wheel', function (e) {
-    if (expanded && e.deltaY < 0 && window.scrollY <= 5) {
-      expanded = false;
-      e.preventDefault();
-      return;
-    }
-    if (!expanded) {
-      e.preventDefault();
-      applyDelta(e.deltaY * 0.0009);
-    }
-  }, { passive: false });
+  function tick() {
+    t += 0.007;
+    draw();
+    rafId = requestAnimationFrame(tick);
+  }
 
-  // Touch
-  window.addEventListener('touchstart', function (e) {
-    touchStartY = e.touches[0].clientY;
-  }, { passive: false });
+  resize();
+  window.addEventListener('resize', resize);
 
-  window.addEventListener('touchmove', function (e) {
-    if (!touchStartY) return;
-    const deltaY = touchStartY - e.touches[0].clientY;
-    if (expanded && deltaY < -20 && window.scrollY <= 5) {
-      expanded = false;
-      e.preventDefault();
-      return;
-    }
-    if (!expanded) {
-      e.preventDefault();
-      const factor = deltaY < 0 ? 0.008 : 0.005;
-      applyDelta(deltaY * factor);
-      touchStartY = e.touches[0].clientY;
-    }
-  }, { passive: false });
-
-  window.addEventListener('touchend', function () { touchStartY = 0; });
-
-  // Keep scroll locked to top while hero is active
-  window.addEventListener('scroll', function () {
-    if (!expanded) window.scrollTo(0, 0);
-  });
-
-  // Responsive
-  window.addEventListener('resize', function () {
-    isMobile = window.innerWidth < 768;
-    if (raf) cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(render);
-  });
-
-  // Bento card spotlight effect
-  document.querySelectorAll('.bento-card').forEach(function (card) {
-    card.addEventListener('mousemove', function (e) {
-      const rect = card.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
-      const y = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
-      card.style.setProperty('--mx', x + '%');
-      card.style.setProperty('--my', y + '%');
+  if (prefersReduced) {
+    t = 2.5; draw();
+  } else {
+    tick();
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) {
+        cancelAnimationFrame(rafId);
+      } else {
+        tick();
+      }
     });
-  });
-
-  // Initial render
-  render();
+  }
 })();
 </script>
 </body>
