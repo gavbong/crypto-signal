@@ -460,6 +460,21 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         logger.warning(f"Paper: contracts {contracts} below minimum for {pair} — skipping")
         return None
 
+    # Fee-adjusted R gate: round-trip taker fees as a fraction of 1R.
+    # Tight stops → high notional relative to risk → fees eat a large share of expected R.
+    # Threshold 0.35R: at this level fee drag raises choppy BE WR by ~14pp (40→54%).
+    _notional    = contracts * live_price
+    _exc_id_fee  = signal.get("exchange", "mexc")
+    _rt_fees     = _taker_rate(_exc_id_fee) * 2 * _notional
+    _fee_r       = _rt_fees / risk_usdt if risk_usdt > 0 else 999.0
+    _FEE_R_MAX   = 0.35
+    if _fee_r > _FEE_R_MAX:
+        logger.info(
+            f"Paper: fee gate — {pair} {direction} {strategy} "
+            f"fee_r={_fee_r:.3f}R (fees={_rt_fees:.2f} / risk={risk_usdt:.2f}) — skipping"
+        )
+        return None
+
     margin = (contracts * live_price) / LEVERAGE
 
     now = datetime.now(timezone.utc).isoformat()

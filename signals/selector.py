@@ -47,7 +47,8 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
 # Updated 2026-05-19: vol_breakout high-vol short blocked — 0/3 live (0% WR) vs 41.8% BT (42pp gap).
 DIRECTION_BLOCK: dict[str, dict[str, set]] = {
     "choppy": {
-        "rsi_divergence": {"short"},  # live: short WR=35% -11.86R | long WR=53% (n=53)
+        "rsi_divergence": {"short", "long"},  # short WR=35% -11.86R (blocked 2026-05-14); long WR=48% -4.37R (blocked 2026-05-22, fee-adj BE=61%)
+        "supply_demand":  {"long"},           # live: long WR=42% -5.05R | short WR=62% +2.48R (fee-adj BE=61%)
     },
     "high-volatility": {
         "rsi_extreme": {"long"},      # live: short WR=57% +4.77R | long WR=33% -2.22R
