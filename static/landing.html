@@ -132,53 +132,6 @@
       align-items: center;
     }
 
-    /* Live badge */
-    .live-badge {
-      display: inline-flex; align-items: center; gap: 7px;
-      padding: 5px 14px 5px 10px;
-      border: 1px solid rgba(34,197,94,0.25);
-      border-radius: 999px;
-      background: rgba(34,197,94,0.06);
-      backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      margin-bottom: 36px;
-    }
-
-    .live-indicator {
-      position: relative;
-      width: 9px; height: 9px;
-      display: flex; align-items: center; justify-content: center;
-    }
-
-    .live-ping {
-      position: absolute;
-      inset: 0;
-      background: var(--long);
-      border-radius: 50%;
-      animation: live-ping 1.8s ease-in-out infinite;
-    }
-
-    @keyframes live-ping {
-      0%   { transform: scale(1);   opacity: 0.7; }
-      100% { transform: scale(2.6); opacity: 0; }
-    }
-
-    .live-dot {
-      position: relative;
-      width: 6px; height: 6px;
-      background: var(--long);
-      border-radius: 50%;
-      box-shadow: 0 0 6px var(--long);
-    }
-
-    .live-text {
-      font-family: 'Outfit', sans-serif;
-      font-size: 11px; font-weight: 500;
-      letter-spacing: 0.07em;
-      text-transform: uppercase;
-      color: var(--long);
-    }
-
     /* Hero headline — Orbitron for web3 identity */
     .hero-h1 {
       font-family: 'Orbitron', sans-serif;
@@ -418,15 +371,6 @@
 <main id="app">
   <section id="hero">
     <div class="hero-inner">
-
-      <!-- Live status badge -->
-      <div class="live-badge" role="status" aria-label="Engine is running">
-        <div class="live-indicator" aria-hidden="true">
-          <span class="live-ping"></span>
-          <span class="live-dot"></span>
-        </div>
-        <span class="live-text">Engine Live</span>
-      </div>
 
       <!-- Main headline -->
       <h1 class="hero-h1">
