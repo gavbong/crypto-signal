@@ -1489,7 +1489,7 @@ def create_app() -> Flask:
 
     @app.route("/api/index/candles")
     def api_index_candles():
-        """Chart data for the Indices tab."""
+        """Chart data for the Indices tab. Always stores M15; resamples for larger TFs."""
         _auth()
         pair = request.args.get("pair", "DJ30/USD")
         timeframe = request.args.get("timeframe", "15m")
@@ -1498,21 +1498,44 @@ def create_app() -> Flask:
         except ValueError:
             limit = 100
 
+        _TF_SECS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+        interval = _TF_SECS.get(timeframe, 900)
+        raw_limit = min(limit * (interval // 900), 10000)
+
         with get_conn() as conn:
             rows = conn.execute(
                 """SELECT ts, open, high, low, close
                    FROM index_candles
-                   WHERE pair=? AND timeframe=?
+                   WHERE pair=? AND timeframe='15m'
                    ORDER BY ts DESC LIMIT ?""",
-                (pair, timeframe, limit),
+                (pair, raw_limit),
             ).fetchall()
 
-        candles = [
-            {"time": r["ts"], "open": r["open"], "high": r["high"],
-             "low": r["low"], "close": r["close"]}
-            for r in reversed(rows)
-        ]
-        return jsonify(candles)
+        rows = list(reversed(rows))
+
+        if timeframe == "15m":
+            candles = [
+                {"time": r["ts"], "open": r["open"], "high": r["high"],
+                 "low": r["low"], "close": r["close"]}
+                for r in rows
+            ]
+        else:
+            buckets: dict = {}
+            for r in rows:
+                bts = (r["ts"] // interval) * interval
+                if bts not in buckets:
+                    buckets[bts] = [r["open"], r["high"], r["low"], r["close"]]
+                else:
+                    b = buckets[bts]
+                    if r["high"] > b[1]: b[1] = r["high"]
+                    if r["low"]  < b[2]: b[2] = r["low"]
+                    b[3] = r["close"]
+            candles = [
+                {"time": ts, "open": b[0], "high": b[1], "low": b[2], "close": b[3]}
+                for ts, b in sorted(buckets.items())
+            ]
+
+        return jsonify(candles[-limit:])
 
     @app.route("/api/index/signals")
     def api_index_signals():

@@ -1015,6 +1015,12 @@ body{
     <div class="panel-hdr">
       <span class="panel-title" id="idx-chart-title">DJ30/USD — 15m</span>
       <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="idx-regime-label"></span>
+      <div style="display:flex;gap:4px;margin-left:auto">
+        <button class="idx-tf-btn active" onclick="idxSelectTf(this,'15m')">15m</button>
+        <button class="idx-tf-btn" onclick="idxSelectTf(this,'1h')">1h</button>
+        <button class="idx-tf-btn" onclick="idxSelectTf(this,'4h')">4h</button>
+        <button class="idx-tf-btn" onclick="idxSelectTf(this,'1d')">1d</button>
+      </div>
     </div>
     <div id="idx-chart-container" style="width:100%;height:380px;background:var(--bg-card)"></div>
   </div>
@@ -1052,6 +1058,9 @@ body{
 .idx-pair-btn{background:var(--bg-card);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:4px;cursor:pointer;font-family:var(--font-mono);font-size:11px;transition:border-color .15s,color .15s}
 .idx-pair-btn:hover{border-color:var(--amber);color:var(--fg)}
 .idx-pair-btn.active{border-color:var(--amber);color:var(--amber)}
+.idx-tf-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 8px;border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-size:10px;transition:border-color .15s,color .15s}
+.idx-tf-btn:hover{border-color:var(--amber);color:var(--fg)}
+.idx-tf-btn.active{border-color:var(--amber);color:var(--amber)}
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4/dist/lightweight-charts.standalone.production.js"></script>
@@ -2873,13 +2882,22 @@ async function refreshSettings() {
 let _idxChart = null;
 let _idxSeries = null;
 let _idxCurrentPair = 'DJ30/USD';
+let _idxCurrentTf = '15m';
 let _idxSignals = [];
 
 function idxSelectPair(btn, pair) {
   document.querySelectorAll('.idx-pair-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   _idxCurrentPair = pair;
-  document.getElementById('idx-chart-title').textContent = pair + ' — 15m';
+  document.getElementById('idx-chart-title').textContent = pair + ' — ' + _idxCurrentTf;
+  idxRefresh();
+}
+
+function idxSelectTf(btn, tf) {
+  document.querySelectorAll('.idx-tf-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  _idxCurrentTf = tf;
+  document.getElementById('idx-chart-title').textContent = _idxCurrentPair + ' — ' + tf;
   idxRefresh();
 }
 
@@ -2931,7 +2949,7 @@ async function idxRefresh() {
   const pair = _idxCurrentPair;
   try {
     // Fetch candles
-    const res = await fetch(`/api/index/candles?pair=${encodeURIComponent(pair)}&limit=100`);
+    const res = await fetch(`/api/index/candles?pair=${encodeURIComponent(pair)}&timeframe=${_idxCurrentTf}&limit=100`);
     const candles = await res.json();
 
     if (!_idxChart) _idxInitChart();
