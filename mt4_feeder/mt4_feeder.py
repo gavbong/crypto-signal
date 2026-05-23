@@ -35,19 +35,25 @@ import requests
 # MT4 symbol name → canonical pair name sent to the server
 # Trade Nation common names — check your MT4 Market Watch for exact names
 SYMBOL_MAP: dict[str, str] = {
-    "US30":   "DJ30/USD",
-    "US30.":  "DJ30/USD",     # some brokers append a dot
-    "USTEC":  "DJ30/USD",     # NASDAQ variant — remove if not needed
-    "UK100":  "FTSE100/USD",
-    "UK100.": "FTSE100/USD",
-    "GER40":  "DAX/USD",
-    "GER40.": "DAX/USD",
-    "GER30":  "DAX/USD",      # older broker name for DAX
-    "DE30":   "DAX/USD",
-    "XAUUSD": "XAU/USD",
-    "GOLD":   "XAU/USD",
-    "XAU":    "XAU/USD",
-    # Add your broker's exact symbol names here if different
+    # Trade Nation (dot-wrapped format)
+    ".US30.":   "DJ30/USD",
+    ".UK100.":  "FTSE100/USD",
+    ".DE40.":   "DAX/USD",
+    ".DE30.":   "DAX/USD",
+    # Generic / other brokers
+    "US30":     "DJ30/USD",
+    "US30.":    "DJ30/USD",
+    "USTEC":    "DJ30/USD",
+    "UK100":    "FTSE100/USD",
+    "UK100.":   "FTSE100/USD",
+    "GER40":    "DAX/USD",
+    "GER40.":   "DAX/USD",
+    "GER30":    "DAX/USD",
+    "DE30":     "DAX/USD",
+    "DE40":     "DAX/USD",
+    "XAUUSD":   "XAU/USD",
+    "GOLD":     "XAU/USD",
+    "XAU":      "XAU/USD",
 }
 
 # ── Paths & defaults ──────────────────────────────────────────────────────────
@@ -270,7 +276,7 @@ def main():
         return 1
 
     log.info(f"MT4 feeder starting | files_dir={files_dir} | server={server_url}")
-    log.info(f"Watching pairs: {list(SYMBOL_MAP.values())}")
+    log.info(f"Watching pairs: {sorted(set(SYMBOL_MAP.values()))}")
 
     if args.loop:
         log.info(f"Loop mode: running every {args.interval}s")

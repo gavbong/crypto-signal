@@ -462,6 +462,10 @@ body{
 
   <div class="stats-row-hdr">
     <span class="stats-row-title">Paper Trading</span>
+    <div class="seg-toggle" id="paper-acct-toggle">
+      <button class="seg-btn active" onclick="switchPaperAccount('crypto')">Crypto</button>
+      <button class="seg-btn" onclick="switchPaperAccount('indices')">Indices</button>
+    </div>
   </div>
 
   <div class="stats-grid">
@@ -1201,8 +1205,9 @@ function renderPaperStats(stats) {
   const unrealStr = unrealized !== 0
     ? ` · unreal: ${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(2)}`
     : '';
+  const acctLabel = _paperAccount === 'indices' ? 'Indices · Trade Nation' : 'Crypto · MEXC';
   document.getElementById('stat-balance-sub').textContent =
-    `${equityDelta >= 0 ? '+' : ''}${equityDelta.toFixed(2)} vs initial${unrealStr}`;
+    `${acctLabel} · ${equityDelta >= 0 ? '+' : ''}${equityDelta.toFixed(2)} vs start${unrealStr}`;
 
   const gross = stats.gross_pnl ?? stats.realized_pnl ?? 0;
   const grossEl = document.getElementById('stat-gross');
@@ -1684,9 +1689,9 @@ function _renderTradePage(prevIds, tradesOverride) {
 async function refresh() {
   try {
     const [paperStatsRes, posRes, histRes, healthRes, regimeRes, sigStatsRes, analysisRes, signalsRes, pairsRes] = await Promise.all([
-      fetch('/api/paper/stats'),
-      fetch('/api/paper/positions'),
-      fetch('/api/paper/history'),
+      fetch('/api/paper/stats?account=' + _paperAccount),
+      fetch('/api/paper/positions?account=' + _paperAccount),
+      fetch('/api/paper/history?account=' + _paperAccount),
       fetch('/api/health'),
       fetch('/api/regime?filter=live'),
       fetch('/api/stats?filter=live'),
@@ -1723,6 +1728,18 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, POLL_MS);
+
+// ─── PAPER ACCOUNT TOGGLE ────────────────────────────────────────────────────
+let _paperAccount = 'crypto';
+function switchPaperAccount(account) {
+  _paperAccount = account;
+  document.querySelectorAll('#paper-acct-toggle .seg-btn').forEach(b => {
+    const isCurrent = (account === 'crypto' && b.textContent === 'Crypto') ||
+                      (account === 'indices' && b.textContent === 'Indices');
+    b.classList.toggle('active', isCurrent);
+  });
+  refresh();
+}
 
 // ─── VIEW SWITCHING ───────────────────────────────────────────────────────────
 const PAGE_LABELS = { dashboard: null, copy: 'Copy Trader', polymarket: 'Polymarket' };

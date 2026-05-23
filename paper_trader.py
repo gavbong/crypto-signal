@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS paper_positions (
 
 CREATE TABLE IF NOT EXISTS paper_daily_pnl (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id      TEXT    NOT NULL DEFAULT 'crypto',
     day_number      INTEGER NOT NULL,
     snapshot_date   TEXT    NOT NULL,
     balance_usdt    REAL    NOT NULL,
@@ -117,6 +118,7 @@ def init_paper_db(conn) -> None:
         "ALTER TABLE paper_positions ADD COLUMN funding_usdt REAL DEFAULT 0",
         "ALTER TABLE paper_positions ADD COLUMN slippage_usdt REAL DEFAULT 0",
         "ALTER TABLE paper_positions ADD COLUMN risk_usdt_at_open REAL DEFAULT 0",
+        "ALTER TABLE paper_daily_pnl ADD COLUMN account_id TEXT NOT NULL DEFAULT 'crypto'",
     ]:
         try:
             conn.execute(migration)
@@ -126,6 +128,9 @@ def init_paper_db(conn) -> None:
     for key, default in [
         ("last_signal_id", "0"), ("day_number", "0"),
         ("consecutive_losses", "0"), ("circuit_breaker_until", "0"),
+        # Indices account state (idx_ prefix)
+        ("idx_last_signal_id", "0"), ("idx_day_number", "0"),
+        ("idx_consecutive_losses", "0"), ("idx_circuit_breaker_until", "0"),
     ]:
         conn.execute(
             "INSERT OR IGNORE INTO paper_state (key, value) VALUES (?, ?)",
@@ -137,12 +142,27 @@ def init_paper_db(conn) -> None:
 # ── Balance helpers ───────────────────────────────────────────────────────────
 
 def get_free_balance(conn) -> float:
-    """Free balance = initial + sum of closed PnL - sum of open margin."""
+    """Free balance for the crypto account (excludes tradenation positions)."""
     closed = conn.execute(
-        "SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+        "SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions "
+        "WHERE exit_price IS NOT NULL AND exchange != 'tradenation'"
     ).fetchone()[0]
     locked = conn.execute(
-        "SELECT COALESCE(SUM(margin_usdt), 0) FROM paper_positions WHERE exit_price IS NULL"
+        "SELECT COALESCE(SUM(margin_usdt), 0) FROM paper_positions "
+        "WHERE exit_price IS NULL AND exchange != 'tradenation'"
+    ).fetchone()[0]
+    return INITIAL_BALANCE + closed - locked
+
+
+def get_free_balance_indices(conn) -> float:
+    """Free balance for the indices (tradenation) account."""
+    closed = conn.execute(
+        "SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions "
+        "WHERE exit_price IS NOT NULL AND exchange = 'tradenation'"
+    ).fetchone()[0]
+    locked = conn.execute(
+        "SELECT COALESCE(SUM(margin_usdt), 0) FROM paper_positions "
+        "WHERE exit_price IS NULL AND exchange = 'tradenation'"
     ).fetchone()[0]
     return INITIAL_BALANCE + closed - locked
 
@@ -165,11 +185,17 @@ def _fetch_tickers(exchange_map: dict, positions: list) -> dict[tuple, float]:
     return prices
 
 
-def get_unrealized_pnl(conn, exchange_map: dict) -> float:
-    """Sum unrealized PnL across all open positions using live prices."""
-    rows = conn.execute(
-        "SELECT * FROM paper_positions WHERE exit_price IS NULL"
-    ).fetchall()
+def get_unrealized_pnl(conn, exchange_map: dict, exchange_filter: str | None = None) -> float:
+    """Sum unrealized PnL for open positions. exchange_filter scopes to one account."""
+    if exchange_filter:
+        rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE exit_price IS NULL AND exchange=?",
+            (exchange_filter,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE exit_price IS NULL AND exchange != 'tradenation'"
+        ).fetchall()
     if not rows:
         return 0.0
 
@@ -324,39 +350,39 @@ def _calc_slippage(price: float, contracts: float, direction: str,
 
 # ── Circuit breaker ───────────────────────────────────────────────────────────
 
-def _circuit_breaker_active(conn) -> bool:
-    """Return True if consecutive-loss pause is in effect."""
-    until = _get_state(conn, "circuit_breaker_until")
+def _circuit_breaker_active(conn, pfx: str = "") -> bool:
+    """Return True if consecutive-loss pause is in effect. pfx='idx_' for indices account."""
+    until = _get_state(conn, f"{pfx}circuit_breaker_until")
     if until and until != "0":
         try:
             until_dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
             if datetime.now(timezone.utc) < until_dt:
                 return True
-            _set_state(conn, "circuit_breaker_until", "0")
-            _set_state(conn, "consecutive_losses", "0")
+            _set_state(conn, f"{pfx}circuit_breaker_until", "0")
+            _set_state(conn, f"{pfx}consecutive_losses", "0")
         except Exception:
             pass
     return False
 
 
-def _record_close_outcome(conn, net_pnl: float) -> None:
+def _record_close_outcome(conn, net_pnl: float, pfx: str = "") -> None:
     """Track consecutive losses; trip circuit breaker when threshold hit."""
     pt = cfg().get("paper_trader", {})
     max_losses = pt.get("circuit_breaker_losses", 5)
     cooldown_h = pt.get("circuit_breaker_cooldown_hours", 4)
 
     if net_pnl >= 0:
-        _set_state(conn, "consecutive_losses", "0")
+        _set_state(conn, f"{pfx}consecutive_losses", "0")
         return
 
-    consecutive = int(_get_state(conn, "consecutive_losses") or "0") + 1
-    _set_state(conn, "consecutive_losses", str(consecutive))
+    consecutive = int(_get_state(conn, f"{pfx}consecutive_losses") or "0") + 1
+    _set_state(conn, f"{pfx}consecutive_losses", str(consecutive))
     if consecutive >= max_losses:
         from datetime import timedelta
         until = (datetime.now(timezone.utc) + timedelta(hours=cooldown_h)).isoformat()
-        _set_state(conn, "circuit_breaker_until", until)
+        _set_state(conn, f"{pfx}circuit_breaker_until", until)
         logger.warning(
-            f"Paper: circuit breaker — {consecutive} consecutive losses. "
+            f"Paper: circuit breaker ({pfx or 'crypto'}) — {consecutive} consecutive losses. "
             f"Pausing new entries until {until}"
         )
 
@@ -378,11 +404,13 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     Opposite-direction signal closes the existing position and flips.
     Returns the position row dict on success, None if skipped.
     """
-    pair      = signal["pair"]
-    direction = signal["direction"]
+    pair        = signal["pair"]
+    direction   = signal["direction"]
+    exchange_id = signal.get("exchange", "mexc")
+    _cb_pfx     = "idx_" if exchange_id == "tradenation" else ""
 
     # Circuit breaker gate
-    if _circuit_breaker_active(conn):
+    if _circuit_breaker_active(conn, _cb_pfx):
         logger.debug(f"Paper: circuit breaker active — skipping signal {signal.get('id')}")
         return None
 
@@ -407,8 +435,8 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
             return None
 
     existing = conn.execute(
-        "SELECT * FROM paper_positions WHERE pair=? AND exit_price IS NULL",
-        (pair,),
+        "SELECT * FROM paper_positions WHERE pair=? AND exchange=? AND exit_price IS NULL",
+        (pair, exchange_id),
     ).fetchone()
     if existing:
         if existing["direction"] != direction:
@@ -466,7 +494,7 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         _exit_slip  = _pt_cfg.get("slippage_pct", 0.0052)
         risk_per_contract += live_price * (_entry_slip + _exit_slip)
 
-    free = get_free_balance(conn)
+    free = get_free_balance_indices(conn) if exchange_id == "tradenation" else get_free_balance(conn)
     if free <= 0:
         logger.warning("Paper: no free balance — skipping")
         return None
@@ -602,7 +630,8 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
          pos["id"]),
     )
     conn.commit()
-    _record_close_outcome(conn, net_pnl)
+    _cb_pfx = "idx_" if exchange_id == "tradenation" else ""
+    _record_close_outcome(conn, net_pnl, _cb_pfx)
 
     outcome = "WIN" if net_pnl >= 0 else "LOSS"
     logger.info(
@@ -678,40 +707,55 @@ def check_timeouts(conn, exchange_map: dict) -> int:
     return closed
 
 
-def poll_new_signals(conn) -> list[dict]:
-    """Fetch all new live (non-backtest) signals since last seen id."""
-    last_id = int(_get_state(conn, "last_signal_id"))
-    rows = conn.execute(
+def poll_new_signals(conn, for_indices: bool = False) -> list[dict]:
+    """Fetch new live signals for the crypto or indices account.
+
+    Both accounts maintain an independent highwater mark. All new signals are
+    scanned to advance the mark, then filtered to the correct account so
+    neither account re-scans old rows on the next cycle.
+    """
+    state_key = "idx_last_signal_id" if for_indices else "last_signal_id"
+    last_id = int(_get_state(conn, state_key))
+
+    all_rows = conn.execute(
         "SELECT * FROM signals WHERE id > ? AND backtest_run_id IS NULL ORDER BY id",
         (last_id,),
     ).fetchall()
-    if not rows:
+    if not all_rows:
         return []
-    _set_state(conn, "last_signal_id", str(rows[-1]["id"]))
-    return [dict(row) for row in rows]
+
+    _set_state(conn, state_key, str(all_rows[-1]["id"]))
+
+    if for_indices:
+        return [dict(r) for r in all_rows if (dict(r).get("exchange") or "mexc") == "tradenation"]
+    return [dict(r) for r in all_rows if (dict(r).get("exchange") or "mexc") != "tradenation"]
 
 
 # ── Daily snapshot ────────────────────────────────────────────────────────────
 
-def snapshot_day(conn, exchange_map: dict) -> dict:
-    """Capture end-of-day PnL snapshot and write JSON log."""
-    day_number = int(_get_state(conn, "day_number")) + 1
+def snapshot_day(conn, exchange_map: dict,
+                 account_id: str = "crypto", exchange_filter: str | None = None) -> dict:
+    """Capture end-of-day PnL snapshot for one account."""
+    day_key = "idx_day_number" if account_id == "indices" else "day_number"
+    day_number = int(_get_state(conn, day_key)) + 1
 
-    free       = get_free_balance(conn)
-    unrealized = get_unrealized_pnl(conn, exchange_map)
+    exc_clause = "exchange = 'tradenation'" if account_id == "indices" else "exchange != 'tradenation'"
+
+    free       = get_free_balance_indices(conn) if account_id == "indices" else get_free_balance(conn)
+    unrealized = get_unrealized_pnl(conn, exchange_map, exchange_filter)
     equity     = free + unrealized
 
     realized_pnl = conn.execute(
-        "SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+        f"SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL AND {exc_clause}"
     ).fetchone()[0]
     open_count = conn.execute(
-        "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NULL"
+        f"SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NULL AND {exc_clause}"
     ).fetchone()[0]
     total_trades = conn.execute(
-        "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL"
+        f"SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND {exc_clause}"
     ).fetchone()[0]
     wins = conn.execute(
-        "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt >= 0"
+        f"SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt >= 0 AND {exc_clause}"
     ).fetchone()[0]
     losses   = total_trades - wins
     win_rate = wins / total_trades if total_trades > 0 else None
@@ -719,14 +763,14 @@ def snapshot_day(conn, exchange_map: dict) -> dict:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn.execute(
         """INSERT INTO paper_daily_pnl
-           (day_number, snapshot_date, balance_usdt, equity_usdt, realized_pnl,
+           (account_id, day_number, snapshot_date, balance_usdt, equity_usdt, realized_pnl,
             unrealized_pnl, open_positions, total_trades, wins, losses, win_rate)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (day_number, today, free, equity, realized_pnl, unrealized,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (account_id, day_number, today, free, equity, realized_pnl, unrealized,
          open_count, total_trades, wins, losses, win_rate),
     )
     conn.commit()
-    _set_state(conn, "day_number", str(day_number))
+    _set_state(conn, day_key, str(day_number))
 
     snapshot = {
         "day": day_number,
@@ -758,28 +802,93 @@ def snapshot_day(conn, exchange_map: dict) -> dict:
 
 # ── Scheduler jobs ────────────────────────────────────────────────────────────
 
+def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
+    """Shared poll logic for crypto and indices accounts."""
+    acct = "indices" if for_indices else "crypto"
+    exc_filter = "exchange = 'tradenation'" if for_indices else "exchange != 'tradenation'"
+
+    # Check / close open positions for this account only
+    rows = conn.execute(
+        f"SELECT * FROM paper_positions WHERE exit_price IS NULL AND {exc_filter}"
+    ).fetchall()
+    if rows:
+        prices = _fetch_tickers(exchange_map, rows)
+        closed = timed_out = 0
+        pt = cfg().get("paper_trader", {})
+        timeout_h = pt.get("position_timeout_hours", 48)
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
+        for pos in rows:
+            exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
+            live = prices.get((exc_id, pos["pair"]))
+            if live is None:
+                logger.warning(f"Paper[{acct}]: no ticker for {pos['pair']} — skipping")
+                continue
+            conn.execute("UPDATE paper_positions SET last_price=? WHERE id=?", (live, pos["id"]))
+            if pos["direction"] == "long":
+                if live <= pos["stop_loss"]:
+                    close_position(conn, dict(pos), live, "stop_loss"); closed += 1
+                elif live >= pos["take_profit"]:
+                    close_position(conn, dict(pos), live, "take_profit"); closed += 1
+            else:
+                if live >= pos["stop_loss"]:
+                    close_position(conn, dict(pos), live, "stop_loss"); closed += 1
+                elif live <= pos["take_profit"]:
+                    close_position(conn, dict(pos), live, "take_profit"); closed += 1
+            if pos["opened_at"] < cutoff and pos["id"] not in []:
+                pass  # handled below
+        conn.commit()
+        if closed:
+            logger.info(f"Paper[{acct}]: closed {closed} position(s) this tick")
+
+    # Timeout check
+    from datetime import timedelta
+    pt = cfg().get("paper_trader", {})
+    timeout_h = pt.get("position_timeout_hours", 48)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
+    timed_rows = conn.execute(
+        f"SELECT * FROM paper_positions WHERE exit_price IS NULL AND opened_at < ? AND {exc_filter}",
+        (cutoff,),
+    ).fetchall()
+    if timed_rows:
+        prices_t = _fetch_tickers(exchange_map, timed_rows)
+        for pos in timed_rows:
+            exc_id = dict(pos).get("exchange") or "mexc"
+            live = prices_t.get((exc_id, pos["pair"]))
+            if live:
+                close_position(conn, dict(pos), live, "timeout")
+                logger.info(f"Paper[{acct}]: timeout close {pos['pair']}")
+
+    # New signals
+    signals = poll_new_signals(conn, for_indices=for_indices)
+    for sig in signals:
+        exc_id = sig.get("exchange", "mexc")
+        exchange = exchange_map.get(exc_id) or next(iter(exchange_map.values()))
+        ticker = fetch_ticker_safe(exchange, sig["pair"])
+        if not ticker or not ticker.get("last"):
+            logger.warning(f"Paper[{acct}]: no live price for {sig['pair']} signal {sig['id']} — skipping")
+            continue
+        open_position(conn, sig, float(ticker["last"]))
+
+
 def poll_job(exchange_map: dict) -> None:
     with get_conn() as conn:
-        closed = check_positions(conn, exchange_map)
-        timed_out = check_timeouts(conn, exchange_map)
-        if closed or timed_out:
-            logger.info(f"Paper: closed {closed} position(s) · timed out {timed_out} this tick")
+        _run_poll(conn, exchange_map, for_indices=False)
 
-        signals = poll_new_signals(conn)
-        for sig in signals:
-            exc_id = sig.get("exchange", "mexc")
-            exchange = exchange_map.get(exc_id) or next(iter(exchange_map.values()))
-            ticker = fetch_ticker_safe(exchange, sig["pair"])
-            if not ticker or not ticker.get("last"):
-                logger.warning(f"Paper: no live price for {sig['pair']} ({exc_id}) signal {sig['id']} — skipping")
-                continue
-            live_price = float(ticker["last"])
-            open_position(conn, sig, live_price)
+
+def poll_job_indices(exchange_map: dict) -> None:
+    with get_conn() as conn:
+        _run_poll(conn, exchange_map, for_indices=True)
 
 
 def snapshot_job(exchange_map: dict) -> None:
     with get_conn() as conn:
-        snapshot_day(conn, exchange_map)
+        snapshot_day(conn, exchange_map, account_id="crypto")
+
+
+def snapshot_job_indices(exchange_map: dict) -> None:
+    with get_conn() as conn:
+        snapshot_day(conn, exchange_map, account_id="indices", exchange_filter="tradenation")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -820,6 +929,14 @@ def main() -> None:
         except Exception as e:
             logger.error(f"Paper: failed to init exchange {exc_id}: {e}")
 
+    if cfg().get("indices", {}).get("enabled", False):
+        try:
+            from exchanges.index_reader import IndexReader
+            exchange_map["tradenation"] = IndexReader()
+            logger.info("Paper: IndexReader added for tradenation account")
+        except Exception as e:
+            logger.error(f"Paper: failed to init IndexReader: {e}")
+
     if not exchange_map:
         logger.error("Paper: no exchanges enabled — check config.yaml")
         return
@@ -850,6 +967,23 @@ def main() -> None:
         minute=0,
         args=[exchange_map],
     )
+
+    if "tradenation" in exchange_map:
+        scheduler.add_job(
+            poll_job_indices,
+            "interval",
+            minutes=15,
+            args=[exchange_map],
+            next_run_time=datetime.now(timezone.utc),
+        )
+        scheduler.add_job(
+            snapshot_job_indices,
+            "cron",
+            hour=0,
+            minute=1,
+            args=[exchange_map],
+        )
+        logger.info("Paper: indices account (tradenation) scheduler jobs registered")
 
     try:
         scheduler.start()

@@ -334,36 +334,38 @@ def create_app() -> Flask:
     @app.route("/api/paper/stats")
     def api_paper_stats():
         _auth()
+        acct = request.args.get("account", "crypto")
+        af = "exchange = 'tradenation'" if acct == "indices" else "exchange != 'tradenation'"
         with get_conn() as conn:
             realized = conn.execute(
-                "SELECT COALESCE(SUM(pnl_usdt),0) FROM paper_positions WHERE exit_price IS NOT NULL"
+                f"SELECT COALESCE(SUM(pnl_usdt),0) FROM paper_positions WHERE exit_price IS NOT NULL AND {af}"
             ).fetchone()[0]
             open_margin = conn.execute(
-                "SELECT COALESCE(SUM(margin_usdt),0) FROM paper_positions WHERE exit_price IS NULL"
+                f"SELECT COALESCE(SUM(margin_usdt),0) FROM paper_positions WHERE exit_price IS NULL AND {af}"
             ).fetchone()[0]
             wins = conn.execute(
-                "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt > 0"
+                f"SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt > 0 AND {af}"
             ).fetchone()[0]
             losses = conn.execute(
-                "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt <= 0"
+                f"SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NOT NULL AND pnl_usdt <= 0 AND {af}"
             ).fetchone()[0]
             open_count = conn.execute(
-                "SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NULL"
+                f"SELECT COUNT(*) FROM paper_positions WHERE exit_price IS NULL AND {af}"
             ).fetchone()[0]
             open_positions = conn.execute(
-                "SELECT direction, entry_price, contracts, last_price FROM paper_positions WHERE exit_price IS NULL"
+                f"SELECT direction, entry_price, contracts, last_price FROM paper_positions WHERE exit_price IS NULL AND {af}"
             ).fetchall()
             gross_realized = conn.execute(
-                "SELECT COALESCE(SUM(COALESCE(gross_pnl_usdt, pnl_usdt)), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+                f"SELECT COALESCE(SUM(COALESCE(gross_pnl_usdt, pnl_usdt)), 0) FROM paper_positions WHERE exit_price IS NOT NULL AND {af}"
             ).fetchone()[0]
             total_fees = conn.execute(
-                "SELECT COALESCE(SUM(fees_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+                f"SELECT COALESCE(SUM(fees_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL AND {af}"
             ).fetchone()[0]
             total_funding = conn.execute(
-                "SELECT COALESCE(SUM(funding_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+                f"SELECT COALESCE(SUM(funding_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL AND {af}"
             ).fetchone()[0]
             total_slippage = conn.execute(
-                "SELECT COALESCE(SUM(slippage_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL"
+                f"SELECT COALESCE(SUM(slippage_usdt), 0) FROM paper_positions WHERE exit_price IS NOT NULL AND {af}"
             ).fetchone()[0]
 
         unrealized = 0.0
@@ -398,12 +400,14 @@ def create_app() -> Flask:
     @app.route("/api/paper/positions")
     def api_paper_positions():
         _auth()
+        acct = request.args.get("account", "crypto")
+        af = "exchange = 'tradenation'" if acct == "indices" else "exchange != 'tradenation'"
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT id, pair, direction, strategy, regime,
+                f"""SELECT id, pair, direction, strategy, regime,
                           entry_price, contracts, margin_usdt, stop_loss, take_profit,
                           opened_at, last_price, exchange
-                   FROM paper_positions WHERE exit_price IS NULL ORDER BY opened_at DESC"""
+                   FROM paper_positions WHERE exit_price IS NULL AND {af} ORDER BY opened_at DESC"""
             ).fetchall()
 
         def _unrealized(r):
@@ -434,13 +438,15 @@ def create_app() -> Flask:
     @app.route("/api/paper/history")
     def api_paper_history():
         _auth()
+        acct = request.args.get("account", "crypto")
+        af = "exchange = 'tradenation'" if acct == "indices" else "exchange != 'tradenation'"
         with get_conn() as conn:
             rows = conn.execute(
-                """SELECT id, pair, direction, strategy, regime, entry_price,
+                f"""SELECT id, pair, direction, strategy, regime, entry_price,
                           contracts, margin_usdt, exit_price, exit_reason, pnl_usdt,
                           gross_pnl_usdt, fees_usdt, funding_usdt, slippage_usdt,
                           opened_at, closed_at, exchange
-                   FROM paper_positions WHERE exit_price IS NOT NULL
+                   FROM paper_positions WHERE exit_price IS NOT NULL AND {af}
                    ORDER BY closed_at DESC"""
             ).fetchall()
         return jsonify({
@@ -466,12 +472,14 @@ def create_app() -> Flask:
     @app.route("/api/paper/daily")
     def api_paper_daily():
         _auth()
+        acct = request.args.get("account", "crypto")
         with get_conn() as conn:
             rows = conn.execute(
                 """SELECT day_number, snapshot_date, balance_usdt, equity_usdt,
                           realized_pnl, unrealized_pnl, open_positions,
                           total_trades, wins, losses, win_rate
-                   FROM paper_daily_pnl ORDER BY day_number DESC LIMIT 30"""
+                   FROM paper_daily_pnl WHERE account_id=? ORDER BY day_number DESC LIMIT 30""",
+                (acct,),
             ).fetchall()
         return jsonify({
             "snapshots": [
