@@ -8,9 +8,10 @@ from utils.ccxt_wrapper import fetch_ohlcv_safe
 from utils.config import get as cfg
 
 
-def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float, float | None] | None:
+def resolve_outcome(signal: sqlite3.Row, exchange_map: dict) -> tuple[str, float, float | None] | None:
     """
-    Fetch 1h candles from signal.fired_at to fired_at + outcome_window_hours.
+    Fetch candles from signal.fired_at to fired_at + outcome_window_hours.
+    Routes to the correct exchange object via signal["exchange"] key.
     Returns (outcome, outcome_price, pnl_r) or None if candle data unavailable.
 
     outcome: 'win' | 'loss' | 'stopped_out' | 'tp_hit'
@@ -18,6 +19,9 @@ def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float, float | 
     """
     c = cfg()["walk_forward"]
     window_h = c["outcome_window_hours"]
+
+    exc_id = signal["exchange"] if "exchange" in signal.keys() else "mexc"
+    exchange = exchange_map.get(exc_id) or next(iter(exchange_map.values()))
 
     fired_at = datetime.fromisoformat(signal["fired_at"])
     since_ms = int(fired_at.timestamp() * 1000)
@@ -70,9 +74,10 @@ def resolve_outcome(signal: sqlite3.Row, exchange) -> tuple[str, float, float | 
     return outcome, final_close, pnl_r
 
 
-def run_evaluation(conn: sqlite3.Connection, exchange) -> dict:
+def run_evaluation(conn: sqlite3.Connection, exchange_map: dict) -> dict:
     """
     Resolve all pending signals older than outcome_window_hours.
+    Routes each signal to its originating exchange via exchange_map.
     Returns stats dict.
     """
     c = cfg()["walk_forward"]
@@ -82,7 +87,7 @@ def run_evaluation(conn: sqlite3.Connection, exchange) -> dict:
     resolved = 0
     resolved_signals: list[dict] = []
     for signal in pending:
-        result = resolve_outcome(signal, exchange)
+        result = resolve_outcome(signal, exchange_map)
         if result is not None:
             outcome, price, pnl_r = result
             update_outcome(conn, signal["id"], outcome, price, pnl_r)

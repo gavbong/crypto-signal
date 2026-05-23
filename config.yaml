@@ -1,3 +1,17 @@
+indices:
+  enabled: false              # set true once mt4_feeder.py is running and index_candles table has data
+  pairs:
+    - DJ30/USD
+    - FTSE100/USD
+    - DAX/USD
+    - XAU/USD
+  session_hours:
+    # Format: HH:MM-HH:MM (zero-padded 24h clock) IANA-timezone
+    DJ30/USD:    "09:30-16:00 America/New_York"
+    FTSE100/USD: "08:00-16:30 Europe/London"
+    DAX/USD:     "09:00-17:30 Europe/Berlin"
+    XAU/USD:     "00:01-23:59 UTC"      # gold: 24h on weekdays, weekends blocked by _is_market_open
+
 exchanges:
   mexc:
     enabled: true
@@ -140,6 +154,24 @@ asset_class_profiles:
     high_vol_bb_multiplier: 1.4
     stop_min_pct: 0.002          # gold can move 0.1-0.3% in 15m; keep floor low
     stop_max_pct: 0.025
+  indices:
+    pairs:
+      - DJ30/USD
+      - FTSE100/USD
+      - DAX/USD
+    adx_trend_threshold: 18      # indices trend more slowly than crypto
+    ema_slope_threshold: 0.0005  # lower slope threshold for low-vol instruments
+    high_vol_bb_multiplier: 1.3
+    stop_min_pct: 0.001          # 0.1% floor — indices less volatile than crypto
+    stop_max_pct: 0.015
+  indices_gold:
+    pairs:
+      - XAU/USD
+    adx_trend_threshold: 18
+    ema_slope_threshold: 0.0005
+    high_vol_bb_multiplier: 1.3
+    stop_min_pct: 0.001
+    stop_max_pct: 0.012          # gold on TN CFD: tighter range than crypto gold
 
 deduplication:
   window_candles: 3              # suppress same pair+dir+strategy+regime within N candles
@@ -214,6 +246,13 @@ paper_trader:
     binance:     0.0002            # 0.02%
     okx:         0.0002            # 0.02%
     hyperliquid: 0.0001            # 0.01%
+    tradenation: 0.0000            # TN CFDs: spread-only pricing, no per-trade commission
+
+  # ── CFD overnight financing (Trade Nation indices/gold) ─────────────────────
+  # Charged once at 22:00 UTC for each open position (daily cutoff model).
+  # Applied per cutoff that has passed since the position was opened.
+  # Trade Nation rate is approximately SOFR + 2.5% annual at 20x leverage.
+  overnight_finance_rate_annual: 0.05   # 5% annual — verify at tradenation.com/cfds
 
   # ── Slippage ─────────────────────────────────────────────────────────────────
   # Calibrated 2026-05-18 via slippage_calibration.py (n=15 live trades):

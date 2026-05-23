@@ -1432,6 +1432,111 @@ def create_app() -> Flask:
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ── Index feed endpoints ───────────────────────────────────────────────────
+
+    @app.route("/api/index/feed", methods=["POST"])
+    def api_index_feed():
+        """Receive candles from mt4_feeder.py. Auth: X-API-Key header."""
+        api_key = os.environ.get("INDEX_FEED_API_KEY", "")
+        if api_key and request.headers.get("X-API-Key") != api_key:
+            abort(401)
+        data = request.get_json(silent=True)
+        if not data or not isinstance(data, list):
+            return jsonify({"error": "expected JSON array of candle objects"}), 400
+
+        inserted = 0
+        skipped = 0
+        errors = 0
+        with get_conn() as conn:
+            for candle in data:
+                try:
+                    pair = candle["pair"]
+                    if "/" not in pair:
+                        errors += 1
+                        continue
+                    conn.execute(
+                        """INSERT OR IGNORE INTO index_candles
+                           (pair, timeframe, ts, open, high, low, close, volume)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            pair,
+                            candle.get("timeframe", "15m"),
+                            int(candle["time"]),
+                            float(candle["open"]),
+                            float(candle["high"]),
+                            float(candle["low"]),
+                            float(candle["close"]),
+                            float(candle.get("volume", 0)),
+                        ),
+                    )
+                    if conn.execute("SELECT changes()").fetchone()[0] > 0:
+                        inserted += 1
+                    else:
+                        skipped += 1
+                except (KeyError, ValueError, TypeError):
+                    errors += 1
+            conn.commit()
+
+        return jsonify({"inserted": inserted, "skipped": skipped, "errors": errors})
+
+    @app.route("/api/index/candles")
+    def api_index_candles():
+        """Chart data for the Indices tab."""
+        _auth()
+        pair = request.args.get("pair", "DJ30/USD")
+        timeframe = request.args.get("timeframe", "15m")
+        try:
+            limit = int(request.args.get("limit", 100))
+        except ValueError:
+            limit = 100
+
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT ts, open, high, low, close
+                   FROM index_candles
+                   WHERE pair=? AND timeframe=?
+                   ORDER BY ts DESC LIMIT ?""",
+                (pair, timeframe, limit),
+            ).fetchall()
+
+        candles = [
+            {"time": r["ts"], "open": r["open"], "high": r["high"],
+             "low": r["low"], "close": r["close"]}
+            for r in reversed(rows)
+        ]
+        return jsonify(candles)
+
+    @app.route("/api/index/signals")
+    def api_index_signals():
+        """Recent signals for index pairs."""
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, pair, direction, strategy, regime, entry_price,
+                          suggested_stop_loss, suggested_take_profit,
+                          fired_at, outcome, pnl_r, quality_score
+                   FROM signals
+                   WHERE exchange='tradenation' AND backtest_run_id IS NULL
+                   ORDER BY fired_at DESC LIMIT 50"""
+            ).fetchall()
+        return jsonify([
+            {
+                "id": r["id"],
+                "pair": r["pair"],
+                "direction": r["direction"],
+                "strategy": r["strategy"],
+                "regime": r["regime"],
+                "entry": r["entry_price"],
+                "stop": r["suggested_stop_loss"],
+                "tp": r["suggested_take_profit"],
+                "fired_at": _normalize_ts(r["fired_at"]),
+                "outcome": r["outcome"],
+                "pnl_r": r["pnl_r"],
+                "quality": r["quality_score"],
+            }
+            for r in rows
+        ])
+
     # Stale run detection: mark any run stuck in 'running' for >2 min as failed on startup
     with get_conn() as conn:
         conn.execute(

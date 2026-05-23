@@ -269,14 +269,38 @@ def _calc_fees(entry_price: float, exit_price: float, contracts: float,
     return -(entry_fee + exit_fee)
 
 
-def _calc_funding(direction: str, notional: float, opened_at: str, pair: str) -> float:
-    """Funding P&L using live 8h rate from MEXC API (cached per funding period)."""
-    rate_8h = _live_funding_rate(pair)
+def _calc_funding(direction: str, notional: float, opened_at: str, pair: str,
+                  exchange_id: str = "mexc") -> float:
+    """Funding cost for the hold period.
+
+    Crypto (MEXC/Binance/OKX): continuous 8h rate × intervals held.
+    CFD (Trade Nation): daily cutoff at 22:00 UTC — charge once per cutoff passed.
+    """
     try:
         open_dt = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
-        hours = (datetime.now(timezone.utc) - open_dt).total_seconds() / 3600
-        intervals = hours / 8
+        now = datetime.now(timezone.utc)
         sign = -1 if direction == "long" else +1
+
+        if exchange_id == "tradenation":
+            pt = cfg().get("paper_trader", {})
+            annual_rate = pt.get("overnight_finance_rate_annual", 0.05)
+            daily_rate = annual_rate / 365
+
+            # Count 22:00 UTC cutoffs that have passed since position opened
+            cutoffs = 0
+            cursor = open_dt.replace(hour=22, minute=0, second=0, microsecond=0)
+            if cursor <= open_dt:
+                cursor = cursor.replace(day=cursor.day + 1)
+            while cursor <= now:
+                cutoffs += 1
+                cursor = cursor.replace(day=cursor.day + 1)
+
+            return sign * notional * daily_rate * cutoffs
+
+        # Crypto: continuous 8h perpetual funding
+        rate_8h = _live_funding_rate(pair)
+        hours = (now - open_dt).total_seconds() / 3600
+        intervals = hours / 8
         return sign * notional * rate_8h * intervals
     except Exception:
         return 0.0
@@ -561,8 +585,8 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
     # ── Fees — entry taker; exit maker for TP, taker otherwise ───────────────
     fees_usdt = _calc_fees(entry_price, exit_price, contracts, exchange_id, reason)
 
-    # ── Funding — per-pair rate × 8h intervals held ───────────────────────────
-    funding_usdt = _calc_funding(direction, contracts * entry_price, pos["opened_at"], pair)
+    # ── Funding — crypto: 8h rate × intervals; CFD: daily 22:00 UTC cutoff ─────
+    funding_usdt = _calc_funding(direction, contracts * entry_price, pos["opened_at"], pair, exchange_id)
 
     net_pnl = gross_pnl + total_slippage + fees_usdt + funding_usdt
 

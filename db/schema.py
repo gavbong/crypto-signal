@@ -136,14 +136,31 @@ def init_db(path: Path | None = None) -> None:
 
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS regime_log (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                pair       TEXT      NOT NULL,
-                regime     TEXT      NOT NULL,
-                confidence REAL,
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                pair        TEXT      NOT NULL,
+                regime      TEXT      NOT NULL,
+                confidence  REAL,
                 age_candles INTEGER,
-                stable     INTEGER,
-                logged_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                stable      INTEGER,
+                logged_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS index_candles (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                pair        TEXT    NOT NULL,
+                timeframe   TEXT    NOT NULL,
+                ts          INTEGER NOT NULL,
+                open        REAL    NOT NULL,
+                high        REAL    NOT NULL,
+                low         REAL    NOT NULL,
+                close       REAL    NOT NULL,
+                volume      REAL    NOT NULL,
+                received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(pair, timeframe, ts)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_index_candles_lookup
+            ON index_candles (pair, timeframe, ts DESC);
         """)
 
 

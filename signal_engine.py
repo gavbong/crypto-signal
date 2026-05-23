@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
 
+from zoneinfo import ZoneInfo
 from utils.config import env, get as cfg
 from utils.ccxt_wrapper import make_exchange, fetch_ohlcv_safe, fetch_ticker_safe
 from db.schema import init_db, get_conn, log_signal, is_duplicate, log_regime
@@ -25,6 +26,22 @@ from alerts.telegram import send_signal_alert
 from strategy_advisor import run_strategy_review
 
 
+
+
+def _is_market_open(pair: str) -> bool:
+    """Return False if pair is an index instrument and currently outside trading hours."""
+    session_hours = cfg().get("indices", {}).get("session_hours", {})
+    spec = session_hours.get(pair)
+    if not spec:
+        return True  # crypto or unconfigured pair — 24/7
+    hours, tz_str = spec.rsplit(" ", 1)
+    start_str, end_str = hours.split("-")
+    now = datetime.now(ZoneInfo(tz_str))
+    if now.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+    start = now.replace(hour=int(start_str[:2]), minute=int(start_str[3:]), second=0, microsecond=0)
+    end   = now.replace(hour=int(end_str[:2]),   minute=int(end_str[3:]),   second=0, microsecond=0)
+    return start <= now <= end
 
 
 def _market_session(utc_hour: int) -> str:
@@ -212,11 +229,15 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
         all_candidates: list[dict] = []
 
         for exchange_id, exchange, pairs in exchanges_config:
+            active_pairs = [p for p in pairs if _is_market_open(p)]
+            if not active_pairs:
+                logger.debug(f"{exchange_id}: all pairs outside market hours — skipping")
+                continue
             regimes_1h, df_1h_map = _build_regime_context(
-                exchange, pairs, c["regime_timeframe"], c["regime_limit"]
+                exchange, active_pairs, c["regime_timeframe"], c["regime_limit"]
             )
             candidates = _collect_candidates(
-                exchange, pairs, timeframe, limit,
+                exchange, active_pairs, timeframe, limit,
                 regimes_1h, df_1h_map, exchange_id, shadow_mode, conn,
             )
             all_candidates.extend(candidates)
@@ -266,9 +287,9 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
             fired.append(signal)
 
 
-def eval_job(exchange) -> None:
+def eval_job(exchange_map: dict) -> None:
     with get_conn() as conn:
-        result = run_evaluation(conn, exchange)
+        result = run_evaluation(conn, exchange_map)
         logger.info(f"Outcome evaluation complete | resolved={result['resolved']}")
         # Update strategy health for all combos that had new outcomes
         for signal in result.get("resolved_signals", []):
@@ -389,11 +410,19 @@ def main() -> None:
         except Exception as e:
             logger.error(f"Failed to init exchange {exc_id}: {e}")
 
+    indices_cfg = c.get("indices", {})
+    if indices_cfg.get("enabled", False):
+        from exchanges.index_reader import IndexReader
+        index_reader = IndexReader()
+        index_pairs = indices_cfg.get("pairs", [])
+        exchanges_config.append(("tradenation", index_reader, index_pairs))
+        logger.info(f"Index reader enabled | pairs={index_pairs}")
+
     if not exchanges_config:
         logger.error("No exchanges enabled — check config.yaml")
         return
 
-    primary_exchange = exchanges_config[0][1]
+    exchange_map = {exc_id: exc_obj for exc_id, exc_obj, _ in exchanges_config}
 
     mode_label = "SHADOW" if shadow_mode else "LIVE"
     logger.info(
@@ -415,7 +444,7 @@ def main() -> None:
         eval_job,
         "interval",
         hours=outcome_window_h,
-        args=[primary_exchange],
+        args=[exchange_map],
         next_run_time=datetime.now(timezone.utc),
     )
 
