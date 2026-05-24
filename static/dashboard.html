@@ -1699,6 +1699,18 @@ function _renderTradePage(prevIds, tradesOverride) {
   });
 }
 
+// ─── PAPER ACCOUNT TOGGLE ────────────────────────────────────────────────────
+let _paperAccount = 'crypto';
+function switchPaperAccount(account) {
+  _paperAccount = account;
+  document.querySelectorAll('#paper-acct-toggle .seg-btn').forEach(b => {
+    const isCurrent = (account === 'crypto' && b.textContent === 'Crypto') ||
+                      (account === 'indices' && b.textContent === 'Indices');
+    b.classList.toggle('active', isCurrent);
+  });
+  refresh();
+}
+
 // ─── MAIN REFRESH ────────────────────────────────────────────────────────────
 async function refresh() {
   try {
@@ -1742,18 +1754,6 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, POLL_MS);
-
-// ─── PAPER ACCOUNT TOGGLE ────────────────────────────────────────────────────
-let _paperAccount = 'crypto';
-function switchPaperAccount(account) {
-  _paperAccount = account;
-  document.querySelectorAll('#paper-acct-toggle .seg-btn').forEach(b => {
-    const isCurrent = (account === 'crypto' && b.textContent === 'Crypto') ||
-                      (account === 'indices' && b.textContent === 'Indices');
-    b.classList.toggle('active', isCurrent);
-  });
-  refresh();
-}
 
 // ─── VIEW SWITCHING ───────────────────────────────────────────────────────────
 const PAGE_LABELS = { dashboard: null, copy: 'Copy Trader', polymarket: 'Polymarket' };
