@@ -1222,7 +1222,8 @@ function renderPaperStats(stats) {
   const grossEl = document.getElementById('stat-gross');
   grossEl.innerHTML = `${gross >= 0 ? '+' : ''}${gross.toFixed(2)}<span class="stat-unit"> USDT</span>`;
   grossEl.className = 'stat-value ' + (gross >= 0 ? 'green' : 'red');
-  document.getElementById('stat-gross-sub').textContent = 'before fees & funding';
+  const isIndices = _paperAccount === 'indices';
+  document.getElementById('stat-gross-sub').textContent = isIndices ? 'before spread' : 'before fees & funding';
 
   const fees = stats.total_fees ?? 0;
   const funding = stats.total_funding ?? 0;
@@ -1233,9 +1234,13 @@ function renderPaperStats(stats) {
   feesEl.className = 'stat-value ' + (totalCost < 0 ? 'red' : '');
   const feesSub = document.getElementById('stat-fees-sub');
   const hasCosts = fees !== 0 || funding !== 0 || slippage !== 0;
-  feesSub.textContent = hasCosts
-    ? `${fees.toFixed(2)} fees · ${slippage.toFixed(2)} slip · ${funding.toFixed(2)} funding`
-    : 'fees · slip · funding';
+  if (isIndices) {
+    feesSub.textContent = hasCosts ? `${totalCost.toFixed(2)} spread` : 'spread';
+  } else {
+    feesSub.textContent = hasCosts
+      ? `${fees.toFixed(2)} fees · ${slippage.toFixed(2)} slip · ${funding.toFixed(2)} funding`
+      : 'fees · slip · funding';
+  }
 
   const realized = stats.realized_pnl ?? 0;
   const realEl = document.getElementById('stat-realized');
