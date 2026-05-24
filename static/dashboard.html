@@ -2889,6 +2889,7 @@ let _idxSeries = null;
 let _idxCurrentPair = 'DJ30/USD';
 let _idxCurrentTf = '15m';
 let _idxSignals = [];
+let _idxPriceLines = [];
 
 function idxSelectPair(btn, pair) {
   document.querySelectorAll('.idx-pair-btn').forEach(b => b.classList.remove('active'));
@@ -2934,11 +2935,8 @@ function _idxInitChart() {
 
 function _idxDrawSignalLines(signals, pair) {
   if (!_idxSeries) return;
-  // Remove all existing price lines
-  try {
-    const existing = _idxSeries.priceLines ? _idxSeries.priceLines() : [];
-    existing.forEach(l => _idxSeries.removePriceLine(l));
-  } catch (_) {}
+  _idxPriceLines.forEach(l => { try { _idxSeries.removePriceLine(l); } catch (_) {} });
+  _idxPriceLines = [];
 
   const latest = signals.find(s => s.pair === pair && !s.outcome);
   if (!latest) return;
@@ -2947,7 +2945,9 @@ function _idxDrawSignalLines(signals, pair) {
     { price: latest.stop,  color: '#EF4444', lineStyle: 2, title: 'SL' },
     { price: latest.tp,    color: '#22C55E', lineStyle: 2, title: 'TP' },
   ];
-  lines.forEach(cfg => { if (cfg.price) _idxSeries.createPriceLine(cfg); });
+  _idxPriceLines = lines
+    .filter(cfg => cfg.price)
+    .map(cfg => _idxSeries.createPriceLine(cfg));
 }
 
 async function idxRefresh() {
@@ -2958,9 +2958,7 @@ async function idxRefresh() {
     const candles = await res.json();
 
     if (!_idxChart) _idxInitChart();
-    if (_idxSeries && candles.length) {
-      _idxSeries.setData(candles);
-    }
+    if (_idxSeries) _idxSeries.setData(candles);
 
     // Fetch signals
     const sigRes = await fetch('/api/index/signals');
