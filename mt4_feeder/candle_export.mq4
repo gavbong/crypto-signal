@@ -19,7 +19,7 @@
 #property copyright "mexc-signal-engine"
 #property strict
 
-input int    CandleCount = 100;     // Candles to export per file (excluding current bar)
+input int    CandleCount = 5000;    // Candles to export per file (excluding current bar)
 input string PairName    = "";      // Canonical pair name, e.g. "DJ30/USD". Empty = use Symbol()
 input bool   UseCommonFolder = true; // Write to Common Files (true) or terminal Files (false)
 
