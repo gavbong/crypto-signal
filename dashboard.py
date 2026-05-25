@@ -1,5 +1,6 @@
 import hmac
 import json
+import math
 import os
 import sqlite3
 import subprocess
@@ -14,6 +15,33 @@ from db.schema import get_conn, init_db
 from utils.config import get as cfg
 
 _STATIC = Path(__file__).parent / "static"
+
+
+def _compute_sharpe(pnl_trades: list[tuple[str, float]]) -> float | None:
+    """Annualised daily Sharpe from (date_str, pnl_r) tuples. Requires ≥10 calendar days."""
+    if not pnl_trades:
+        return None
+    by_date: dict[str, float] = {}
+    for date_str, pnl_r in pnl_trades:
+        by_date[date_str] = by_date.get(date_str, 0.0) + pnl_r
+    if len(by_date) < 2:
+        return None
+    dates = sorted(by_date)
+    first = datetime.strptime(dates[0], "%Y-%m-%d")
+    last  = datetime.strptime(dates[-1], "%Y-%m-%d")
+    daily: list[float] = []
+    cur = first
+    while cur <= last:
+        daily.append(by_date.get(cur.strftime("%Y-%m-%d"), 0.0))
+        cur += timedelta(days=1)
+    if len(daily) < 10:
+        return None
+    mean = sum(daily) / len(daily)
+    variance = sum((x - mean) ** 2 for x in daily) / len(daily)
+    std = math.sqrt(variance)
+    if std == 0.0:
+        return None
+    return round((mean / std) * math.sqrt(252), 3)
 
 
 def _normalize_ts(ts: str | None) -> str | None:
@@ -1096,6 +1124,91 @@ def create_app() -> Flask:
                 "net_r": round(r["net_r"] or 0, 2),
             })
         return jsonify(result)
+
+    @app.route("/api/backtest/strategy-sharpe")
+    def api_backtest_strategy_sharpe():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        with get_conn() as conn:
+            if run_id is None:
+                rows = conn.execute(
+                    """SELECT strategy, DATE(fired_at) as date, SUM(pnl_r) as daily_r
+                       FROM signals
+                       WHERE shadow_mode=1 AND backtest_run_id IS NULL AND outcome IS NOT NULL
+                       GROUP BY strategy, DATE(fired_at)
+                       ORDER BY strategy, date"""
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT strategy, DATE(fired_at) as date, SUM(pnl_r) as daily_r
+                       FROM signals
+                       WHERE backtest_run_id=? AND outcome IS NOT NULL
+                       GROUP BY strategy, DATE(fired_at)
+                       ORDER BY strategy, date""",
+                    (run_id,),
+                ).fetchall()
+        by_strategy: dict[str, list[tuple[str, float]]] = {}
+        for r in rows:
+            by_strategy.setdefault(r["strategy"], []).append((r["date"], r["daily_r"] or 0.0))
+        result = [
+            {"strategy": s, "sharpe": _compute_sharpe(trades)}
+            for s, trades in sorted(by_strategy.items())
+        ]
+        return jsonify(result)
+
+    @app.route("/api/backtest/correlation")
+    def api_backtest_correlation():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        with get_conn() as conn:
+            if run_id is None:
+                rows = conn.execute(
+                    """SELECT strategy, DATE(fired_at) as date, SUM(pnl_r) as daily_r
+                       FROM signals
+                       WHERE shadow_mode=1 AND backtest_run_id IS NULL AND outcome IS NOT NULL
+                       GROUP BY strategy, DATE(fired_at)"""
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT strategy, DATE(fired_at) as date, SUM(pnl_r) as daily_r
+                       FROM signals
+                       WHERE backtest_run_id=? AND outcome IS NOT NULL
+                       GROUP BY strategy, DATE(fired_at)""",
+                    (run_id,),
+                ).fetchall()
+
+        by_strategy: dict[str, dict[str, float]] = {}
+        for r in rows:
+            by_strategy.setdefault(r["strategy"], {})[r["date"]] = r["daily_r"] or 0.0
+
+        strategies = sorted(by_strategy)
+        if len(strategies) < 2:
+            return jsonify({"strategies": strategies, "matrix": []})
+
+        all_dates = sorted({d for s in by_strategy.values() for d in s})
+
+        vectors: dict[str, list[float]] = {
+            s: [by_strategy[s].get(d, 0.0) for d in all_dates] for s in strategies
+        }
+
+        def pearson(a: list[float], b: list[float]) -> float | None:
+            n = len(a)
+            if n < 10:
+                return None
+            ma = sum(a) / n
+            mb = sum(b) / n
+            num = sum((a[i] - ma) * (b[i] - mb) for i in range(n))
+            da = math.sqrt(sum((x - ma) ** 2 for x in a))
+            db = math.sqrt(sum((x - mb) ** 2 for x in b))
+            if da == 0 or db == 0:
+                return None
+            return round(num / (da * db), 3)
+
+        matrix = [
+            [pearson(vectors[si], vectors[sj]) for sj in strategies]
+            for si in strategies
+        ]
+        return jsonify({"strategies": strategies, "matrix": matrix})
 
     @app.route("/api/backtest/diff")
     def api_backtest_diff():

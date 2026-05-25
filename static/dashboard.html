@@ -898,6 +898,28 @@ body{
       </div>
     </div>
 
+    <!-- Per-strategy Sharpe -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Strategy Sharpe</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">annualised · daily R · fill zeros on idle days</span>
+      </div>
+      <div id="bt-strategy-sharpe-body" style="padding:0;overflow-x:auto">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run.</span>
+      </div>
+    </div>
+
+    <!-- Strategy correlation heatmap -->
+    <div class="panel">
+      <div class="panel-hdr">
+        <span class="panel-title">Strategy Correlation</span>
+        <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">Pearson r · daily P&amp;L · green=hedge, red=correlated</span>
+      </div>
+      <div id="bt-correlation-body" style="padding:0;overflow-x:auto">
+        <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Select a run.</span>
+      </div>
+    </div>
+
   </div>
 
   <!-- Trade Log -->
@@ -2342,20 +2364,26 @@ async function btLoadRun(runId) {
     return;
   }
   try {
-    const [eqRes, bdRes, pairRes, dirRes] = await Promise.all([
+    const [eqRes, bdRes, pairRes, dirRes, sharpeRes, corrRes] = await Promise.all([
       fetch('/api/backtest/equity?run_id=' + runId),
       fetch('/api/backtest/breakdown?run_id=' + runId),
       fetch('/api/backtest/by-pair?run_id=' + runId),
       fetch('/api/backtest/by-direction?run_id=' + runId),
+      fetch('/api/backtest/strategy-sharpe?run_id=' + runId),
+      fetch('/api/backtest/correlation?run_id=' + runId),
     ]);
     const equity = await eqRes.json();
     const breakdown = await bdRes.json();
     const byPair = await pairRes.json();
     const byDir = await dirRes.json();
+    const strategySharpe = await sharpeRes.json();
+    const corrData = await corrRes.json();
     btRenderEquitySVG(equity, '#F0A500');
     btRenderBreakdownTable(breakdown, run);
     btRenderPairTable(byPair, run);
     btRenderDirectionTable(byDir, run);
+    btRenderStrategySharpe(strategySharpe);
+    btRenderCorrelation(corrData);
     detailPanels.style.display = '';
     tradelogPanel.style.display = '';
     // populate filter dropdowns from data
@@ -2436,6 +2464,72 @@ function btRenderDirectionTable(data, run) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+function btRenderStrategySharpe(data) {
+  const el = document.getElementById('bt-strategy-sharpe-body');
+  if (!data || !data.length) {
+    el.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No resolved trades in this run.</span>';
+    return;
+  }
+  const sorted = [...data].sort((a, b) => (b.sharpe ?? -Infinity) - (a.sharpe ?? -Infinity));
+  const rows = sorted.map(r => {
+    const s = r.sharpe;
+    const color = s == null ? 'var(--muted)' : s >= 1.0 ? '#22C55E' : s > 0 ? 'var(--accent)' : '#EF4444';
+    const fmt = s == null ? 'N/A' : s.toFixed(2);
+    const bar = s != null ? (() => {
+      const clamped = Math.max(-3, Math.min(3, s));
+      const w = Math.round((Math.abs(clamped) / 3) * 50);
+      return `<span style="display:inline-block;width:${w}px;height:6px;background:${color};opacity:.7;border-radius:1px;vertical-align:middle;margin-left:4px"></span>`;
+    })() : '';
+    return `<tr>
+      <td class="l" style="padding:6px 12px;font-family:var(--font-ui);font-size:12px">${r.strategy}</td>
+      <td style="padding:6px 12px;text-align:right;font-family:var(--font-mono);font-size:12px;color:${color};white-space:nowrap">${fmt}${bar}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr style="border-bottom:1px solid var(--border)">
+      <th class="l" style="padding:6px 12px;font-family:var(--font-ui);font-size:10px;color:var(--muted)">Strategy</th>
+      <th class="r" style="padding:6px 12px;font-family:var(--font-ui);font-size:10px;color:var(--muted)">Sharpe (ann.)</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function btRenderCorrelation(data) {
+  const el = document.getElementById('bt-correlation-body');
+  const strats = data.strategies || [];
+  const matrix = data.matrix || [];
+  if (strats.length < 2) {
+    el.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Need ≥2 strategies with resolved trades.</span>';
+    return;
+  }
+  const short = s => s.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+  const cellColor = r => {
+    if (r == null) return 'var(--surface)';
+    if (r >= 0.95) return 'rgba(240,165,0,0.25)';
+    if (r > 0.5)  return `rgba(239,68,68,${(r - 0.5) * 0.6})`;
+    if (r < -0.2) return `rgba(34,197,94,${Math.min(1, (-r) * 0.6)})`;
+    return 'transparent';
+  };
+  const hdr = `<th style="padding:4px 8px"></th>` +
+    strats.map(s => `<th style="padding:4px 6px;font-family:var(--font-ui);font-size:9px;color:var(--muted);text-align:right;white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis" title="${s}">${short(s)}</th>`).join('');
+  const rows = strats.map((si, i) =>
+    `<tr><td style="padding:4px 8px;font-family:var(--font-ui);font-size:9px;color:var(--muted);white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis" title="${si}">${short(si)}</td>` +
+    strats.map((sj, j) => {
+      const r = matrix[i] ? matrix[i][j] : null;
+      const diag = i === j;
+      const txt = diag ? '—' : r == null ? 'N/A' : r.toFixed(2);
+      const bg = diag ? 'var(--surface-up)' : cellColor(r);
+      const fc = r != null && !diag ? (r > 0.5 ? '#EF4444' : r < -0.2 ? '#22C55E' : 'var(--text)') : 'var(--muted)';
+      return `<td style="padding:4px 6px;text-align:center;font-family:var(--font-mono);font-size:10px;background:${bg};color:${fc}">${txt}</td>`;
+    }).join('') + '</tr>'
+  ).join('');
+  el.innerHTML = `<div style="padding:10px 12px;overflow-x:auto"><table style="border-collapse:collapse;min-width:100%">
+    <thead><tr>${hdr}</tr></thead><tbody>${rows}</tbody>
+  </table><div style="padding:6px 0 2px;font-family:var(--font-ui);font-size:10px;color:var(--muted)">
+    Green = negative correlation (strategies hedge each other) · Red = positive (move together) · ≥10 shared trading days required
+  </div></div>`;
 }
 
 function btPopulateTradeLogFilters(byPair, breakdown) {
