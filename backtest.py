@@ -15,12 +15,16 @@ Usage:
     python backtest.py --since 2025-06-01     # custom start date
     python backtest.py --dry-run              # preview without DB writes
     python backtest.py --clear                # wipe existing backtest data first
+    python backtest.py --indices              # also run index pairs (DJ30, FTSE100, DAX, XAU)
+    python backtest.py --indices-only         # run only index pairs
     python backtest.py --clear --since 2025-06-01
 """
 import argparse
+import csv
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from loguru import logger
 
 from utils.config import env, get as cfg
@@ -65,6 +69,44 @@ def fetch_history(exchange, pair: str, since_dt: datetime, timeframe: str) -> li
             seen.add(c[0])
             unique.append(c)
     return sorted(unique, key=lambda x: x[0])
+
+
+def load_index_csv(pair: str, since_dt: datetime, data_dir: str = "data/indices") -> list:
+    """Load 15m index candles from CSV into [[ts_ms, o, h, l, c, v], ...] format.
+
+    CSV produced by scripts/collect_index_data.py. Timestamps are tz-aware ISO strings.
+    Returns only rows >= since_dt, sorted ascending.
+    """
+    safe_name = pair.replace("/", "_")
+    path = Path(data_dir) / f"{safe_name}_15m.csv"
+    if not path.exists():
+        logger.warning(f"load_index_csv: {path} not found — run scripts/collect_index_data.py")
+        return []
+
+    candles: list = []
+    since_ms = int(since_dt.timestamp() * 1000)
+
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                dt = datetime.fromisoformat(row["datetime"])
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                ts_ms = int(dt.timestamp() * 1000)
+                if ts_ms < since_ms:
+                    continue
+                candles.append([
+                    ts_ms,
+                    float(row["open"]),
+                    float(row["high"]),
+                    float(row["low"]),
+                    float(row["close"]),
+                    float(row.get("volume", 0)),
+                ])
+            except (ValueError, KeyError):
+                continue
+
+    return sorted(candles, key=lambda x: x[0])
 
 
 def resolve_outcome(signal: dict, future_candles: list, window_h: int) -> tuple[str, float, float] | None:
@@ -299,6 +341,12 @@ def main() -> None:
                         help="[DEPRECATED] No-op. Runs are now isolated by run_id.")
     parser.add_argument("--run-id", type=int, default=None, metavar="N",
                         help="Backtest run ID (provided by dashboard API)")
+    parser.add_argument("--indices", action="store_true",
+                        help="Also include index pairs (DJ30, FTSE100, DAX, XAU) from data/indices/ CSVs")
+    parser.add_argument("--indices-only", action="store_true",
+                        help="Run only index pairs; skip crypto exchange fetch")
+    parser.add_argument("--indices-dir", default="data/indices", metavar="DIR",
+                        help="Directory containing index CSVs (default: data/indices)")
     args = parser.parse_args()
 
     if args.clear:
@@ -334,22 +382,47 @@ def main() -> None:
             )
             conn.commit()
 
-    exchange = _make_exchange(env("MEXC_API_KEY"), env("MEXC_SECRET"))
-
     mode = "DRY RUN" if args.dry_run else "WRITE"
 
-    pairs = c.get("pairs") or c.get("exchanges", {}).get("mexc", {}).get("pairs", [])
-    if not pairs:
-        raise RuntimeError("No pairs configured — check config.yaml exchanges.mexc.pairs")
+    # Build work list: (pair, candles_source)
+    # source = "exchange" | "csv"
+    work: list[tuple[str, str]] = []
 
-    logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={pairs} | run_id={run_id}")
+    if not args.indices_only:
+        crypto_pairs = c.get("pairs") or c.get("exchanges", {}).get("mexc", {}).get("pairs", [])
+        if not crypto_pairs:
+            raise RuntimeError("No crypto pairs configured — check config.yaml exchanges.mexc.pairs")
+        for p in crypto_pairs:
+            work.append((p, "exchange"))
+
+    if args.indices or args.indices_only:
+        index_pairs = c.get("indices", {}).get("pairs", [])
+        if not index_pairs:
+            logger.warning("--indices set but no indices.pairs found in config.yaml")
+        for p in index_pairs:
+            work.append((p, "csv"))
+
+    if not work:
+        raise RuntimeError("No pairs to backtest. Check flags and config.yaml.")
+
+    exchange = None
+    if any(src == "exchange" for _, src in work):
+        exchange = _make_exchange(env("MEXC_API_KEY"), env("MEXC_SECRET"))
+
+    all_pairs = [p for p, _ in work]
+    logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={all_pairs} | run_id={run_id}")
 
     totals = {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
     regime_breakdown: dict[str, dict] = {}
 
-    for idx, pair in enumerate(pairs):
-        logger.info(f"Fetching history for {pair} ...")
-        candles = fetch_history(exchange, pair, since_dt, c["timeframe"])
+    for idx, (pair, source) in enumerate(work):
+        if source == "csv":
+            logger.info(f"Loading CSV history for {pair} ...")
+            candles = load_index_csv(pair, since_dt, args.indices_dir)
+        else:
+            logger.info(f"Fetching history for {pair} ...")
+            candles = fetch_history(exchange, pair, since_dt, c["timeframe"])
+
         if not candles:
             logger.warning(f"  No data for {pair}, skipping")
         else:
@@ -382,11 +455,11 @@ def main() -> None:
                 dest["pnl_r"] += rb["pnl_r"]
 
         if run_id is not None and not args.dry_run:
-            pct = int((idx + 1) / len(pairs) * 100)
+            pct = int((idx + 1) / len(work) * 100)
             with get_conn() as conn:
                 conn.execute(
                     "UPDATE backtest_runs SET progress_pct=?, progress_msg=? WHERE id=?",
-                    (pct, f"{pair} done ({idx+1}/{len(pairs)})", run_id),
+                    (pct, f"{pair} done ({idx+1}/{len(work)})", run_id),
                 )
                 conn.commit()
 

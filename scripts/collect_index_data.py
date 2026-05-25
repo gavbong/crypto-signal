@@ -50,13 +50,24 @@ def download_and_stitch(pair: str, ticker: str, output_dir: Path) -> int:
         print(f"  {pair}: no data returned from yfinance")
         return 0
 
-    df = df.reset_index()
-    ts_col = "Datetime" if "Datetime" in df.columns else "Date"
-    df[ts_col] = pd.to_datetime(df[ts_col])
-
-    # Handle MultiIndex columns (yfinance ≥0.2 sometimes returns them)
+    # yfinance ≥0.2.x returns MultiIndex columns: ('Close', '^DJI') etc.
+    # Flatten to single-level first, then reset_index to get Datetime column.
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+        df.columns = [c[0] for c in df.columns]
+
+    df = df.reset_index()
+
+    # Datetime may be named 'Datetime', 'Date', or be the unnamed index
+    ts_col = None
+    for candidate in ("Datetime", "Date", "index"):
+        if candidate in df.columns:
+            ts_col = candidate
+            break
+    if ts_col is None:
+        # Last resort: first column
+        ts_col = df.columns[0]
+
+    df[ts_col] = pd.to_datetime(df[ts_col], utc=True)
 
     mode = "a" if output_path.exists() else "w"
     new_rows = 0
@@ -108,13 +119,13 @@ def main():
             added = download_and_stitch(pair, ticker, output_dir)
             csv_path = output_dir / f"{safe_name}_15m.csv"
             row_count = sum(1 for _ in open(csv_path)) - 1  # subtract header
-            print(f"  {pair} ({ticker}): +{added} new rows | total {row_count} rows → {csv_path}")
+            print(f"  {pair} ({ticker}): +{added} new rows | total {row_count} rows -> {csv_path}")
             total_new += added
         except Exception as e:
             print(f"  {pair}: ERROR — {e}")
 
     print(f"\nDone. {total_new} new rows added across {len(pairs_to_run)} pairs.")
-    print("Run weekly to build 6-month history. backtest.py reads from data/indices/.")
+    print("Run weekly to build 6-month history. backtest.py reads from data/indices/. ")
 
 
 if __name__ == "__main__":
