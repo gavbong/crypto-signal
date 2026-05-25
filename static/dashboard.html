@@ -1026,7 +1026,12 @@ body{
         <button class="idx-tf-btn" onclick="idxSelectTf(this,'1d')">1d</button>
       </div>
     </div>
-    <div id="idx-chart-container" style="width:100%;height:380px;background:var(--bg-card)"></div>
+    <div style="position:relative;width:100%;height:380px;background:var(--bg-card)">
+      <div id="idx-chart-container" style="width:100%;height:100%"></div>
+      <div id="idx-no-data-overlay" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;background:var(--bg-card);color:var(--muted);font-size:11px;font-family:var(--font-mono)">
+        No candle data · markets closed or MT4 not connected
+      </div>
+    </div>
   </div>
 
   <!-- Signal list -->
@@ -2964,6 +2969,9 @@ async function idxRefresh() {
 
     if (!_idxChart) _idxInitChart();
     if (_idxSeries) _idxSeries.setData(candles);
+
+    const _noDataEl = document.getElementById('idx-no-data-overlay');
+    if (_noDataEl) _noDataEl.style.display = candles.length === 0 ? 'flex' : 'none';
 
     // Fetch signals
     const sigRes = await fetch('/api/index/signals');
