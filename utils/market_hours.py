@@ -56,6 +56,7 @@ _PAIR_EXCHANGE: dict[str, str] = {
     "DJ30/USD":    "us",
     "FTSE100/USD": "uk",
     "DAX/USD":     "de",
+    "XAU/USD":     "us",   # COMEX gold follows US bank holidays
 }
 
 
