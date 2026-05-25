@@ -2774,7 +2774,6 @@ function btRenderBreakdownTable(rows, run) {
     </tr></thead>
     <tbody>
     ${rows.map(row => {
-      const k = kellyFmt(row.kelly);
       const halfK = row.kelly != null ? kellyFmt(row.kelly / 2) : {txt: '—', style: 'color:var(--muted)'};
       const tip = row.kelly != null
         ? `title="Kelly=${(row.kelly*100).toFixed(1)}% · avg win=${row.avg_win_r != null ? '+'+row.avg_win_r.toFixed(2)+'R' : '?'} avg loss=${row.avg_loss_r != null ? row.avg_loss_r.toFixed(2)+'R' : '?'}"`
