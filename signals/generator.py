@@ -34,9 +34,11 @@ def _calc_stop_loss(df: pd.DataFrame, direction: str, regime_label: str = "") ->
 
 
 def _calc_take_profit(entry: float, stop: float, direction: str,
-                      regime_label: str = "", strategy: str = "") -> float:
+                      regime_label: str = "", strategy: str = "",
+                      pair: str = "") -> float:
     risk = abs(entry - stop)
     c = cfg()["signals"]
+    full_cfg = cfg()
     rr_map = {
         "choppy":          c.get("rr_ratio_choppy",   c["rr_ratio"]),
         "trending-up":     c.get("rr_ratio_trending",  c["rr_ratio"]),
@@ -44,9 +46,16 @@ def _calc_take_profit(entry: float, stop: float, direction: str,
         "high-volatility": c.get("rr_ratio_high_vol",  c["rr_ratio"]),
     }
     rr = rr_map.get(regime_label, c["rr_ratio"])
-    # Per-strategy override takes precedence over regime-level value.
-    # Used when a strategy's real cost structure (gap slippage, fee drag)
-    # is atypically high and the regime ratio doesn't compensate adequately.
+
+    # Per-asset-class override: index/CFD instruments move slower than crypto —
+    # TP at 2R is rarely reached in the 2-hour outcome window (60-day backtest:
+    # only 1/239 TP hits). rr_ratio_index (default 1.2) is more achievable.
+    # Checked after regime so the asset-class RR replaces the regime value.
+    index_pairs = full_cfg.get("indices", {}).get("pairs", [])
+    if pair in index_pairs:
+        rr = c.get("rr_ratio_index", 1.2)
+
+    # Per-strategy override takes highest precedence (slippage calibration).
     strategy_rr = c.get("rr_ratio_strategy", {})
     if strategy and strategy in strategy_rr:
         rr = strategy_rr[strategy]
@@ -75,7 +84,7 @@ def _signal(pair: str, direction: str, strategy: str, regime: RegimeResult,
     if stop is None:
         logger.warning(f"ATR is NaN for {pair} — skipping stop-loss")
         return None
-    take_profit = _calc_take_profit(entry, stop, direction, regime.label, strategy)
+    take_profit = _calc_take_profit(entry, stop, direction, regime.label, strategy, pair)
     return {
         "pair": pair,
         "direction": direction,
@@ -539,6 +548,10 @@ def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
     gen = GENERATORS.get(strategy)
     if gen is None:
         logger.warning(f"Unknown strategy: {strategy}")
+        return None
+    # Per-pair strategy skip list (config: signals.skip_strategies_for_pairs).
+    skip_map = cfg().get("signals", {}).get("skip_strategies_for_pairs", {})
+    if strategy in skip_map.get(pair, []):
         return None
     if strategy in ("supply_demand", "liquidity_grab"):
         signal = gen(pair, df, regime, timeframe, df_1h=df_1h)
