@@ -6,12 +6,12 @@
 //| Install:                                                         |
 //|   1. Copy to MetaTrader 4/MQL4/Experts/                         |
 //|   2. Attach to a chart for each instrument:                      |
-//|        DJ30 chart  → set PairName = "DJ30/USD"                   |
-//|        FTSE100 chart → set PairName = "FTSE100/USD"              |
-//|        DAX chart   → set PairName = "DAX/USD"                    |
-//|        XAU chart   → set PairName = "XAU/USD"                    |
-//|   3. Make sure "Allow DLL imports" is OFF (not needed)           |
-//|      and "Allow live trading" can be OFF (read-only EA)          |
+//|        DJ30 chart    → PairName = "DJ30/USD"                     |
+//|        FTSE100 chart → PairName = "FTSE100/USD"                  |
+//|        DAX chart     → PairName = "DAX/USD"                      |
+//|        XAU chart     → PairName = "XAU/USD"                      |
+//|   3. On ALL charts, set FeederBatPath to the full path of        |
+//|      mt4_feeder\run_feeder.bat and enable "Allow DLL imports"    |
 //|                                                                  |
 //| Output path (FILE_COMMON):                                       |
 //|   %APPDATA%\MetaQuotes\Terminal\Common\Files\candles_<sym>.json  |
@@ -19,9 +19,15 @@
 #property copyright "mexc-signal-engine"
 #property strict
 
-input int    CandleCount = 5000;    // Candles to export per file (excluding current bar)
-input string PairName    = "";      // Canonical pair name, e.g. "DJ30/USD". Empty = use Symbol()
-input bool   UseCommonFolder = true; // Write to Common Files (true) or terminal Files (false)
+#import "shell32.dll"
+   int ShellExecuteW(int hwnd, string lpOperation, string lpFile,
+                     string lpParameters, string lpDirectory, int nCmdShow);
+#import
+
+input int    CandleCount      = 5000;  // Candles to export per file (excluding current bar)
+input string PairName         = "";    // Canonical pair name, e.g. "DJ30/USD". Empty = use Symbol()
+input bool   UseCommonFolder  = true;  // Write to Common Files (true) or terminal Files (false)
+input string FeederBatPath    = "";    // Full path to run_feeder.bat — launches feeder on MT4 startup
 
 datetime _lastBarTime = 0;
 
@@ -30,6 +36,16 @@ int OnInit()
 {
     EventSetTimer(30);  // Poll every 30s — catches bar close within half a minute
     _Export();          // Export immediately on attach
+
+    if(FeederBatPath != "")
+    {
+        // Launch feeder silently (SW_HIDE=0) — runs once and exits
+        ShellExecuteW(0, "open", "cmd.exe",
+                      "/c \"" + FeederBatPath + "\"",
+                      "", 0);
+        Print("candle_export: launched feeder → ", FeederBatPath);
+    }
+
     return(INIT_SUCCEEDED);
 }
 
