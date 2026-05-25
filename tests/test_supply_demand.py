@@ -110,21 +110,42 @@ class TestSupplyDemandApproach:
     """Tests for the new approach-based (not inside-zone) entry logic."""
 
     def test_approach_long_fires_when_price_above_zone_and_falling(self):
-        """Price above demand zone top, within proximity, falling 2+ candles → long."""
-        df = _make_df_with_atr(60, price=110.0, atr_target=2.0)
-        # Inject demand zone at idx=20: open=100, close=108 → zone [100, 108]
-        df = df.copy()
-        df.iloc[20, df.columns.get_loc("open")] = 100.0
+        """Price above demand zone top, within proximity, falling 2+ candles → long.
+
+        Scenario: price consolidates at 90 (idx 0-19), then a bullish impulse breaks
+        structure at idx 20 (close=108 > prior high ≈ 91.4 → BoS ✓), price extends
+        to 115 (idx 21-55, keeping zone live), then pulls back toward zone (idx 56-59).
+        """
+        times = pd.date_range("2024-01-01", periods=60, freq="15min")
+        # Phase 1: flat at 90 — prior structure for BoS check
+        closes = np.full(60, 90.0)
+        opens  = closes - 0.5
+        highs  = closes + 1.4   # gives meaningful ATR
+        lows   = closes - 1.4
+        volumes = np.full(60, 1000.0)
+        df = pd.DataFrame({"open": opens, "high": highs, "low": lows,
+                           "close": closes, "volume": volumes}, index=times)
+
+        # Phase 2: impulse demand zone at idx=20: [100, 108]
+        df.iloc[20, df.columns.get_loc("open")]  = 100.0
         df.iloc[20, df.columns.get_loc("close")] = 108.0
-        df.iloc[20, df.columns.get_loc("high")] = 108.5
-        df.iloc[20, df.columns.get_loc("low")] = 99.8
-        # Proximity = 1.5 * ATR ≈ 1.5 * 2 = 3.0; price must be in (108, 111]
-        # Set last 4 candles to fall toward zone: 111 → 110 → 109 → 108.5
+        df.iloc[20, df.columns.get_loc("high")]  = 108.5
+        df.iloc[20, df.columns.get_loc("low")]   = 99.8
+
+        # Phase 3 (idx 21-55): hold at 115 — zone stays unmitigated (115 > top=108)
+        for i in range(21, 56):
+            df.iloc[i, df.columns.get_loc("close")] = 115.0
+            df.iloc[i, df.columns.get_loc("open")]  = 114.5
+            df.iloc[i, df.columns.get_loc("high")]  = 115.5
+            df.iloc[i, df.columns.get_loc("low")]   = 114.0
+
+        # Phase 4 (idx 56-59): price falls from 111 → 108.5, approaching zone from above
         for i, p in enumerate([111.0, 110.0, 109.0, 108.5], start=-4):
             df.iloc[i, df.columns.get_loc("close")] = p
-            df.iloc[i, df.columns.get_loc("open")] = p + 0.3
-            df.iloc[i, df.columns.get_loc("high")] = p + 0.8
-            df.iloc[i, df.columns.get_loc("low")] = p - 0.5
+            df.iloc[i, df.columns.get_loc("open")]  = p + 0.3
+            df.iloc[i, df.columns.get_loc("high")]  = p + 0.8
+            df.iloc[i, df.columns.get_loc("low")]   = p - 0.5
+
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
         assert result is not None, "Expected long signal when approaching demand zone"
@@ -132,21 +153,42 @@ class TestSupplyDemandApproach:
         assert result["strategy"] == "supply_demand"
 
     def test_approach_short_fires_when_price_below_zone_and_rising(self):
-        """Price below supply zone bottom, within proximity, rising 2+ candles → short."""
-        df = _make_df_with_atr(60, price=90.0, atr_target=2.0)
-        # Inject supply zone at idx=20: open=100, close=92 → zone [92, 100]
-        df = df.copy()
-        df.iloc[20, df.columns.get_loc("open")] = 100.0
+        """Price below supply zone bottom, within proximity, rising 2+ candles → short.
+
+        Scenario: price consolidates at 110 (idx 0-19), then a bearish impulse breaks
+        structure at idx 20 (close=92 < prior low ≈ 108.6 → BoS ✓), price drops
+        to 85 (idx 21-55, keeping zone live), then rallies toward zone (idx 56-59).
+        """
+        times = pd.date_range("2024-01-01", periods=60, freq="15min")
+        # Phase 1: flat at 110 — prior structure for BoS check
+        closes = np.full(60, 110.0)
+        opens  = closes - 0.5
+        highs  = closes + 1.4
+        lows   = closes - 1.4
+        volumes = np.full(60, 1000.0)
+        df = pd.DataFrame({"open": opens, "high": highs, "low": lows,
+                           "close": closes, "volume": volumes}, index=times)
+
+        # Phase 2: impulse supply zone at idx=20: [92, 100]
+        df.iloc[20, df.columns.get_loc("open")]  = 100.0
         df.iloc[20, df.columns.get_loc("close")] = 92.0
-        df.iloc[20, df.columns.get_loc("high")] = 100.2
-        df.iloc[20, df.columns.get_loc("low")] = 91.5
-        # Proximity = 1.5 * 2 = 3.0; price must be in [89, 92)
-        # Set last 4 candles rising toward zone: 89 → 90 → 91 → 91.5
+        df.iloc[20, df.columns.get_loc("high")]  = 100.2
+        df.iloc[20, df.columns.get_loc("low")]   = 91.5
+
+        # Phase 3 (idx 21-55): drop to 85 — zone stays unmitigated (85 < bottom=92)
+        for i in range(21, 56):
+            df.iloc[i, df.columns.get_loc("close")] = 85.0
+            df.iloc[i, df.columns.get_loc("open")]  = 85.5
+            df.iloc[i, df.columns.get_loc("high")]  = 86.0
+            df.iloc[i, df.columns.get_loc("low")]   = 84.5
+
+        # Phase 4 (idx 56-59): rising from 89 → 91.5, approaching zone from below
         for i, p in enumerate([89.0, 90.0, 91.0, 91.5], start=-4):
             df.iloc[i, df.columns.get_loc("close")] = p
-            df.iloc[i, df.columns.get_loc("open")] = p - 0.3
-            df.iloc[i, df.columns.get_loc("high")] = p + 0.5
-            df.iloc[i, df.columns.get_loc("low")] = p - 0.8
+            df.iloc[i, df.columns.get_loc("open")]  = p - 0.3
+            df.iloc[i, df.columns.get_loc("high")]  = p + 0.5
+            df.iloc[i, df.columns.get_loc("low")]   = p - 0.8
+
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
         assert result is not None, "Expected short signal when approaching supply zone"
@@ -172,25 +214,52 @@ class TestSupplyDemandApproach:
         assert result is None, "Should not fire when price is rising away from demand zone"
 
     def test_1h_zones_preferred_over_15m(self):
-        """1H zone enables detection that flat 15m alone misses."""
+        """1H zone enables detection that flat 15m alone misses.
+
+        The 1H df mirrors the LONG approach test structure:
+        flat at 90 (BoS), impulse to 108 at idx=20, holds at 115 (zone live),
+        falls to 108.5 at the end. 200 EMA is NaN at 60 bars → EMA check skipped.
+        """
+        # 15m: flat, no impulse → no zones
         df_15m = _make_df_with_atr(60, price=110.0, atr_target=2.0)
-        # 15m has NO impulse → no zones → should not fire
         result_without = supply_demand("BTC/USDT:USDT", df_15m.copy(), _make_regime("choppy"), "15m")
         assert result_without is None, "15m-only (no zones) must return None"
 
-        # 1H has demand zone: open=100, close=108 → zone [100, 108]
-        df_1h = _make_df_with_atr(60, price=110.0, atr_target=2.0)
-        df_1h = df_1h.copy()
-        df_1h.iloc[20, df_1h.columns.get_loc("open")] = 100.0
+        # Build 1H df with a valid demand zone (BoS + unmitigated)
+        times = pd.date_range("2024-01-01", periods=60, freq="1h")
+        closes = np.full(60, 90.0)
+        opens  = closes - 0.5
+        highs  = closes + 1.4
+        lows   = closes - 1.4
+        volumes = np.full(60, 1000.0)
+        df_1h = pd.DataFrame({"open": opens, "high": highs, "low": lows,
+                              "close": closes, "volume": volumes}, index=times)
+        # Impulse at idx=20
+        df_1h.iloc[20, df_1h.columns.get_loc("open")]  = 100.0
         df_1h.iloc[20, df_1h.columns.get_loc("close")] = 108.0
-        df_1h.iloc[20, df_1h.columns.get_loc("high")] = 108.5
-        df_1h.iloc[20, df_1h.columns.get_loc("low")] = 99.8
-        # 15m last candle: 108.5 — above zone top (108), within proximity (≈3.0), falling
+        df_1h.iloc[20, df_1h.columns.get_loc("high")]  = 108.5
+        df_1h.iloc[20, df_1h.columns.get_loc("low")]   = 99.8
+        # Hold at 115 so zone stays live
+        for i in range(21, 56):
+            df_1h.iloc[i, df_1h.columns.get_loc("close")] = 115.0
+            df_1h.iloc[i, df_1h.columns.get_loc("open")]  = 114.5
+            df_1h.iloc[i, df_1h.columns.get_loc("high")]  = 115.5
+            df_1h.iloc[i, df_1h.columns.get_loc("low")]   = 114.0
+        # Last 4 bars fall toward zone
+        for i, p in enumerate([111.0, 110.0, 109.0, 108.5], start=-4):
+            df_1h.iloc[i, df_1h.columns.get_loc("close")] = p
+            df_1h.iloc[i, df_1h.columns.get_loc("open")]  = p + 0.3
+            df_1h.iloc[i, df_1h.columns.get_loc("high")]  = p + 0.8
+            df_1h.iloc[i, df_1h.columns.get_loc("low")]   = p - 0.5
+
+        # 15m price also approaches the 1H zone: last 4 candles same falling pattern
+        df_15m = df_15m.copy()
         for i, p in enumerate([111.0, 110.0, 109.0, 108.5], start=-4):
             df_15m.iloc[i, df_15m.columns.get_loc("close")] = p
-            df_15m.iloc[i, df_15m.columns.get_loc("open")] = p + 0.3
-            df_15m.iloc[i, df_15m.columns.get_loc("high")] = p + 0.8
-            df_15m.iloc[i, df_15m.columns.get_loc("low")] = p - 0.5
+            df_15m.iloc[i, df_15m.columns.get_loc("open")]  = p + 0.3
+            df_15m.iloc[i, df_15m.columns.get_loc("high")]  = p + 0.8
+            df_15m.iloc[i, df_15m.columns.get_loc("low")]   = p - 0.5
+
         result_with_1h = supply_demand("BTC/USDT:USDT", df_15m, _make_regime("choppy"), "15m", df_1h=df_1h)
         assert result_with_1h is not None, "1H zone should trigger long signal on approaching 15m price"
         assert result_with_1h["direction"] == "long"

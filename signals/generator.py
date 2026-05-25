@@ -176,8 +176,16 @@ def rsi_divergence(pair: str, df: pd.DataFrame, regime: RegimeResult,
 
 
 def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
-    """Find supply/demand zones from impulse candles. Returns zones with mitigation status."""
+    """Find supply/demand zones from impulse candles. Returns zones with mitigation status.
+
+    Applies Doyle's Break-of-Structure (BoS) filter: a demand zone is only valid if its
+    impulse candle closed above the prior 10-candle swing high (proving buyers broke
+    structure, not just reacted inside a range). Supply zones require the close to be
+    below the prior 10-candle swing low. Zones that form during consolidation/ranges are
+    excluded — they fail without a structural break behind them.
+    """
     c = cfg()["signals"]
+    bos_lookback = c.get("sd_bos_lookback", 10)
     atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
 
     if atr_series is None or pd.isna(atr_series.iloc[-1]):
@@ -197,6 +205,18 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
         bottom = min(row["open"], row["close"])
         zone_type = "demand" if row["close"] > row["open"] else "supply"
 
+        # Break-of-Structure filter: impulse must have broken a prior swing
+        if i >= bos_lookback:
+            prior_window = df.iloc[max(0, i - bos_lookback):i]
+            if zone_type == "demand":
+                # Bullish impulse must close above the prior swing high
+                if row["close"] <= prior_window["high"].max():
+                    continue
+            else:
+                # Bearish impulse must close below the prior swing low
+                if row["close"] >= prior_window["low"].min():
+                    continue
+
         # Zone is mitigated if any subsequent prior candle closes through it
         mitigated = False
         for j in range(i + 1, len(df) - 1):
@@ -213,6 +233,22 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
     return zones
 
 
+def _ema200_clears_zone(zone_df: pd.DataFrame, zone: dict) -> bool:
+    """Doyle's 200 EMA filter: demand zone must have 200 EMA below it; supply above it.
+    Returns True if the zone passes (EMA position is correct or data insufficient)."""
+    try:
+        ema_200 = ta.ema(zone_df["close"], length=200)
+        if ema_200 is None or pd.isna(ema_200.iloc[-1]):
+            return True  # insufficient data — don't filter
+        ema_val = ema_200.iloc[-1]
+        if zone["zone_type"] == "demand":
+            return ema_val <= zone["bottom"]  # EMA must be below zone
+        else:
+            return ema_val >= zone["top"]     # EMA must be above zone
+    except Exception:
+        return True
+
+
 def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
                   timeframe: str, df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
     """
@@ -221,6 +257,10 @@ def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
     respects them longer. Falls back to 15m zones if df_1h is absent.
     Entry triggers when price is within 1.5× ATR of the zone boundary and the last
     3 candles confirm price is moving toward it.
+
+    Doyle filters applied:
+    - Break-of-Structure: zones must have formed by breaking prior structure (in _find_sd_zones)
+    - 200 EMA position: 200 EMA must be below demand zones / above supply zones
     """
     zone_df = df_1h if (df_1h is not None and len(df_1h) >= 30) else df
     zones = _find_sd_zones(zone_df)
@@ -248,6 +288,12 @@ def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
         supply_zones = [z for z in supply_zones if not z["mitigated"]]
         if not demand_zones and not supply_zones:
             return None
+
+    # 200 EMA filter: demand zones need EMA below them; supply zones need EMA above them.
+    demand_zones = [z for z in demand_zones if _ema200_clears_zone(zone_df, z)]
+    supply_zones = [z for z in supply_zones if _ema200_clears_zone(zone_df, z)]
+    if not demand_zones and not supply_zones:
+        return None
 
     # ATR from zone_df so proximity window matches the scale of the zones.
     # Using 15m ATR against 1H zones made the window 3-5x too narrow.
