@@ -295,56 +295,98 @@ def supply_demand(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if not demand_zones and not supply_zones:
         return None
 
-    # ATR from zone_df so proximity window matches the scale of the zones.
-    # Using 15m ATR against 1H zones made the window 3-5x too narrow.
-    c = cfg()["signals"]
-    atr_series = ta.atr(zone_df["high"], zone_df["low"], zone_df["close"], length=c["atr_period"])
-    atr = atr_series.iloc[-1]
-    if pd.isna(atr):
-        return None
-    proximity = 1.5 * atr
-
-    # Approach direction: count how many of the last 3 closes are falling vs rising
-    falling = rising = 0
-    if len(df) >= 4:
-        recent = df["close"].iloc[-4:-1]
-        for i in range(1, len(recent)):
-            if recent.iloc[i] < recent.iloc[i - 1]:
-                falling += 1
-            elif recent.iloc[i] > recent.iloc[i - 1]:
-                rising += 1
-
     # Only trade with the trend in directional regimes
     allow_long  = regime.label != "trending-down"
     allow_short = regime.label != "trending-up"
 
+    curr_low   = df["low"].iloc[-1]
+    curr_high  = df["high"].iloc[-1]
+
+    # Zone rejection trigger (Doyle's entry criterion): the current candle wicked into
+    # the zone but closed back OUTSIDE it. No candles closing inside the zone is the
+    # confirmation that the zone is holding. This replaces the earlier "approach"
+    # trigger which fired before the zone was even tested.
+    # - Demand: wick dipped into/below zone top, but close printed above zone top.
+    # - Supply: wick rose into/above zone bottom, but close printed below zone bottom.
     if allow_long:
         for zone in demand_zones:
-            # Price above zone and falling toward it
-            if (close_now > zone["top"]
-                    and close_now <= zone["top"] + proximity
-                    and falling >= 2):
+            if curr_low <= zone["top"] and close_now >= zone["top"]:
                 return _signal(pair, "long", "supply_demand", regime, df, timeframe)
 
     if allow_short:
         for zone in supply_zones:
-            # Price below zone and rising toward it
-            if (close_now < zone["bottom"]
-                    and close_now >= zone["bottom"] - proximity
-                    and rising >= 2):
+            if curr_high >= zone["bottom"] and close_now <= zone["bottom"]:
                 return _signal(pair, "short", "supply_demand", regime, df, timeframe)
 
     return None
 
 
+def _in_lq_session_window(df: pd.DataFrame, pair: str) -> bool:
+    """For index pairs, liquidity grabs are most reliable in the first N hours of the
+    session open — the London→NY reversal window Doyle trades. Returns True for crypto
+    (no session structure). Returns True on any error (fail-safe)."""
+    c = cfg()
+    session_hours = c.get("indices", {}).get("session_hours", {})
+    spec = session_hours.get(pair)
+    if not spec:
+        return True  # crypto pair — no session gate
+
+    window_hours = c.get("signals", {}).get("lq_session_window_hours", 4)
+    try:
+        from zoneinfo import ZoneInfo
+        hours_part, tz_str = spec.rsplit(" ", 1)
+        start_str = hours_part.split("-")[0]
+        ts = df.index[-1]
+        tz = ZoneInfo(tz_str)
+        if hasattr(ts, "tz_convert"):
+            ts_local = ts.tz_convert(tz)
+        elif hasattr(ts, "tz_localize") and ts.tzinfo is None:
+            ts_local = ts.tz_localize("UTC").tz_convert(tz)
+        else:
+            ts_local = ts
+        session_open = ts_local.replace(
+            hour=int(start_str[:2]), minute=int(start_str[3:]),
+            second=0, microsecond=0,
+        )
+        minutes_since_open = (ts_local - session_open).total_seconds() / 60
+        return 0 <= minutes_since_open <= window_hours * 60
+    except Exception:
+        return True
+
+
+def _lq_zone_confluence(sweep_level: float, sweep_type: str,
+                        zone_df: pd.DataFrame, atr: float) -> bool:
+    """True when the liquidity sweep level falls at or within an unmitigated S&D zone
+    of the matching type. A sweep that undercuts a demand zone (for a long) means the
+    same zone that printed the structural move is also the liquidity pool — Doyle's
+    highest-conviction combo setup."""
+    zones = _find_sd_zones(zone_df)
+    if sweep_type == "long":
+        target = [z for z in zones if z["zone_type"] == "demand" and not z["mitigated"]]
+        return any(z["bottom"] - 2 * atr <= sweep_level <= z["top"] + atr for z in target)
+    else:
+        target = [z for z in zones if z["zone_type"] == "supply" and not z["mitigated"]]
+        return any(z["bottom"] - atr <= sweep_level <= z["top"] + 2 * atr for z in target)
+
+
 def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
-                   timeframe: str) -> Optional[dict]:
+                   timeframe: str, df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
+    """Standard liquidity grab + two Doyle enhancements:
+    - Session window: for index pairs, only fire during the first N hours after session
+      open (the London→NY reversal period). Config: lq_session_window_hours (default 4).
+    - Zone confluence: checks whether the sweep level hit an S&D zone. Result is stored
+      in signal["sd_zone_confluence"] for analysis; does not block the signal.
+    """
     # Confidence gates — derived from backtest (n=1496 choppy, n=878 high-vol):
     # choppy <0.30: WR=40.8%, avg_r=-0.078 → skip
     # high-vol ≥0.50: WR=43.7%, avg_r=-0.245 → trending move, not reversal → skip
     if regime.label == "choppy" and regime.confidence < 0.30:
         return None
     if regime.label == "high-volatility" and regime.confidence >= 0.50:
+        return None
+
+    # Session window gate (indices only)
+    if not _in_lq_session_window(df, pair):
         return None
 
     c = cfg()["signals"]
@@ -366,12 +408,19 @@ def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
     swing_high = swing_window["high"].max()
 
     curr = df.iloc[-1]
+    zone_df = df_1h if (df_1h is not None and len(df_1h) >= 30) else df
 
     # Reversal threshold raised from 0.2 → 0.25 ATR — filters weak rejections
     if curr["low"] < swing_low - 0.3 * atr and curr["close"] > swing_low + 0.25 * atr:
-        return _signal(pair, "long", "liquidity_grab", regime, df, timeframe)
+        sig = _signal(pair, "long", "liquidity_grab", regime, df, timeframe)
+        if sig:
+            sig["sd_zone_confluence"] = _lq_zone_confluence(curr["low"], "long", zone_df, atr)
+        return sig
     if curr["high"] > swing_high + 0.3 * atr and curr["close"] < swing_high - 0.25 * atr:
-        return _signal(pair, "short", "liquidity_grab", regime, df, timeframe)
+        sig = _signal(pair, "short", "liquidity_grab", regime, df, timeframe)
+        if sig:
+            sig["sd_zone_confluence"] = _lq_zone_confluence(curr["high"], "short", zone_df, atr)
+        return sig
 
     return None
 
@@ -491,7 +540,7 @@ def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
     if gen is None:
         logger.warning(f"Unknown strategy: {strategy}")
         return None
-    if strategy == "supply_demand":
+    if strategy in ("supply_demand", "liquidity_grab"):
         signal = gen(pair, df, regime, timeframe, df_1h=df_1h)
     else:
         signal = gen(pair, df, regime, timeframe)

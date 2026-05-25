@@ -107,14 +107,15 @@ def _make_df_with_atr(n=60, price=100.0, atr_target=2.0) -> pd.DataFrame:
 
 
 class TestSupplyDemandApproach:
-    """Tests for the new approach-based (not inside-zone) entry logic."""
+    """Tests for zone rejection-based entry logic (Doyle: wick in, close back out)."""
 
-    def test_approach_long_fires_when_price_above_zone_and_falling(self):
-        """Price above demand zone top, within proximity, falling 2+ candles → long.
+    def test_rejection_long_fires_when_wick_enters_demand_zone(self):
+        """Candle wicks into demand zone top but closes above zone top → long signal.
 
         Scenario: price consolidates at 90 (idx 0-19), then a bullish impulse breaks
         structure at idx 20 (close=108 > prior high ≈ 91.4 → BoS ✓), price extends
-        to 115 (idx 21-55, keeping zone live), then pulls back toward zone (idx 56-59).
+        to 115 (idx 21-55, keeping zone live), then the last candle wicks to zone top
+        (low=108.0) and closes above it (close=108.5) → rejection confirmed → long.
         """
         times = pd.date_range("2024-01-01", periods=60, freq="15min")
         # Phase 1: flat at 90 — prior structure for BoS check
@@ -148,16 +149,17 @@ class TestSupplyDemandApproach:
 
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
-        assert result is not None, "Expected long signal when approaching demand zone"
+        assert result is not None, "Expected long signal on demand zone wick rejection"
         assert result["direction"] == "long"
         assert result["strategy"] == "supply_demand"
 
-    def test_approach_short_fires_when_price_below_zone_and_rising(self):
-        """Price below supply zone bottom, within proximity, rising 2+ candles → short.
+    def test_rejection_short_fires_when_wick_enters_supply_zone(self):
+        """Candle wicks into supply zone bottom but closes below zone bottom → short signal.
 
         Scenario: price consolidates at 110 (idx 0-19), then a bearish impulse breaks
         structure at idx 20 (close=92 < prior low ≈ 108.6 → BoS ✓), price drops
-        to 85 (idx 21-55, keeping zone live), then rallies toward zone (idx 56-59).
+        to 85 (idx 21-55, keeping zone live), then the last candle wicks to zone bottom
+        (high=92.0) and closes below it (close=91.5) → rejection confirmed → short.
         """
         times = pd.date_range("2024-01-01", periods=60, freq="15min")
         # Phase 1: flat at 110 — prior structure for BoS check
@@ -191,27 +193,43 @@ class TestSupplyDemandApproach:
 
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
-        assert result is not None, "Expected short signal when approaching supply zone"
+        assert result is not None, "Expected short signal on supply zone wick rejection"
         assert result["direction"] == "short"
         assert result["strategy"] == "supply_demand"
 
-    def test_no_fire_when_not_approaching(self):
-        """Price near zone but rising (away from demand zone) → no signal."""
-        df = _make_df_with_atr(60, price=110.0, atr_target=2.0)
-        df = df.copy()
-        df.iloc[20, df.columns.get_loc("open")] = 100.0
+    def test_no_fire_when_wick_does_not_reach_zone(self):
+        """Last candle's low stays above zone top — wick never enters zone → no signal.
+
+        Zone is valid (BoS: base=90, prior highs≈91.4, impulse close=108). Price
+        holds at 115, then last candle has low=109 > zone_top=108, so no rejection.
+        """
+        times = pd.date_range("2024-01-01", periods=60, freq="15min")
+        closes  = np.full(60, 90.0)
+        opens   = closes - 0.5
+        highs   = closes + 1.4
+        lows    = closes - 1.4
+        volumes = np.full(60, 1000.0)
+        df = pd.DataFrame({"open": opens, "high": highs, "low": lows,
+                           "close": closes, "volume": volumes}, index=times)
+        # Demand zone at idx=20: [100, 108] — BoS passes (close=108 > prior high≈91.4)
+        df.iloc[20, df.columns.get_loc("open")]  = 100.0
         df.iloc[20, df.columns.get_loc("close")] = 108.0
-        df.iloc[20, df.columns.get_loc("high")] = 108.5
-        df.iloc[20, df.columns.get_loc("low")] = 99.8
-        # Price is rising away from zone: 108.5 → 109 → 110 → 110.5
-        for i, p in enumerate([108.5, 109.0, 110.0, 110.5], start=-4):
-            df.iloc[i, df.columns.get_loc("close")] = p
-            df.iloc[i, df.columns.get_loc("open")] = p - 0.3
-            df.iloc[i, df.columns.get_loc("high")] = p + 0.5
-            df.iloc[i, df.columns.get_loc("low")] = p - 0.5
+        df.iloc[20, df.columns.get_loc("high")]  = 108.5
+        df.iloc[20, df.columns.get_loc("low")]   = 99.8
+        # Hold at 115 so zone stays live
+        for i in range(21, 56):
+            df.iloc[i, df.columns.get_loc("close")] = 115.0
+            df.iloc[i, df.columns.get_loc("open")]  = 114.5
+            df.iloc[i, df.columns.get_loc("high")]  = 115.5
+            df.iloc[i, df.columns.get_loc("low")]   = 114.0
+        # Last candle: close=110, low=109 — wick is above zone_top (108) → no rejection
+        df.iloc[-1, df.columns.get_loc("close")] = 110.0
+        df.iloc[-1, df.columns.get_loc("open")]  = 110.5
+        df.iloc[-1, df.columns.get_loc("high")]  = 111.0
+        df.iloc[-1, df.columns.get_loc("low")]   = 109.0
         regime = _make_regime("choppy")
         result = supply_demand("BTC/USDT:USDT", df, regime, "15m")
-        assert result is None, "Should not fire when price is rising away from demand zone"
+        assert result is None, "Should not fire when wick stays above zone top"
 
     def test_1h_zones_preferred_over_15m(self):
         """1H zone enables detection that flat 15m alone misses.

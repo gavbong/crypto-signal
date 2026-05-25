@@ -105,6 +105,7 @@ signals:
 
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
   sd_bos_lookback: 10                  # supply/demand: BoS filter — impulse must break N prior bars' high (demand) or low (supply)
+  lq_session_window_hours: 4           # liquidity_grab: for index pairs, only fire within N hours of session open (London→NY reversal window)
 
 signal_quality:
   min_quality_score: 60          # suppress signals below this (0-100 composite); raised 2026-05-22 — bootstrap at 35% WR scores 28, new combos must prove themselves
