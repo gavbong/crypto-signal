@@ -264,6 +264,15 @@ paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT
   slip_adjust_sizing: true        # size on effective_risk (sl_dist + entry/exit slip) so actual $ risk = target %
   position_timeout_hours: 48      # close stale positions at market after 2 days
+
+  # ── Kelly Criterion position sizing ───────────────────────────────────────────
+  # When enabled, replaces fixed risk_pct with half-Kelly computed from the last
+  # 60 days of live resolved signals for each strategy+regime+direction combo.
+  # Falls back to risk_pct_default if fewer than 20 resolved trades are available.
+  # Half-Kelly is used (not full Kelly) to reduce variance while preserving most
+  # of the long-run growth advantage. Hard cap: never exceeds 3% per trade.
+  # Enable only after accumulating enough live trade history (≥20 trades per combo).
+  kelly_sizing: false
   circuit_breaker_losses: 5       # pause new entries after N consecutive losses
   circuit_breaker_cooldown_hours: 4  # hours to wait before resuming after circuit breaker trips
 

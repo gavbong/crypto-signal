@@ -2753,6 +2753,13 @@ function btRenderBreakdownTable(rows, run) {
   const pct = v => v != null ? Math.round(v * 100) + '%' : '—';
   const r = v => v != null ? (v >= 0 ? '+' : '') + v.toFixed(2) + 'R' : '—';
   const color = v => v > 0 ? 'color:#22C55E' : v < 0 ? 'color:#EF4444' : '';
+  const kellyFmt = k => {
+    if (k == null) return {txt: '—', style: 'color:var(--muted)'};
+    const pct = Math.round(k * 100);
+    const txt = (k >= 0 ? '+' : '') + pct + '%';
+    const style = k >= 0.15 ? 'color:#22C55E;font-weight:600' : k > 0 ? 'color:var(--accent)' : 'color:#EF4444';
+    return {txt, style};
+  };
   body.innerHTML = `<table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px">
     <thead><tr style="border-bottom:1px solid var(--border);color:var(--muted)">
       <th style="text-align:left;padding:6px 12px;font-weight:500">Strategy</th>
@@ -2762,10 +2769,17 @@ function btRenderBreakdownTable(rows, run) {
       <th style="text-align:right;padding:6px 8px;font-weight:500">Win</th>
       <th style="text-align:right;padding:6px 8px;font-weight:500">Loss</th>
       <th style="text-align:right;padding:6px 8px;font-weight:500">WR</th>
-      <th style="text-align:right;padding:6px 12px;font-weight:500">Net R</th>
+      <th style="text-align:right;padding:6px 8px;font-weight:500">Net R</th>
+      <th style="text-align:right;padding:6px 12px;font-weight:500" title="Half-Kelly fraction of bankroll to risk per trade">½Kelly</th>
     </tr></thead>
     <tbody>
-    ${rows.map(row => `<tr style="border-bottom:1px solid rgba(31,35,48,0.4)">
+    ${rows.map(row => {
+      const k = kellyFmt(row.kelly);
+      const halfK = row.kelly != null ? kellyFmt(row.kelly / 2) : {txt: '—', style: 'color:var(--muted)'};
+      const tip = row.kelly != null
+        ? `title="Kelly=${(row.kelly*100).toFixed(1)}% · avg win=${row.avg_win_r != null ? '+'+row.avg_win_r.toFixed(2)+'R' : '?'} avg loss=${row.avg_loss_r != null ? row.avg_loss_r.toFixed(2)+'R' : '?'}"`
+        : '';
+      return `<tr style="border-bottom:1px solid rgba(31,35,48,0.4)">
       <td style="padding:6px 12px;color:var(--text)">${row.strategy}</td>
       <td style="padding:6px 8px;color:var(--muted)">${row.regime}</td>
       <td style="padding:6px 8px;text-align:right">${row.fired}</td>
@@ -2773,8 +2787,10 @@ function btRenderBreakdownTable(rows, run) {
       <td style="padding:6px 8px;text-align:right;color:#22C55E">${row.win}</td>
       <td style="padding:6px 8px;text-align:right;color:#EF4444">${row.loss}</td>
       <td style="padding:6px 8px;text-align:right">${pct(row.win_rate)}</td>
-      <td style="padding:6px 12px;text-align:right;${color(row.net_r)}">${r(row.net_r)}</td>
-    </tr>`).join('')}
+      <td style="padding:6px 8px;text-align:right;${color(row.net_r)}">${r(row.net_r)}</td>
+      <td style="padding:6px 12px;text-align:right;${halfK.style}" ${tip}>${halfK.txt}</td>
+    </tr>`;
+    }).join('')}
     </tbody>
   </table>`;
 }

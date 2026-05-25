@@ -535,6 +535,57 @@ def _risk_pct_for_regime(regime: str) -> float:
     return by_regime.get(regime, default)
 
 
+def _kelly_risk_pct(strategy: str, regime: str, direction: str, conn) -> float | None:
+    """
+    Compute half-Kelly position size from recent live trade history.
+
+    Queries the last 60 days of resolved signals for this strategy+regime+direction,
+    computes avg win R and avg loss R, derives full Kelly, returns half-Kelly.
+
+    Returns None if insufficient data (< 20 resolved trades) so the caller
+    can fall back to the fixed risk_pct.
+
+    The half-Kelly fraction is capped at KELLY_MAX_RISK to prevent runaway sizing.
+    """
+    KELLY_MIN_TRADES = 20
+    KELLY_MAX_RISK   = 0.03   # hard ceiling: never risk more than 3% per trade
+
+    try:
+        rows = conn.execute(
+            """SELECT outcome, pnl_r FROM signals
+               WHERE strategy=? AND regime=? AND direction=?
+                 AND shadow_mode=0 AND outcome IS NOT NULL AND pnl_r IS NOT NULL
+                 AND fired_at >= datetime('now', '-60 days')""",
+            (strategy, regime, direction),
+        ).fetchall()
+    except Exception:
+        return None
+
+    wins   = [r["pnl_r"] for r in rows if r["outcome"] in ("win", "tp_hit") and r["pnl_r"] > 0]
+    losses = [r["pnl_r"] for r in rows if r["outcome"] in ("loss", "stopped_out") and r["pnl_r"] < 0]
+    resolved = len(wins) + len(losses)
+
+    if resolved < KELLY_MIN_TRADES or not wins or not losses:
+        return None
+
+    win_rate  = len(wins) / resolved
+    avg_win_r = sum(wins) / len(wins)
+    avg_loss_r = abs(sum(losses) / len(losses))
+
+    kelly = win_rate / avg_loss_r - (1 - win_rate) / avg_win_r
+    if kelly <= 0:
+        return None
+
+    half_kelly = kelly / 2
+    capped = min(half_kelly, KELLY_MAX_RISK)
+    logger.debug(
+        f"Kelly sizing: {strategy}/{regime}/{direction} "
+        f"n={resolved} WR={win_rate:.0%} avgW={avg_win_r:.2f}R avgL=-{avg_loss_r:.2f}R "
+        f"kelly={kelly:.3f} half={half_kelly:.3f} capped={capped:.3f}"
+    )
+    return capped
+
+
 def open_position(conn, signal: dict, live_price: float) -> dict | None:
     """
     Attempt to open a paper position for a signal.
@@ -649,7 +700,18 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     min_contract = MIN_CONTRACTS.get(pair, DEFAULT_MIN_CONTRACT)
     regime_label = signal.get("regime", "")
 
-    risk_pct = _risk_pct_for_regime(regime_label)
+    _kelly_on = cfg().get("paper_trader", {}).get("kelly_sizing", False)
+    if _kelly_on:
+        _ks = _kelly_risk_pct(signal.get("strategy", ""), regime_label, direction, conn)
+        if _ks is not None:
+            risk_pct = _ks
+            logger.debug(f"Paper: Kelly sizing active — risk_pct={risk_pct:.4f}")
+        else:
+            risk_pct = _risk_pct_for_regime(regime_label)
+            logger.debug(f"Paper: Kelly insufficient data — fallback risk_pct={risk_pct:.4f}")
+    else:
+        risk_pct = _risk_pct_for_regime(regime_label)
+
     if _dd_mode == "half_size":
         risk_pct *= 0.5
         logger.debug(f"Paper: half-size drawdown mode — risk_pct={risk_pct:.4f}")

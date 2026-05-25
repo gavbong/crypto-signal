@@ -1086,35 +1086,36 @@ def create_app() -> Flask:
         _auth()
         run_id = request.args.get("run_id", type=int)
         with get_conn() as conn:
-            if run_id is None:
-                rows = conn.execute(
-                    """SELECT strategy, regime,
+            _bd_sql = """SELECT strategy, regime,
                               COUNT(*) as fired,
                               SUM(CASE WHEN outcome='tp_hit' THEN 1 ELSE 0 END) as tp_hit,
                               SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
                               SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) as loss,
                               SUM(CASE WHEN outcome='stopped_out' THEN 1 ELSE 0 END) as stopped_out,
-                              SUM(pnl_r) as net_r
-                       FROM signals WHERE shadow_mode=1 AND backtest_run_id IS NULL
-                       GROUP BY strategy, regime ORDER BY net_r DESC"""
+                              SUM(pnl_r) as net_r,
+                              AVG(CASE WHEN outcome IN ('win','tp_hit') AND pnl_r IS NOT NULL THEN pnl_r END) as avg_win_r,
+                              AVG(CASE WHEN outcome IN ('loss','stopped_out') AND pnl_r IS NOT NULL THEN pnl_r END) as avg_loss_r"""
+            if run_id is None:
+                rows = conn.execute(
+                    _bd_sql + " FROM signals WHERE shadow_mode=1 AND backtest_run_id IS NULL"
+                              " GROUP BY strategy, regime ORDER BY net_r DESC"
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT strategy, regime,
-                              COUNT(*) as fired,
-                              SUM(CASE WHEN outcome='tp_hit' THEN 1 ELSE 0 END) as tp_hit,
-                              SUM(CASE WHEN outcome IN ('win','tp_hit') THEN 1 ELSE 0 END) as win,
-                              SUM(CASE WHEN outcome='loss' THEN 1 ELSE 0 END) as loss,
-                              SUM(CASE WHEN outcome='stopped_out' THEN 1 ELSE 0 END) as stopped_out,
-                              SUM(pnl_r) as net_r
-                       FROM signals WHERE backtest_run_id=?
-                       GROUP BY strategy, regime ORDER BY net_r DESC""",
+                    _bd_sql + " FROM signals WHERE backtest_run_id=?"
+                              " GROUP BY strategy, regime ORDER BY net_r DESC",
                     (run_id,),
                 ).fetchall()
         result = []
         for r in rows:
             resolved = (r["win"] or 0) + (r["loss"] or 0) + (r["stopped_out"] or 0)
             win_rate = r["win"] / resolved if resolved > 0 else None
+            avg_win = r["avg_win_r"]
+            avg_loss = r["avg_loss_r"]
+            kelly = None
+            if win_rate is not None and avg_win and avg_win > 0 and avg_loss and avg_loss < 0:
+                loss_r = abs(avg_loss)
+                kelly = round(win_rate / loss_r - (1 - win_rate) / avg_win, 3)
             result.append({
                 "strategy": r["strategy"], "regime": r["regime"],
                 "fired": r["fired"], "tp_hit": r["tp_hit"] or 0,
@@ -1122,6 +1123,9 @@ def create_app() -> Flask:
                 "stopped_out": r["stopped_out"] or 0,
                 "win_rate": round(win_rate, 3) if win_rate is not None else None,
                 "net_r": round(r["net_r"] or 0, 2),
+                "avg_win_r": round(avg_win, 3) if avg_win is not None else None,
+                "avg_loss_r": round(avg_loss, 3) if avg_loss is not None else None,
+                "kelly": kelly,
             })
         return jsonify(result)
 
