@@ -1328,6 +1328,7 @@ def create_app() -> Flask:
             return jsonify({"error": "A backtest is already running"}), 409
         body = request.get_json(silent=True) or {}
         since = body.get("since", (datetime.now(timezone.utc).replace(day=1)).strftime("%Y-%m-%d"))
+        include_indices = bool(body.get("include_indices", False))
         c = cfg()
         with get_conn() as conn:
             cur = conn.execute(
@@ -1341,8 +1342,11 @@ def create_app() -> Flask:
             mode="w", suffix=".log", prefix="backtest_", delete=False
         )
         stderr_path = stderr_fh.name
+        cmd = [sys.executable, backtest_script, "--since", since, "--run-id", str(run_id)]
+        if include_indices:
+            cmd.append("--indices")
         proc = subprocess.Popen(
-            [sys.executable, backtest_script, "--since", since, "--run-id", str(run_id)],
+            cmd,
             stdout=subprocess.DEVNULL,
             stderr=stderr_fh,
             env=os.environ.copy(),

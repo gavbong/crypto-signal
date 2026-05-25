@@ -839,7 +839,11 @@ body{
       <div id="bt-run-form" class="bt-run-form">
         <span style="font-family:var(--font-ui);font-size:11px;color:var(--muted)">Since:</span>
         <input class="bt-since-input" type="date" id="bt-since-input" />
-        <button class="bt-run-btn" id="bt-run-btn" onclick="btStartRun()">▶ Run</button>
+        <label style="display:flex;align-items:center;gap:4px;font-family:var(--font-ui);font-size:11px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="bt-include-indices" style="accent-color:var(--accent);margin:0" />
+          Indices
+        </label>
+        <button class="bt-run-btn" id="bt-run-btn" onclick="btStartRun()">&#9654; Run</button>
       </div>
       <!-- Progress bar (shown during active run) -->
       <div id="bt-progress-wrap" class="bt-progress-bar-wrap">
@@ -2364,7 +2368,7 @@ function btRenderPairTable(data, run) {
     const barW = Math.round((Math.abs(r.net_r) / maxAbsR) * 60);
     const bar = `<span class="bt-netr-bar" style="width:${barW}px;background:${color};opacity:.7"></span>`;
     return `<tr>
-      <td class="l">${r.pair.replace('/USDT:USDT','').replace('/USDC:USDC','')}</td>
+      <td class="l">${r.pair.replace('/USDT:USDT','').replace('/USDC:USDC','').replace('/USD','')}</td>
       <td style="text-align:right">${r.fired}</td>
       <td style="text-align:right">${wr}</td>
       <td style="text-align:right;color:${color}">${netRFmt}${bar}</td>
@@ -2727,12 +2731,13 @@ function btPollStatus() {
 async function btStartRun() {
   const since = document.getElementById('bt-since-input').value;
   if (!since) { alert('Please select a start date.'); return; }
+  const include_indices = document.getElementById('bt-include-indices').checked;
   document.getElementById('bt-run-btn').disabled = true;
   try {
     const res = await fetch('/api/backtest/run', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({since}),
+      body: JSON.stringify({since, include_indices}),
     });
     if (!res.ok) {
       const err = await res.json();
