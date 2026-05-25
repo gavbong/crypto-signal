@@ -60,8 +60,11 @@ def _calc_take_profit(entry: float, stop: float, direction: str,
     if strategy and strategy in strategy_rr:
         rr = strategy_rr[strategy]
 
-    if c.get("slip_adjust_tp", False):
+    is_index = pair in index_pairs
+    if c.get("slip_adjust_tp", False) and not is_index:
         # Extend TP so effective RR (after fill costs) equals the target rr.
+        # Index CFDs use spread-only pricing at Trade Nation — no order-book gap
+        # slippage — so slip_adjust_tp does not apply to index pairs.
         # Net gain at TP (long):  tp - entry*(1+slip) — limit exit, no exit slip
         # Effective loss at SL:   (entry+entry_slip*entry) - (stop-exit_slip*stop)
         #                       = risk + entry*entry_slip + stop*exit_slip

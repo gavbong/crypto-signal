@@ -488,8 +488,9 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     # Size on effective risk so actual $ loss on SL = target %, not larger.
     # Without this: slippage is accounted in PnL but not in sizing, so we're
     # implicitly over-leveraged vs our target risk fraction.
+    # Index CFDs (Trade Nation) use spread-only pricing — no order-book slippage.
     _pt_cfg = cfg().get("paper_trader", {})
-    if _pt_cfg.get("slip_adjust_sizing", False):
+    if _pt_cfg.get("slip_adjust_sizing", False) and exchange_id != "tradenation":
         _entry_slip = _pt_cfg.get("entry_slippage_pct", 0.0005)
         _exit_slip  = _pt_cfg.get("slippage_pct", 0.0052)
         risk_per_contract += live_price * (_entry_slip + _exit_slip)
@@ -575,15 +576,18 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
     contracts   = pos["contracts"]
     entry_price = pos["entry_price"]
 
-    # ── Entry slippage (market order at signal price) ─────────────────────────
-    entry_slip_pct = pt.get("entry_slippage_pct", 0.0002)
+    # ── Entry / exit slippage ─────────────────────────────────────────────────
+    # Index CFDs trade at Trade Nation's quoted spread price — no order-book
+    # gap slippage. Crypto CEX/perp orders incur market-impact slippage.
+    is_index_cfd = (exchange_id == "tradenation")
+
+    entry_slip_pct = 0.0 if is_index_cfd else pt.get("entry_slippage_pct", 0.0002)
     _actual_entry, entry_slip_cost = _calc_slippage(
         entry_price, contracts, direction, entry_slip_pct, side="entry"
     )
 
-    # ── Exit slippage: SL/timeout = market order; TP/flip = limit, no slip ────
     market_exit_reasons = {"stop_loss", "timeout"}
-    if reason in market_exit_reasons:
+    if reason in market_exit_reasons and not is_index_cfd:
         actual_exit, exit_slip_cost = _calc_slippage(
             exit_price, contracts, direction, pt.get("slippage_pct", 0.0005), side="exit"
         )
