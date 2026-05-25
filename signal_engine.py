@@ -14,6 +14,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from zoneinfo import ZoneInfo
 from utils.config import env, get as cfg
 from utils.ccxt_wrapper import make_exchange, fetch_ohlcv_safe, fetch_ticker_safe
+from utils.market_hours import is_index_market_open
 from db.schema import init_db, get_conn, log_signal, is_duplicate, log_regime
 from regime.classifier import classify, RegimeResult, _to_df
 from signals.selector import active_strategies
@@ -28,20 +29,7 @@ from strategy_advisor import run_strategy_review
 
 
 
-def _is_market_open(pair: str) -> bool:
-    """Return False if pair is an index instrument and currently outside trading hours."""
-    session_hours = cfg().get("indices", {}).get("session_hours", {})
-    spec = session_hours.get(pair)
-    if not spec:
-        return True  # crypto or unconfigured pair — 24/7
-    hours, tz_str = spec.rsplit(" ", 1)
-    start_str, end_str = hours.split("-")
-    now = datetime.now(ZoneInfo(tz_str))
-    if now.weekday() >= 5:  # Saturday=5, Sunday=6
-        return False
-    start = now.replace(hour=int(start_str[:2]), minute=int(start_str[3:]), second=0, microsecond=0)
-    end   = now.replace(hour=int(end_str[:2]),   minute=int(end_str[3:]),   second=0, microsecond=0)
-    return start <= now <= end
+_is_market_open = is_index_market_open
 
 
 def _market_session(utc_hour: int) -> str:

@@ -102,7 +102,19 @@ class IndexReader:
 
 
 def _send_stale_alert(pair: str, age_seconds: float) -> None:
-    """Send Telegram alert once per pair per staleness window (throttled)."""
+    """Send Telegram alert once per pair per staleness window (throttled).
+
+    Suppressed when the market is legitimately closed (weekends, bank holidays,
+    after-hours) — stale candles are expected in those windows.
+    """
+    try:
+        from utils.market_hours import is_index_market_open
+        if not is_index_market_open(pair):
+            logger.debug(f"IndexReader: {pair} stale but market is closed — suppressing alert")
+            return
+    except Exception:
+        pass  # if import fails, fall through and send
+
     now = time.time()
     if now - _stale_alert_cache.get(pair, 0) < _STALE_SECONDS:
         return
