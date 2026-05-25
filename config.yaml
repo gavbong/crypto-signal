@@ -60,6 +60,31 @@ regime:
   high_vol_bb_multiplier: 1.5    # bb_width > avg * this = high-volatility
   stability_candles: 5           # candles to fetch for stability check
   stability_min_match: 3         # how many must agree for label to be stable
+  # Flickering detection — too many regime transitions = unstable, skip signals
+  flicker_window: 20             # how many recent candles to inspect
+  flicker_max_transitions: 4     # more than this many label changes = flickering
+
+# ── HMM macro regime classifier ────────────────────────────────────────────────
+# Trains a Gaussian HMM on daily BTC-USD data to detect the macro market cycle.
+# Output (crash/bear/neutral/bull/euphoria) scales paper-trader position sizes.
+# Risk multipliers per macro label (applied on top of per-regime risk_pct):
+#   crash=0% halt | bear=30% | neutral=70% | bull=100% | euphoria=80%
+# Retrains automatically every 24h at 06:30 UTC. Cache: data/macro/hmm_model_cache.json
+macro_hmm:
+  enabled: true
+  ticker: "BTC-USD"              # yfinance ticker used for training
+  train_days: 504                # ~2 years of daily data
+  n_states_min: 3
+  n_states_max: 5
+  retrain_interval_hours: 24
+  stability_bars: 3              # macro regime must hold N days before acting
+  # Override default risk multipliers here if needed:
+  # risk_multipliers:
+  #   crash: 0.0
+  #   bear: 0.3
+  #   neutral: 0.7
+  #   bull: 1.0
+  #   euphoria: 0.8
 
 signals:
   volume_spike_multiplier: 1.5   # vol_breakout gate: volume > avg * this = spike confirmed

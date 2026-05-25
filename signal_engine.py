@@ -6,8 +6,10 @@ classification (MTF) and 15m candles for signal indicator calculation.
 Per cycle: collects candidates from all exchanges, picks the highest-confidence
 signal per (base_asset, direction, strategy, regime), then emits the winner.
 """
+import json
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
 
@@ -25,6 +27,9 @@ from apscheduler.triggers.cron import CronTrigger
 from eval.outcomes import run_evaluation
 from alerts.telegram import send_signal_alert
 from strategy_advisor import run_strategy_review
+from regime.hmm_classifier import get_classifier, current_macro_regime, MACRO_RISK_MULT
+
+_MACRO_FILE = Path("data/macro/current_regime.json")
 
 
 
@@ -74,6 +79,8 @@ def _collect_candidates(
     exchange_id: str,
     shadow_mode: bool,
     conn,
+    macro_label: str = "neutral",
+    macro_conf: float = 0.0,
 ) -> list[dict]:
     """Collect potential signals from one exchange without emitting.
     No dedup check, no LLM commentary, no alerts. Returns raw candidates
@@ -97,7 +104,8 @@ def _collect_candidates(
             continue
 
         if not regime.stable:
-            logger.debug(f"{pair}: regime {regime.label} not stable yet ({regime.age_candles} candles)")
+            flicker_note = " (flickering)" if regime.flickering else ""
+            logger.debug(f"{pair}: regime {regime.label} not stable{flicker_note} ({regime.age_candles} candles)")
             continue
 
         # Regime age gate: require minimum consecutive candles in this regime
@@ -179,6 +187,8 @@ def _collect_candidates(
             signal["exchange"] = exchange_id
             signal["shadow_mode"] = shadow_mode
             signal["_regime_context"] = regime_context_for_llm
+            signal["macro_regime"] = macro_label
+            signal["macro_regime_conf"] = macro_conf
             candidates.append(signal)
 
     return candidates
@@ -197,6 +207,34 @@ def _pick_best(candidates: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def _update_macro_regime() -> tuple[str, float, bool]:
+    """Refresh macro regime from HMM and persist to shared JSON for paper_trader."""
+    try:
+        label, conf, stable = current_macro_regime("BTC-USD")
+        _MACRO_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MACRO_FILE.write_text(json.dumps({
+            "label": label,
+            "confidence": conf,
+            "stable": stable,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }))
+        return label, conf, stable
+    except Exception as exc:
+        logger.warning(f"MacroHMM update failed — {exc}. Defaulting to neutral.")
+        return "neutral", 0.0, False
+
+
+def hmm_retrain_job() -> None:
+    """Daily retrain of the HMM macro classifier."""
+    try:
+        clf = get_classifier()
+        clf.fit("BTC-USD")
+        label, conf, stable = current_macro_regime("BTC-USD")
+        logger.info(f"MacroHMM retrain complete — macro={label} conf={conf:.2f} stable={stable}")
+    except Exception as exc:
+        logger.error(f"MacroHMM retrain failed: {exc}")
+
+
 def signal_job(exchanges_config: list, timeframe: str, limit: int,
                dedup_window: int, shadow_mode: bool) -> None:
     """exchanges_config: list of (exchange_id, exchange_obj, pairs).
@@ -205,6 +243,13 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
     direction, strategy, regime) by regime confidence → dedup check → emit winners.
     """
     c = cfg()
+    macro_label, macro_conf, macro_stable = _update_macro_regime()
+    macro_mult = MACRO_RISK_MULT.get(macro_label, 1.0)
+    logger.info(
+        f"MacroHMM: regime={macro_label} conf={macro_conf:.2f} "
+        f"stable={macro_stable} risk_mult={macro_mult:.0%}"
+    )
+
     with get_conn() as conn:
         # Pause gate: check settings table before running
         paused_row = conn.execute(
@@ -227,6 +272,7 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
             candidates = _collect_candidates(
                 exchange, active_pairs, timeframe, limit,
                 regimes_1h, df_1h_map, exchange_id, shadow_mode, conn,
+                macro_label=macro_label, macro_conf=macro_conf,
             )
             all_candidates.extend(candidates)
 
@@ -412,6 +458,15 @@ def main() -> None:
 
     exchange_map = {exc_id: exc_obj for exc_id, exc_obj, _ in exchanges_config}
 
+    # Initialise HMM macro regime classifier (load cache or train from scratch)
+    try:
+        clf = get_classifier()
+        if not clf.load_cache():
+            logger.info("MacroHMM: no cache found — training on startup (may take ~30s)...")
+            clf.fit("BTC-USD")
+    except Exception as exc:
+        logger.warning(f"MacroHMM init failed — will retry on first signal job: {exc}")
+
     mode_label = "SHADOW" if shadow_mode else "LIVE"
     logger.info(
         f"Signal engine starting | exchanges={[e[0] for e in exchanges_config]} "
@@ -439,6 +494,14 @@ def main() -> None:
     scheduler.add_job(
         review_job,
         CronTrigger(hour=6, minute=0, timezone="UTC"),
+        misfire_grace_time=3600,
+    )
+
+    scheduler.add_job(
+        hmm_retrain_job,
+        CronTrigger(hour=6, minute=30, timezone="UTC"),
+        id="hmm_retrain",
+        replace_existing=True,
         misfire_grace_time=3600,
     )
 

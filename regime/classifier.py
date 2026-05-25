@@ -12,9 +12,23 @@ class RegimeResult(NamedTuple):
     confidence: float     # 0.0-1.0
     age_candles: int      # consecutive candles holding this label
     stable: bool          # True if last N candles all agree
+    flickering: bool = False  # True if regime changed >4 times in last 20 candles
 
 
 _LABELS = ("trending-up", "trending-down", "choppy", "high-volatility")
+
+_FLICKER_WINDOW = 20   # candles to inspect for regime changes
+_FLICKER_MAX    = 4    # max label transitions allowed before flagging as flickering
+
+
+def _is_flickering(labels: list[str], window: int = _FLICKER_WINDOW,
+                   max_transitions: int = _FLICKER_MAX) -> bool:
+    """Return True if the label sequence has too many regime changes in the window."""
+    recent = [l for l in labels[-window:] if l]
+    if len(recent) < 3:
+        return False
+    transitions = sum(1 for i in range(1, len(recent)) if recent[i] != recent[i - 1])
+    return transitions > max_transitions
 
 
 def _to_df(ohlcv: list) -> pd.DataFrame:
@@ -193,7 +207,13 @@ def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
             continue
         recent = [l for l in labels[max(0, i - stability_n + 1):i + 1] if l is not None]
         stable = recent.count(lbl) >= stability_min
-        results.append(RegimeResult(label=lbl, confidence=confs[i], age_candles=ages[i], stable=stable))
+        flickering = _is_flickering(labels[:i + 1])
+        if flickering:
+            stable = False
+        results.append(RegimeResult(
+            label=lbl, confidence=confs[i], age_candles=ages[i],
+            stable=stable, flickering=flickering,
+        ))
 
     return results
 
@@ -239,13 +259,19 @@ def classify(ohlcv: list) -> RegimeResult:
         else:
             break
 
+    flickering = _is_flickering(labels)
+    # Flickering overrides stability — regime can't be trusted when it's thrashing
+    if flickering:
+        stable = False
+
     logger.debug(
         f"Regime={current_label} conf={current_conf} age={age} stable={stable} "
-        f"recent={recent}"
+        f"flickering={flickering} recent={recent}"
     )
     return RegimeResult(
         label=current_label,
         confidence=current_conf,
         age_candles=age,
         stable=stable,
+        flickering=flickering,
     )

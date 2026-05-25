@@ -18,6 +18,9 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from utils.config import env, db_path, get as cfg
 from utils.ccxt_wrapper import make_exchange, fetch_ticker_safe
 from db.schema import get_conn
+from regime.hmm_classifier import MACRO_RISK_MULT
+
+_MACRO_FILE = Path("data/macro/current_regime.json")
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -60,6 +63,20 @@ _LOCK_FILES: dict[str, Path] = {
 
 # Deduplication: only alert once per (account, mode, calendar-date) per process run.
 _dd_alert_sent: set[str] = set()
+
+
+def _macro_risk_mult() -> tuple[str, float]:
+    """Read macro regime from shared JSON written by signal_engine.
+    Returns (label, multiplier). Falls back to ('neutral', 1.0) if file missing."""
+    try:
+        if _MACRO_FILE.exists():
+            data = json.loads(_MACRO_FILE.read_text())
+            label = data.get("label", "neutral")
+            mult = MACRO_RISK_MULT.get(label, 1.0)
+            return label, mult
+    except Exception:
+        pass
+    return "neutral", 1.0
 
 # ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -636,6 +653,20 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     if _dd_mode == "half_size":
         risk_pct *= 0.5
         logger.debug(f"Paper: half-size drawdown mode — risk_pct={risk_pct:.4f}")
+
+    # Macro regime multiplier — scale down in bear/crash cycles
+    _macro_label, _macro_mult = _macro_risk_mult()
+    if _macro_mult < 1.0:
+        risk_pct *= _macro_mult
+        logger.debug(
+            f"Paper: macro regime={_macro_label} mult={_macro_mult:.0%} "
+            f"— risk_pct={risk_pct:.4f}"
+        )
+    if risk_pct <= 0:
+        logger.debug(
+            f"Paper: macro regime={_macro_label} (mult=0) — skipping signal {signal.get('id')}"
+        )
+        return None
     risk_usdt     = free * risk_pct
     raw_contracts = risk_usdt / risk_per_contract
     max_contracts = (free * LEVERAGE) / live_price

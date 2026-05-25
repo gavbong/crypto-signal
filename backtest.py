@@ -328,6 +328,96 @@ def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regi
         print("\n  Run `python status.py` for the live per-regime breakdown.")
 
 
+def run_walk_forward(
+    pair: str, all_candles: list, c: dict,
+    train_days: int = 252, test_days: int = 63,
+    indices_dir: str = "data/indices",
+) -> list[dict]:
+    """
+    Roll fixed-size test windows across history to check strategy consistency.
+
+    Each window:
+      - context_candles (train_days worth) provide indicator warmup
+      - test_candles (test_days worth) are the out-of-sample evaluation window
+
+    Returns a list of per-window dicts with fired / resolved / acc / net_r.
+    Note: never writes to DB — always dry-run per window.
+    """
+    candles_per_day = 96  # 15m bars per day
+    limit = c["candle_limit"]
+    outcome_h = c["walk_forward"]["outcome_window_hours"]
+
+    context_size = train_days * candles_per_day
+    test_size    = test_days  * candles_per_day
+    warmup       = max(limit, context_size)
+
+    windows: list[dict] = []
+    ptr = warmup
+
+    while ptr + test_size + outcome_h <= len(all_candles):
+        window_end  = ptr + test_size
+        slice_start = max(0, ptr - limit)
+        # Pass enough candles so run_pair has `limit` warmup before the test window
+        chunk = all_candles[slice_start : window_end + outcome_h]
+
+        start_dt = datetime.fromtimestamp(all_candles[ptr][0] / 1000, tz=timezone.utc)
+        end_dt   = datetime.fromtimestamp(all_candles[window_end - 1][0] / 1000, tz=timezone.utc)
+
+        with get_conn() as conn:
+            stats = run_pair(pair, chunk, conn, c, dry_run=True, run_id=None)
+
+        wins     = stats["win"] + stats["tp_hit"]
+        resolved = wins + stats["loss"] + stats["stopped_out"]
+        acc      = wins / resolved if resolved > 0 else None
+
+        windows.append({
+            "window": len(windows) + 1,
+            "start":  start_dt.strftime("%Y-%m-%d"),
+            "end":    end_dt.strftime("%Y-%m-%d"),
+            "fired":  stats["fired"],
+            "resolved": resolved,
+            "wins":   wins,
+            "acc":    acc,
+            "net_r":  stats["pnl_r"],
+        })
+
+        ptr += test_size
+
+    return windows
+
+
+def print_walk_forward(pair: str, windows: list[dict], train_days: int, test_days: int) -> None:
+    print(f"\n{'=' * 70}")
+    print(f"  WALK-FORWARD: {pair}  (train={train_days}d / test={test_days}d windows)")
+    print(f"{'=' * 70}")
+    print(f"  {'#':>3}  {'START':>10}  {'END':>10}  {'FIRED':>6}  "
+          f"{'RES':>5}  {'WINS':>5}  {'ACC':>7}  {'NET R':>7}")
+    print(f"  {'-'*3}  {'-'*10}  {'-'*10}  {'-'*6}  {'-'*5}  {'-'*5}  {'-'*7}  {'-'*7}")
+
+    all_resolved = 0
+    all_wins     = 0
+    all_net_r    = 0.0
+
+    for w in windows:
+        acc_str = f"{w['acc']:.1%}" if w["acc"] is not None else "  N/A"
+        print(f"  {w['window']:>3}  {w['start']:>10}  {w['end']:>10}  {w['fired']:>6}  "
+              f"{w['resolved']:>5}  {w['wins']:>5}  {acc_str:>7}  {w['net_r']:>+7.2f}R")
+        all_resolved += w["resolved"]
+        all_wins     += w["wins"]
+        all_net_r    += w["net_r"]
+
+    if windows:
+        agg_acc = all_wins / all_resolved if all_resolved > 0 else None
+        acc_str = f"{agg_acc:.1%}" if agg_acc is not None else "  N/A"
+        winning_windows = sum(1 for w in windows if w["net_r"] > 0)
+        print(f"  {'─' * 65}")
+        print(f"  {'AGG':>3}  {'':>10}  {'':>10}  {'':>6}  "
+              f"{all_resolved:>5}  {all_wins:>5}  {acc_str:>7}  {all_net_r:>+7.2f}R")
+        print(f"\n  Profitable windows: {winning_windows}/{len(windows)}  "
+              f"({'consistent' if winning_windows / len(windows) >= 0.6 else 'inconsistent'})")
+    print(f"{'=' * 70}\n")
+
+
 def main() -> None:
     import json as _json
     import os
@@ -347,6 +437,13 @@ def main() -> None:
                         help="Run only index pairs; skip crypto exchange fetch")
     parser.add_argument("--indices-dir", default="data/indices", metavar="DIR",
                         help="Directory containing index CSVs (default: data/indices)")
+    # Walk-forward flags
+    parser.add_argument("--walk-forward", action="store_true",
+                        help="Run rolling out-of-sample windows instead of a single pass")
+    parser.add_argument("--wf-train-days", type=int, default=252, metavar="N",
+                        help="Walk-forward: context (indicator warmup) days (default: 252)")
+    parser.add_argument("--wf-test-days", type=int, default=63, metavar="N",
+                        help="Walk-forward: out-of-sample test window in days (default: 63 ~ 3 months)")
     args = parser.parse_args()
 
     if args.clear:
@@ -425,6 +522,25 @@ def main() -> None:
 
         if not candles:
             logger.warning(f"  No data for {pair}, skipping")
+        elif args.walk_forward:
+            first_dt = datetime.fromtimestamp(candles[0][0] / 1000, tz=timezone.utc)
+            last_dt  = datetime.fromtimestamp(candles[-1][0] / 1000, tz=timezone.utc)
+            logger.info(
+                f"  {pair}: {len(candles)} candles ({first_dt.date()} to {last_dt.date()}) "
+                f"[walk-forward train={args.wf_train_days}d test={args.wf_test_days}d]"
+            )
+            windows = run_walk_forward(
+                pair, candles, c,
+                train_days=args.wf_train_days,
+                test_days=args.wf_test_days,
+            )
+            print_walk_forward(pair, windows, args.wf_train_days, args.wf_test_days)
+            # Accumulate totals from all windows
+            for w in windows:
+                totals["fired"] += w["fired"]
+                totals["win"]   += w["wins"]
+                totals["pnl_r"] += w["net_r"]
+                totals["stopped_out"] += w["resolved"] - w["wins"]
         else:
             first_dt = datetime.fromtimestamp(candles[0][0] / 1000, tz=timezone.utc)
             last_dt = datetime.fromtimestamp(candles[-1][0] / 1000, tz=timezone.utc)
@@ -453,6 +569,8 @@ def main() -> None:
                 for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
                     dest[k] += rb[k]
                 dest["pnl_r"] += rb["pnl_r"]
+
+
 
         if run_id is not None and not args.dry_run:
             pct = int((idx + 1) / len(work) * 100)
