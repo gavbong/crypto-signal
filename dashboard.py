@@ -1024,7 +1024,7 @@ def create_app() -> Flask:
         with get_conn() as conn:
             rows = conn.execute(
                 """SELECT id, started_at, finished_at, since_date, status,
-                          signal_count, win_count, net_r, win_rate, progress_pct, progress_msg
+                          signal_count, win_count, net_r, win_rate, sharpe, progress_pct, progress_msg
                    FROM backtest_runs ORDER BY id DESC"""
             ).fetchall()
         return jsonify([dict(r) for r in rows])

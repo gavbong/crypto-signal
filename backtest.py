@@ -21,6 +21,7 @@ Usage:
 """
 import argparse
 import csv
+import math
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -152,6 +153,33 @@ def resolve_outcome(signal: dict, future_candles: list, window_h: int) -> tuple[
     return outcome, final_close, pnl_r
 
 
+def compute_sharpe(pnl_trades: list[tuple[str, float]]) -> float | None:
+    """Annualised daily Sharpe from (date_str, pnl_r) tuples. Requires ≥10 calendar days."""
+    if not pnl_trades:
+        return None
+    by_date: dict[str, float] = {}
+    for date_str, pnl_r in pnl_trades:
+        by_date[date_str] = by_date.get(date_str, 0.0) + pnl_r
+    if len(by_date) < 2:
+        return None
+    dates = sorted(by_date)
+    first = datetime.strptime(dates[0], "%Y-%m-%d")
+    last  = datetime.strptime(dates[-1], "%Y-%m-%d")
+    daily: list[float] = []
+    cur = first
+    while cur <= last:
+        daily.append(by_date.get(cur.strftime("%Y-%m-%d"), 0.0))
+        cur += timedelta(days=1)
+    if len(daily) < 10:
+        return None
+    mean = sum(daily) / len(daily)
+    variance = sum((x - mean) ** 2 for x in daily) / len(daily)
+    std = math.sqrt(variance)
+    if std == 0.0:
+        return None
+    return round((mean / std) * math.sqrt(252), 3)
+
+
 def _regime_stats() -> dict:
     return {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
 
@@ -169,6 +197,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
         "fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0,
         "skipped_dedup": 0, "skipped_unstable": 0, "skipped_stop_range": 0, "unresolved": 0,
         "pnl_r": 0.0,
+        "pnl_trades": [],
         "by_regime": {},
     }
 
@@ -248,6 +277,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
                 outcome, price, pnl_r = result
                 stats[outcome] = stats.get(outcome, 0) + 1
                 stats["pnl_r"] += pnl_r
+                stats["pnl_trades"].append((candle_ts.strftime("%Y-%m-%d"), pnl_r))
                 rb[outcome] = rb.get(outcome, 0) + 1
                 rb["pnl_r"] += pnl_r
 
@@ -262,7 +292,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
     return stats
 
 
-def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regime_breakdown: dict) -> None:
+def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regime_breakdown: dict, pnl_trades: list | None = None) -> None:
     mode = "DRY RUN" if dry_run else "WRITTEN TO DB"
     gate_total = c["walk_forward"]["promotion_gate_total"]
     gate_per = c["walk_forward"]["promotion_gate_per_regime"]
@@ -289,6 +319,9 @@ def print_summary(totals: dict, c: dict, since_dt: datetime, dry_run: bool, regi
     print(f"  Net P&L           : {net_r:+.2f}R  ({'PROFIT' if net_r > 0 else 'LOSS'})")
     if avg_r is not None:
         print(f"  Avg P&L per trade : {avg_r:+.3f}R")
+    if pnl_trades:
+        sharpe = compute_sharpe(pnl_trades)
+        print(f"  Sharpe (annualised): {sharpe:.3f}" if sharpe is not None else "  Sharpe (annualised): N/A (<10 calendar days)")
 
     if regime_breakdown:
         print()
@@ -379,6 +412,7 @@ def run_walk_forward(
             "wins":   wins,
             "acc":    acc,
             "net_r":  stats["pnl_r"],
+            "sharpe": compute_sharpe(stats["pnl_trades"]),
         })
 
         ptr += test_size
@@ -391,8 +425,8 @@ def print_walk_forward(pair: str, windows: list[dict], train_days: int, test_day
     print(f"  WALK-FORWARD: {pair}  (train={train_days}d / test={test_days}d windows)")
     print(f"{'=' * 70}")
     print(f"  {'#':>3}  {'START':>10}  {'END':>10}  {'FIRED':>6}  "
-          f"{'RES':>5}  {'WINS':>5}  {'ACC':>7}  {'NET R':>7}")
-    print(f"  {'-'*3}  {'-'*10}  {'-'*10}  {'-'*6}  {'-'*5}  {'-'*5}  {'-'*7}  {'-'*7}")
+          f"{'RES':>5}  {'WINS':>5}  {'ACC':>7}  {'NET R':>7}  {'SHARPE':>7}")
+    print(f"  {'-'*3}  {'-'*10}  {'-'*10}  {'-'*6}  {'-'*5}  {'-'*5}  {'-'*7}  {'-'*7}  {'-'*7}")
 
     all_resolved = 0
     all_wins     = 0
@@ -400,8 +434,9 @@ def print_walk_forward(pair: str, windows: list[dict], train_days: int, test_day
 
     for w in windows:
         acc_str = f"{w['acc']:.1%}" if w["acc"] is not None else "  N/A"
+        sharpe_str = f"{w['sharpe']:>+7.3f}" if w.get("sharpe") is not None else "    N/A"
         print(f"  {w['window']:>3}  {w['start']:>10}  {w['end']:>10}  {w['fired']:>6}  "
-              f"{w['resolved']:>5}  {w['wins']:>5}  {acc_str:>7}  {w['net_r']:>+7.2f}R")
+              f"{w['resolved']:>5}  {w['wins']:>5}  {acc_str:>7}  {w['net_r']:>+7.2f}R  {sharpe_str}")
         all_resolved += w["resolved"]
         all_wins     += w["wins"]
         all_net_r    += w["net_r"]
@@ -410,7 +445,7 @@ def print_walk_forward(pair: str, windows: list[dict], train_days: int, test_day
         agg_acc = all_wins / all_resolved if all_resolved > 0 else None
         acc_str = f"{agg_acc:.1%}" if agg_acc is not None else "  N/A"
         winning_windows = sum(1 for w in windows if w["net_r"] > 0)
-        print(f"  {'─' * 65}")
+        print(f"  {'─' * 74}")
         print(f"  {'AGG':>3}  {'':>10}  {'':>10}  {'':>6}  "
               f"{all_resolved:>5}  {all_wins:>5}  {acc_str:>7}  {all_net_r:>+7.2f}R")
         print(f"\n  Profitable windows: {winning_windows}/{len(windows)}  "
@@ -509,7 +544,7 @@ def main() -> None:
     all_pairs = [p for p, _ in work]
     logger.info(f"Backtest [{mode}] | since={since_dt.date()} | pairs={all_pairs} | run_id={run_id}")
 
-    totals = {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0}
+    totals = {"fired": 0, "win": 0, "tp_hit": 0, "loss": 0, "stopped_out": 0, "pnl_r": 0.0, "pnl_trades": []}
     regime_breakdown: dict[str, dict] = {}
 
     for idx, (pair, source) in enumerate(work):
@@ -563,6 +598,7 @@ def main() -> None:
             for k in ("fired", "win", "tp_hit", "loss", "stopped_out"):
                 totals[k] += stats.get(k, 0)
             totals["pnl_r"] += stats["pnl_r"]
+            totals["pnl_trades"].extend(stats["pnl_trades"])
 
             for regime, rb in stats["by_regime"].items():
                 dest = regime_breakdown.setdefault(regime, _regime_stats())
@@ -581,6 +617,8 @@ def main() -> None:
                 )
                 conn.commit()
 
+    sharpe_total = compute_sharpe(totals["pnl_trades"])
+
     if run_id is not None and not args.dry_run:
         wins_total = totals["win"] + totals["tp_hit"]
         resolved_total = wins_total + totals["loss"] + totals["stopped_out"]
@@ -589,14 +627,14 @@ def main() -> None:
             conn.execute(
                 """UPDATE backtest_runs
                    SET finished_at=CURRENT_TIMESTAMP, status='done',
-                       signal_count=?, win_count=?, net_r=?, win_rate=?,
+                       signal_count=?, win_count=?, net_r=?, win_rate=?, sharpe=?,
                        progress_pct=100, progress_msg='Complete'
                    WHERE id=?""",
-                (totals["fired"], wins_total, totals["pnl_r"], win_rate, run_id),
+                (totals["fired"], wins_total, totals["pnl_r"], win_rate, sharpe_total, run_id),
             )
             conn.commit()
 
-    print_summary(totals, c, since_dt, args.dry_run, regime_breakdown)
+    print_summary(totals, c, since_dt, args.dry_run, regime_breakdown, pnl_trades=totals["pnl_trades"])
 
 
 if __name__ == "__main__":

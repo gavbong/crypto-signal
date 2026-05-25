@@ -799,6 +799,11 @@ body{
       <div class="stat-sub" id="bt-stat-wr-sub">—W · —L</div>
     </div>
     <div class="stat-card">
+      <div class="stat-label">Sharpe</div>
+      <div class="stat-value" id="bt-stat-sharpe">—</div>
+      <div class="stat-sub" id="bt-stat-sharpe-sub">annualised · daily R</div>
+    </div>
+    <div class="stat-card">
       <div class="stat-label">Signals</div>
       <div class="stat-value" id="bt-stat-signals">—</div>
       <div class="stat-sub" id="bt-stat-signals-sub">fired this run</div>
@@ -2540,9 +2545,10 @@ async function btLoadDiff() {
 }
 
 function btUpdateStats(run) {
-  const netrEl = document.getElementById('bt-stat-netr');
-  const wrEl = document.getElementById('bt-stat-wr');
-  const sigEl = document.getElementById('bt-stat-signals');
+  const netrEl   = document.getElementById('bt-stat-netr');
+  const wrEl     = document.getElementById('bt-stat-wr');
+  const sigEl    = document.getElementById('bt-stat-signals');
+  const sharpeEl = document.getElementById('bt-stat-sharpe');
   document.getElementById('bt-stat-runs').textContent = _btRuns.length || '—';
   if (run && run.status === 'done') {
     const netr = run.net_r != null ? (run.net_r >= 0 ? '+' : '') + run.net_r.toFixed(2) + 'R' : '—';
@@ -2555,20 +2561,27 @@ function btUpdateStats(run) {
     sigEl.textContent = run.signal_count != null ? run.signal_count : '—';
     document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id}`;
     document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id} · ${run.since_date || ''}`;
+    if (run.sharpe != null) {
+      sharpeEl.textContent = run.sharpe.toFixed(2);
+      sharpeEl.style.color = run.sharpe >= 1.0 ? '#22C55E' : run.sharpe > 0 ? 'var(--accent)' : '#EF4444';
+    } else {
+      sharpeEl.textContent = '—'; sharpeEl.style.color = '';
+    }
   } else if (run && run.status === 'running') {
     netrEl.textContent = '…'; netrEl.style.color = 'var(--accent)';
-    wrEl.textContent = '…'; sigEl.textContent = '…';
+    wrEl.textContent = '…'; sigEl.textContent = '…'; sharpeEl.textContent = '…'; sharpeEl.style.color = '';
     document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id} · in progress`;
     document.getElementById('bt-stat-wr-sub').textContent = '—W · —L';
     document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id}`;
   } else if (run && run.status === 'failed') {
     netrEl.textContent = '✕'; netrEl.style.color = '#EF4444';
-    wrEl.textContent = '✕'; sigEl.textContent = '✕';
+    wrEl.textContent = '✕'; sigEl.textContent = '✕'; sharpeEl.textContent = '✕'; sharpeEl.style.color = '#EF4444';
     document.getElementById('bt-stat-netr-sub').textContent = `Run #${run.id} · failed`;
     document.getElementById('bt-stat-wr-sub').textContent = '—';
     document.getElementById('bt-breakdown-sub').textContent = `Run #${run.id}`;
   } else {
     netrEl.textContent = '—'; netrEl.style.color = ''; wrEl.textContent = '—'; sigEl.textContent = '—';
+    sharpeEl.textContent = '—'; sharpeEl.style.color = '';
     document.getElementById('bt-stat-netr-sub').textContent = 'selected run';
     document.getElementById('bt-stat-wr-sub').textContent = '—W · —L';
     document.getElementById('bt-breakdown-sub').textContent = '—';
