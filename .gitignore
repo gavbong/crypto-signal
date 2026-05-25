@@ -15,3 +15,8 @@ notebooks/*_executed.ipynb
 htmlcov/
 .gstack/
 analysis/
+
+# MT4 feeder — runtime state and scripts that contain env-specific config
+mt4_feeder/setup_autostart.ps1
+mt4_feeder/*.log
+mt4_feeder/*.json

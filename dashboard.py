@@ -45,6 +45,7 @@ def create_app() -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = True
 
     def _is_authed() -> bool:
         if not require_token:
@@ -1450,7 +1451,7 @@ def create_app() -> Flask:
     def api_index_feed():
         """Receive candles from mt4_feeder.py. Auth: X-API-Key header."""
         api_key = os.environ.get("INDEX_FEED_API_KEY", "")
-        if api_key and request.headers.get("X-API-Key") != api_key:
+        if not api_key or request.headers.get("X-API-Key") != api_key:
             abort(401)
         data = request.get_json(silent=True)
         if not data or not isinstance(data, list):

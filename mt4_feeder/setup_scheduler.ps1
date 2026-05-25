@@ -26,16 +26,21 @@ if (-not $pythonw -or -not (Test-Path $pythonw)) {
 }
 
 # Persist env vars at user scope so the scheduled task inherits them
-[System.Environment]::SetEnvironmentVariable(
-    "INDEX_FEED_URL",
-    "https://gavintong.com",
-    "User"
-)
-[System.Environment]::SetEnvironmentVariable(
-    "INDEX_FEED_API_KEY",
-    "REDACTED_ROTATED_KEY",
-    "User"
-)
+# REQUIRED: Set these values before running. Get INDEX_FEED_API_KEY from the server .env file.
+$feedUrl = $env:INDEX_FEED_URL
+$feedKey = $env:INDEX_FEED_API_KEY
+
+if (-not $feedUrl) {
+    Write-Error "Set INDEX_FEED_URL before running. Example: `$env:INDEX_FEED_URL = 'https://gavintong.com'"
+    exit 1
+}
+if (-not $feedKey) {
+    Write-Error "Set INDEX_FEED_API_KEY before running. Get the value from the server .env file."
+    exit 1
+}
+
+[System.Environment]::SetEnvironmentVariable("INDEX_FEED_URL",     $feedUrl, "User")
+[System.Environment]::SetEnvironmentVariable("INDEX_FEED_API_KEY", $feedKey, "User")
 Write-Host "Environment variables saved to user profile." -ForegroundColor Cyan
 
 # Remove existing task before re-registering
