@@ -95,6 +95,74 @@ def _format_message(signal: dict) -> str:
     return "\n".join(lines)
 
 
+def send_drawdown_alert(
+    acct: str,
+    mode: str,
+    balance: float,
+    peak: float,
+    daily_open: float | None = None,
+    weekly_open: float | None = None,
+) -> bool:
+    """Send a paper-trader drawdown circuit breaker alert. Never raises."""
+    creds = _credentials()
+    if creds is None:
+        logger.debug("Telegram not configured — skipping drawdown alert")
+        return False
+
+    if mode == "half_size":
+        icon, label = "🟡", "HALF SIZE"
+        daily_loss_pct = (daily_open - balance) / daily_open * 100 if daily_open else 0
+        daily_loss_usdt = daily_open - balance if daily_open else 0
+        body = (
+            f"Daily loss: <b>-{daily_loss_pct:.1f}%</b>  "
+            f"<code>(-${daily_loss_usdt:.2f})</code>\n"
+            f"Balance: <code>${balance:,.2f}</code>  |  Peak: <code>${peak:,.2f}</code>\n\n"
+            f"<i>Position sizes halved for new entries today.</i>"
+        )
+    elif mode == "halt":
+        icon, label = "🔴", "HALT"
+        lines = []
+        if daily_open and (daily_open - balance) / daily_open >= 0.02:
+            pct = (daily_open - balance) / daily_open * 100
+            lines.append(f"Daily loss: <b>-{pct:.1f}%</b>  <code>(-${daily_open - balance:.2f})</code>")
+        if weekly_open and (weekly_open - balance) / weekly_open >= 0.04:
+            pct = (weekly_open - balance) / weekly_open * 100
+            lines.append(f"Weekly loss: <b>-{pct:.1f}%</b>  <code>(-${weekly_open - balance:.2f})</code>")
+        lines.append(f"Balance: <code>${balance:,.2f}</code>  |  Peak: <code>${peak:,.2f}</code>")
+        lines.append("")
+        lines.append("<i>All open positions closed. No new entries until tomorrow.</i>")
+        body = "\n".join(lines)
+    elif mode == "lockout":
+        icon, label = "🚨", "LOCKOUT"
+        dd_pct = (peak - balance) / peak * 100 if peak > 0 else 0
+        body = (
+            f"Peak drawdown: <b>-{dd_pct:.1f}%</b>\n"
+            f"Peak: <code>${peak:,.2f}</code>  →  Now: <code>${balance:,.2f}</code>\n\n"
+            f"<i>Bot stopped. Delete <code>LOCKOUT_{acct}.lock</code> to resume.</i>"
+        )
+    else:
+        return False
+
+    token, chat_id = creds
+    text = (
+        f"{icon} <b>PAPER [{acct.upper()}] — {label}</b>\n\n"
+        f"{body}"
+    )
+    try:
+        resp = requests.post(
+            _SEND_URL.format(token=token),
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=_TIMEOUT,
+        )
+        if resp.ok:
+            logger.info(f"Telegram drawdown alert sent: {acct} {mode}")
+            return True
+        logger.warning(f"Telegram API error {resp.status_code}: {resp.text[:200]}")
+    except requests.RequestException as e:
+        logger.warning(f"Telegram drawdown alert failed: {e}")
+    return False
+
+
 def send_telegram(text: str) -> bool:
     """Send a plain-text message to Telegram. Never raises."""
     creds = _credentials()

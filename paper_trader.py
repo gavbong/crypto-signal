@@ -52,6 +52,15 @@ DEFAULT_MIN_CONTRACT = 0.01
 
 LOG_DIR = Path("logs/paper_trade")
 
+# Lock files written on peak-drawdown lockout; must be deleted manually to resume.
+_LOCK_FILES: dict[str, Path] = {
+    "":     LOG_DIR / "LOCKOUT_crypto.lock",
+    "idx_": LOG_DIR / "LOCKOUT_indices.lock",
+}
+
+# Deduplication: only alert once per (account, mode, calendar-date) per process run.
+_dd_alert_sent: set[str] = set()
+
 # ── Schema ────────────────────────────────────────────────────────────────────
 
 _SCHEMA = """
@@ -128,9 +137,17 @@ def init_paper_db(conn) -> None:
     for key, default in [
         ("last_signal_id", "0"), ("day_number", "0"),
         ("consecutive_losses", "0"), ("circuit_breaker_until", "0"),
+        # Drawdown state — crypto account
+        ("peak_balance", str(INITIAL_BALANCE)),
+        ("daily_open_balance", str(INITIAL_BALANCE)), ("daily_open_date", ""),
+        ("weekly_open_balance", str(INITIAL_BALANCE)), ("weekly_open_date", ""),
         # Indices account state (idx_ prefix)
         ("idx_last_signal_id", "0"), ("idx_day_number", "0"),
         ("idx_consecutive_losses", "0"), ("idx_circuit_breaker_until", "0"),
+        # Drawdown state — indices account
+        ("idx_peak_balance", str(INITIAL_BALANCE)),
+        ("idx_daily_open_balance", str(INITIAL_BALANCE)), ("idx_daily_open_date", ""),
+        ("idx_weekly_open_balance", str(INITIAL_BALANCE)), ("idx_weekly_open_date", ""),
     ]:
         conn.execute(
             "INSERT OR IGNORE INTO paper_state (key, value) VALUES (?, ?)",
@@ -387,6 +404,110 @@ def _record_close_outcome(conn, net_pnl: float, pfx: str = "") -> None:
         )
 
 
+# ── Drawdown circuit breakers ─────────────────────────────────────────────────
+
+def _is_locked_out(pfx: str) -> bool:
+    return _LOCK_FILES.get(pfx, _LOCK_FILES[""]).exists()
+
+
+def _write_lockout(pfx: str, reason: str, balance: float = 0.0, peak: float = 0.0) -> None:
+    path = _LOCK_FILES.get(pfx, _LOCK_FILES[""])
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    acct = "indices" if pfx == "idx_" else "crypto"
+    path.write_text(
+        f"PAPER TRADER LOCKOUT\n"
+        f"Triggered : {datetime.now(timezone.utc).isoformat()}\n"
+        f"Account   : {acct}\n"
+        f"Reason    : {reason}\n\n"
+        f"Delete this file to resume trading: {path}\n"
+    )
+    logger.critical(
+        f"Paper: LOCKOUT ({acct}) — {reason}. Delete {path} to resume."
+    )
+    try:
+        from alerts.telegram import send_drawdown_alert
+        send_drawdown_alert(acct, "lockout", balance, peak)
+    except Exception:
+        pass
+
+
+def _refresh_drawdown_state(conn, pfx: str, balance: float) -> None:
+    """Update peak / daily-open / weekly-open balance in state. Call after every close and at poll start."""
+    from datetime import timedelta
+    now_utc = datetime.now(timezone.utc)
+    today   = now_utc.strftime("%Y-%m-%d")
+    monday  = (now_utc - timedelta(days=now_utc.weekday())).strftime("%Y-%m-%d")
+
+    if _get_state(conn, f"{pfx}daily_open_date") != today:
+        _set_state(conn, f"{pfx}daily_open_balance", str(round(balance, 4)))
+        _set_state(conn, f"{pfx}daily_open_date", today)
+
+    if _get_state(conn, f"{pfx}weekly_open_date") != monday:
+        _set_state(conn, f"{pfx}weekly_open_balance", str(round(balance, 4)))
+        _set_state(conn, f"{pfx}weekly_open_date", monday)
+
+    peak = float(_get_state(conn, f"{pfx}peak_balance") or INITIAL_BALANCE)
+    if balance > peak:
+        _set_state(conn, f"{pfx}peak_balance", str(round(balance, 4)))
+
+
+def _drawdown_mode(conn, pfx: str, balance: float) -> str:
+    """
+    Returns the current drawdown control mode for an account:
+      'ok'        — trade normally
+      'half_size' — daily loss 2-3%: halve new position sizes
+      'halt'      — daily loss >3% or weekly loss >5%: no new entries, close all open
+      'lockout'   — peak drawdown >10%: lock file written, must be deleted manually
+    """
+    if _is_locked_out(pfx):
+        return "lockout"
+
+    pt  = cfg().get("paper_trader", {})
+    dd  = pt.get("drawdown", {})
+    peak_pct    = dd.get("peak_lockout_pct",   0.10)
+    daily_halt  = dd.get("daily_halt_pct",     0.03)
+    daily_half  = dd.get("daily_half_size_pct", 0.02)
+    weekly_halt = dd.get("weekly_halt_pct",    0.05)
+
+    peak        = float(_get_state(conn, f"{pfx}peak_balance")         or INITIAL_BALANCE)
+    daily_open  = float(_get_state(conn, f"{pfx}daily_open_balance")   or INITIAL_BALANCE)
+    weekly_open = float(_get_state(conn, f"{pfx}weekly_open_balance")  or INITIAL_BALANCE)
+
+    if peak > 0 and (peak - balance) / peak >= peak_pct:
+        if not _is_locked_out(pfx):
+            _write_lockout(
+                pfx,
+                f"Peak drawdown {(peak - balance) / peak:.1%} >= {peak_pct:.0%} limit "
+                f"(peak={peak:.2f}, current={balance:.2f})",
+                balance=balance,
+                peak=peak,
+            )
+        return "lockout"
+
+    if daily_open > 0 and (daily_open - balance) / daily_open >= daily_halt:
+        logger.warning(
+            f"Paper[{'indices' if pfx == 'idx_' else 'crypto'}]: daily drawdown "
+            f"{(daily_open - balance) / daily_open:.1%} >= {daily_halt:.0%} — HALT"
+        )
+        return "halt"
+
+    if weekly_open > 0 and (weekly_open - balance) / weekly_open >= weekly_halt:
+        logger.warning(
+            f"Paper[{'indices' if pfx == 'idx_' else 'crypto'}]: weekly drawdown "
+            f"{(weekly_open - balance) / weekly_open:.1%} >= {weekly_halt:.0%} — HALT"
+        )
+        return "halt"
+
+    if daily_open > 0 and (daily_open - balance) / daily_open >= daily_half:
+        logger.info(
+            f"Paper[{'indices' if pfx == 'idx_' else 'crypto'}]: daily drawdown "
+            f"{(daily_open - balance) / daily_open:.1%} >= {daily_half:.0%} — HALF SIZE"
+        )
+        return "half_size"
+
+    return "ok"
+
+
 # ── Position management ───────────────────────────────────────────────────────
 
 def _risk_pct_for_regime(regime: str) -> float:
@@ -409,7 +530,7 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
     exchange_id = signal.get("exchange", "mexc")
     _cb_pfx     = "idx_" if exchange_id == "tradenation" else ""
 
-    # Circuit breaker gate
+    # Circuit breaker gate (consecutive losses)
     if _circuit_breaker_active(conn, _cb_pfx):
         logger.debug(f"Paper: circuit breaker active — skipping signal {signal.get('id')}")
         return None
@@ -500,10 +621,21 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         logger.warning("Paper: no free balance — skipping")
         return None
 
+    # Drawdown gate — check mode before sizing so half_size can reduce risk_pct
+    _dd_mode = _drawdown_mode(conn, _cb_pfx, free)
+    if _dd_mode in ("lockout", "halt"):
+        logger.debug(
+            f"Paper: drawdown mode={_dd_mode} — skipping signal {signal.get('id')}"
+        )
+        return None
+
     min_contract = MIN_CONTRACTS.get(pair, DEFAULT_MIN_CONTRACT)
     regime_label = signal.get("regime", "")
 
-    risk_pct      = _risk_pct_for_regime(regime_label)
+    risk_pct = _risk_pct_for_regime(regime_label)
+    if _dd_mode == "half_size":
+        risk_pct *= 0.5
+        logger.debug(f"Paper: half-size drawdown mode — risk_pct={risk_pct:.4f}")
     risk_usdt     = free * risk_pct
     raw_contracts = risk_usdt / risk_per_contract
     max_contracts = (free * LEVERAGE) / live_price
@@ -636,6 +768,11 @@ def close_position(conn, pos, exit_price: float, reason: str) -> float:
     conn.commit()
     _cb_pfx = "idx_" if exchange_id == "tradenation" else ""
     _record_close_outcome(conn, net_pnl, _cb_pfx)
+
+    # Refresh drawdown state so next open_position sees current balance
+    _updated_balance = (get_free_balance_indices(conn) if exchange_id == "tradenation"
+                        else get_free_balance(conn))
+    _refresh_drawdown_state(conn, _cb_pfx, _updated_balance)
 
     outcome = "WIN" if net_pnl >= 0 else "LOSS"
     logger.info(
@@ -810,6 +947,59 @@ def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
     """Shared poll logic for crypto and indices accounts."""
     acct = "indices" if for_indices else "crypto"
     exc_filter = "exchange = 'tradenation'" if for_indices else "exchange != 'tradenation'"
+    _cb_pfx = "idx_" if for_indices else ""
+
+    # Refresh daily/weekly open balance (handles day/week boundary resets)
+    _current_balance = (get_free_balance_indices(conn) if for_indices
+                        else get_free_balance(conn))
+    _refresh_drawdown_state(conn, _cb_pfx, _current_balance)
+
+    # Drawdown halt: close all open positions and skip new signals
+    _dd_mode = _drawdown_mode(conn, _cb_pfx, _current_balance)
+    if _dd_mode in ("lockout", "halt"):
+        halt_rows = conn.execute(
+            f"SELECT * FROM paper_positions WHERE exit_price IS NULL AND {exc_filter}"
+        ).fetchall()
+        if halt_rows:
+            halt_prices = _fetch_tickers(exchange_map, halt_rows)
+            for pos in halt_rows:
+                exc_id = dict(pos).get("exchange") or "mexc"
+                live = halt_prices.get((exc_id, pos["pair"]))
+                if live:
+                    close_position(conn, dict(pos), live, f"drawdown_{_dd_mode}")
+            logger.warning(
+                f"Paper[{acct}]: drawdown {_dd_mode} — closed {len(halt_rows)} position(s), "
+                f"skipping new signals"
+            )
+        # Alert once per mode per day (lockout alert is sent inside _write_lockout)
+        if _dd_mode == "halt":
+            _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            _alert_key = f"{_cb_pfx}halt_{_today}"
+            if _alert_key not in _dd_alert_sent:
+                _dd_alert_sent.add(_alert_key)
+                try:
+                    from alerts.telegram import send_drawdown_alert
+                    _peak = float(_get_state(conn, f"{_cb_pfx}peak_balance") or INITIAL_BALANCE)
+                    _d_open = float(_get_state(conn, f"{_cb_pfx}daily_open_balance") or INITIAL_BALANCE)
+                    _w_open = float(_get_state(conn, f"{_cb_pfx}weekly_open_balance") or INITIAL_BALANCE)
+                    send_drawdown_alert(acct, "halt", _current_balance, _peak, _d_open, _w_open)
+                except Exception:
+                    pass
+        return
+
+    # Alert for half-size mode (once per day)
+    if _dd_mode == "half_size":
+        _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _alert_key = f"{_cb_pfx}half_size_{_today}"
+        if _alert_key not in _dd_alert_sent:
+            _dd_alert_sent.add(_alert_key)
+            try:
+                from alerts.telegram import send_drawdown_alert
+                _peak  = float(_get_state(conn, f"{_cb_pfx}peak_balance") or INITIAL_BALANCE)
+                _d_open = float(_get_state(conn, f"{_cb_pfx}daily_open_balance") or INITIAL_BALANCE)
+                send_drawdown_alert(acct, "half_size", _current_balance, _peak, _d_open)
+            except Exception:
+                pass
 
     # Check / close open positions for this account only
     rows = conn.execute(
