@@ -133,6 +133,12 @@ signals:
     session_open_breakout: 1.5         # ORB: range-based SL tends to be wider than ATR; lower RR to keep TP reachable
     # supply_demand: not set — uses asset-class RR (1.2 for indices, regime RR for crypto)
 
+  # Per-regime-per-strategy overrides — highest precision, applied after strategy-level.
+  # Use when a strategy's optimal RR differs by regime (e.g. mean-reversion vs trend-following).
+  rr_ratio_regime_overrides:
+    choppy:
+      liquidity_grab: 1.5  # mean-reversion in chop: 2.5R TP never hit; 1.5R reachable (live avg_R +0.077 → target +0.15)
+
   # ── Strategy skip list per pair ───────────────────────────────────────────────
   # 60-day backtest (run #14): DAX uniformly underperforms across all strategies.
   #   supply_demand DAX: 0% WR (3 signals)
@@ -181,6 +187,8 @@ regime_gates:
     trending-down: 3
     choppy: 5
     high-volatility: 2
+  max_regime_age_candles:
+    trending-up: 8      # 8 × 15m = 2h; trend exhausted if regime older than this (live: EMA longs 25% WR in stale trending-up)
 
 stop_quality:
   min_stop_pct: 0.003            # global floor — overridden per asset class

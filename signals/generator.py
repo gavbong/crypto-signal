@@ -55,10 +55,17 @@ def _calc_take_profit(entry: float, stop: float, direction: str,
     if pair in index_pairs:
         rr = c.get("rr_ratio_index", 1.2)
 
-    # Per-strategy override takes highest precedence (slippage calibration).
+    # Per-strategy override (slippage calibration per strategy type).
     strategy_rr = c.get("rr_ratio_strategy", {})
     if strategy and strategy in strategy_rr:
         rr = strategy_rr[strategy]
+
+    # Per-regime-per-strategy override — highest precision (e.g. liq_grab uses 2.5 globally
+    # but only 1.5 in choppy where mean-reversion TP rarely reaches 2.5R).
+    regime_strat_overrides = c.get("rr_ratio_regime_overrides", {})
+    if regime_label and regime_label in regime_strat_overrides:
+        if strategy and strategy in regime_strat_overrides[regime_label]:
+            rr = regime_strat_overrides[regime_label][strategy]
 
     is_index = pair in index_pairs
     if c.get("slip_adjust_tp", False) and not is_index:

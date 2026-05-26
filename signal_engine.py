@@ -89,7 +89,9 @@ def _collect_candidates(
     c = cfg()
     sq_cfg = c.get("signal_quality", {})
     min_quality = sq_cfg.get("min_quality_score", 40)
-    rg_gates = c.get("regime_gates", {}).get("min_regime_age_candles", {})
+    rg_cfg = c.get("regime_gates", {})
+    rg_gates = rg_cfg.get("min_regime_age_candles", {})
+    rg_max_gates = rg_cfg.get("max_regime_age_candles", {})
 
     regime_context_for_llm = {
         p: {"regime": r.label, "confidence": r.confidence,
@@ -112,6 +114,12 @@ def _collect_candidates(
         min_age = rg_gates.get(regime.label, 0)
         if regime.age_candles < min_age:
             logger.debug(f"{pair}: regime {regime.label} too young ({regime.age_candles} < {min_age} candles)")
+            continue
+
+        # Regime age ceiling: skip if regime is stale (trend likely exhausted by now)
+        max_age = rg_max_gates.get(regime.label)
+        if max_age and regime.age_candles > max_age:
+            logger.debug(f"{pair}: regime {regime.label} stale ({regime.age_candles} > {max_age} candles) — skipping")
             continue
 
         strategies = active_strategies(regime.label)
