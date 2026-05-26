@@ -83,6 +83,7 @@ void _Export()
     StringReplace(safeSym, "/", "_");
     StringReplace(safeSym, "\\", "_");
     StringReplace(safeSym, ":", "_");
+    StringReplace(safeSym, ".", "");   // .US30. → US30, .DE40. → DE40 (dots cause error 5002 in FileOpen)
     string filename = "candles_" + safeSym + ".json";
 
     int bars = MathMin(CandleCount, iBars(sym, PERIOD_M15) - 1);

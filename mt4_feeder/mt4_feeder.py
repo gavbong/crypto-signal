@@ -60,6 +60,7 @@ SYMBOL_MAP: dict[str, str] = {
 
 LOG_FILE = Path(__file__).parent / "mt4_feeder.log"
 STATE_FILE = Path(__file__).parent / "mt4_feeder_state.json"
+LOCK_FILE  = Path(__file__).parent / "mt4_feeder.lock"
 
 RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_S = 5
@@ -254,6 +255,25 @@ def run_once(files_dir: Path, server_url: str, api_key: str) -> int:
     return total_sent
 
 
+def _acquire_lock() -> bool:
+    """Write a lock file. Returns False if another instance is already running."""
+    if LOCK_FILE.exists():
+        age = time.time() - LOCK_FILE.stat().st_mtime
+        if age < 300:  # stale if >5 min old (crashed run)
+            log.warning(f"Another instance is running (lock age {age:.0f}s) — exiting")
+            return False
+        log.warning(f"Stale lock file ({age:.0f}s old) — removing and continuing")
+    LOCK_FILE.write_text(str(os.getpid()))
+    return True
+
+
+def _release_lock() -> None:
+    try:
+        LOCK_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="MT4 candle feeder for mexc-signal-engine")
     parser.add_argument("--loop", action="store_true",
@@ -262,17 +282,22 @@ def main():
                         help=f"Loop interval in seconds (default: {LOOP_INTERVAL_S})")
     args = parser.parse_args()
 
+    if not args.loop and not _acquire_lock():
+        return 0  # silently skip — another single-run instance is in flight
+
     server_url = os.environ.get("INDEX_FEED_URL", "").rstrip("/")
     api_key    = os.environ.get("INDEX_FEED_API_KEY", "")
 
     if not server_url:
         log.error("INDEX_FEED_URL not set. Example: set INDEX_FEED_URL=http://<YOUR_SERVER_IP>:5000")
+        _release_lock()
         return 1
 
     try:
         files_dir = _get_files_dir()
     except RuntimeError as e:
         log.error(str(e))
+        _release_lock()
         return 1
 
     log.info(f"MT4 feeder starting | files_dir={files_dir} | server={server_url}")
@@ -288,8 +313,11 @@ def main():
                 log.error(f"Cycle error: {e}")
             time.sleep(args.interval)
     else:
-        sent = run_once(files_dir, server_url, api_key)
-        log.info(f"Done: {sent} candles sent")
+        try:
+            sent = run_once(files_dir, server_url, api_key)
+            log.info(f"Done: {sent} candles sent")
+        finally:
+            _release_lock()
         return 0
 
 

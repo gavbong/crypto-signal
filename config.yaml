@@ -1,5 +1,5 @@
 indices:
-  enabled: false              # set true once mt4_feeder.py is running and index_candles table has data
+  enabled: true
   pairs:
     - DJ30/USD
     - FTSE100/USD
