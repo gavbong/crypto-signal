@@ -153,7 +153,7 @@ signals:
   lq_session_window_hours: 4           # liquidity_grab: for index pairs, only fire within N hours of session open (London→NY reversal window)
 
 signal_quality:
-  min_quality_score: 60          # suppress signals below this (0-100 composite); raised 2026-05-22 — bootstrap at 35% WR scores 28, new combos must prove themselves
+  min_quality_score: 40          # lowered 2026-05-26 to allow index pairs to bootstrap — max score at bootstrap_wr is 48 so 60 was unreachable for new combos
   quality_weights:
     regime_confidence: 0.20
     rolling_30d_wr: 0.80
@@ -272,7 +272,7 @@ paper_trader:
   # Half-Kelly is used (not full Kelly) to reduce variance while preserving most
   # of the long-run growth advantage. Hard cap: never exceeds 3% per trade.
   # Enable only after accumulating enough live trade history (≥20 trades per combo).
-  kelly_sizing: false
+  kelly_sizing: true
   circuit_breaker_losses: 5       # pause new entries after N consecutive losses
   circuit_breaker_cooldown_hours: 4  # hours to wait before resuming after circuit breaker trips
 
