@@ -15,6 +15,28 @@ _STALE_SECONDS = 30 * 60  # 30 minutes — if feeder hasn't sent candles, skip
 
 _stale_alert_cache: dict[str, float] = {}  # pair → last_alert_ts
 
+# Only 15m is stored natively; multiply limit when fetching for resampling
+_RESAMPLE_FACTORS: dict[str, int] = {"1h": 4, "4h": 16, "1d": 96}
+
+
+def _resample_ohlcv(data: list[list], target_tf: str, limit: int) -> list[list]:
+    """Resample [[ts_ms, o, h, l, c, v], ...] from 15m to a coarser timeframe."""
+    if not data:
+        return []
+    import pandas as pd
+    df = pd.DataFrame(data, columns=["ts", "open", "high", "low", "close", "volume"])
+    df["dt"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    df = df.set_index("dt").sort_index()
+    rule = {"1h": "1h", "4h": "4h", "1d": "1D"}.get(target_tf, target_tf)
+    resampled = df.resample(rule, closed="left", label="left").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    ).dropna()
+    result = [
+        [int(idx.timestamp()) * 1000, row["open"], row["high"], row["low"], row["close"], row["volume"]]
+        for idx, row in resampled.iterrows()
+    ]
+    return result[-limit:] if len(result) > limit else result
+
 
 class IndexReader:
     """Pseudo-exchange that reads MT4-fed candles from index_candles table.
@@ -33,11 +55,19 @@ class IndexReader:
         limit: int = 100,
         since: int | None = None,
     ) -> list[list] | None:
-        """Return OHLCV as [[ts_ms, o, h, l, c, v], ...] or None on stale/error."""
+        """Return OHLCV as [[ts_ms, o, h, l, c, v], ...] or None on stale/error.
+
+        Only 15m candles are stored natively. Coarser timeframes (1h, 4h, 1d)
+        are produced by resampling the underlying 15m rows on the fly.
+        """
         try:
             with get_conn() as conn:
                 if not self._is_fresh(conn, pair):
                     return None
+
+                need_resample = timeframe != "15m"
+                stored_tf = "15m"
+                fetch_limit = limit * _RESAMPLE_FACTORS.get(timeframe, 1) if need_resample else limit
 
                 if since is not None:
                     since_s = since / 1000  # CCXT passes ms; DB stores seconds
@@ -46,7 +76,7 @@ class IndexReader:
                            FROM index_candles
                            WHERE pair=? AND timeframe=? AND ts >= ?
                            ORDER BY ts ASC LIMIT ?""",
-                        (pair, timeframe, since_s, limit),
+                        (pair, stored_tf, since_s, fetch_limit),
                     ).fetchall()
                 else:
                     rows = conn.execute(
@@ -54,11 +84,16 @@ class IndexReader:
                            FROM index_candles
                            WHERE pair=? AND timeframe=?
                            ORDER BY ts DESC LIMIT ?""",
-                        (pair, timeframe, limit),
+                        (pair, stored_tf, fetch_limit),
                     ).fetchall()
                     rows = list(reversed(rows))
 
-                return [[int(r[0]) * 1000, r[1], r[2], r[3], r[4], r[5]] for r in rows]
+                data = [[int(r[0]) * 1000, r[1], r[2], r[3], r[4], r[5]] for r in rows]
+
+                if need_resample:
+                    data = _resample_ohlcv(data, timeframe, limit)
+
+                return data
         except sqlite3.Error as exc:
             logger.warning(f"IndexReader.fetch_ohlcv({pair}): DB error — {exc}")
             return None
