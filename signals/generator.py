@@ -224,42 +224,45 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
     if atr_series is None or pd.isna(atr_series.iloc[-1]):
         return []
 
+    # Pull numpy arrays once to avoid repeated .iloc overhead in inner loops
+    import numpy as np
+    atr_arr   = atr_series.values
+    close_arr = df["close"].values
+    open_arr  = df["open"].values
+    high_arr  = df["high"].values
+    low_arr   = df["low"].values
+    impulse_mult = c["sd_impulse_atr_mult"]
+    n = len(df) - 1  # last candle is current; scan [0, n-1]
+
     zones = []
-    for i in range(len(df) - 1):
-        atr_val = atr_series.iloc[i]
-        if pd.isna(atr_val) or atr_val == 0:
+    for i in range(n):
+        atr_val = atr_arr[i]
+        if atr_val != atr_val or atr_val == 0:  # fast isnan check
             continue
-        row = df.iloc[i]
-        body = abs(row["close"] - row["open"])
-        if body <= c["sd_impulse_atr_mult"] * atr_val:
+        body = abs(close_arr[i] - open_arr[i])
+        if body <= impulse_mult * atr_val:
             continue
 
-        top = max(row["open"], row["close"])
-        bottom = min(row["open"], row["close"])
-        zone_type = "demand" if row["close"] > row["open"] else "supply"
+        top    = max(open_arr[i], close_arr[i])
+        bottom = min(open_arr[i], close_arr[i])
+        zone_type = "demand" if close_arr[i] > open_arr[i] else "supply"
 
-        # Break-of-Structure filter: impulse must have broken a prior swing
+        # Break-of-Structure filter
         if i >= bos_lookback:
-            prior_window = df.iloc[max(0, i - bos_lookback):i]
+            lo = max(0, i - bos_lookback)
             if zone_type == "demand":
-                # Bullish impulse must close above the prior swing high
-                if row["close"] <= prior_window["high"].max():
+                if close_arr[i] <= high_arr[lo:i].max():
                     continue
             else:
-                # Bearish impulse must close below the prior swing low
-                if row["close"] >= prior_window["low"].min():
+                if close_arr[i] >= low_arr[lo:i].min():
                     continue
 
-        # Zone is mitigated if any subsequent prior candle closes through it
-        mitigated = False
-        for j in range(i + 1, len(df) - 1):
-            close_j = df["close"].iloc[j]
-            if zone_type == "demand" and close_j < bottom:
-                mitigated = True
-                break
-            if zone_type == "supply" and close_j > top:
-                mitigated = True
-                break
+        # Mitigation: vectorized — any future close through the zone boundary
+        future_closes = close_arr[i + 1:n]
+        if zone_type == "demand":
+            mitigated = bool(np.any(future_closes < bottom))
+        else:
+            mitigated = bool(np.any(future_closes > top))
 
         zones.append({"zone_type": zone_type, "top": top, "bottom": bottom, "mitigated": mitigated})
 
