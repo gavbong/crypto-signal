@@ -130,30 +130,42 @@ def permute_candles(candles: list, seed: int | None = None) -> list:
 
 # ── STRATEGY RUNNER (permutation-safe, no DB dependencies) ───────────────────
 
-def _run_strategies_on_candles(pair: str, candles: list, c: dict) -> dict:
+def _run_strategies_on_candles(
+    pair: str,
+    candles: list,
+    c: dict,
+    precomputed_regimes: list | None = None,
+) -> dict:
     """
     Run all strategies on the given candles. Returns per (strategy, regime)
     list of pnl_r values for every signal that fired and resolved.
 
+    precomputed_regimes: if supplied, regime classification is skipped (major
+    speedup for permutation runs — regimes are fixed from real data, only
+    OHLCV is permuted). This tests whether entry signals have edge given the
+    same market regime structure, isolating the strategy's pattern recognition.
+
     Intentionally omits:
       - quality score gate  (depends on DB history, invalid on permuted data)
       - strategy health gate (same reason)
-
-    Mirrors backtest.run_pair logic but stays in-memory.
     """
     limit = c["candle_limit"]
     dedup_window = c["deduplication"]["window_candles"]
     timeframe = c["timeframe"]
     outcome_window_h = c["walk_forward"]["outcome_window_hours"]
 
-    results: dict[tuple, list] = {}  # (strategy, regime) → [pnl_r, ...]
+    results: dict[tuple, list] = {}
     dedup_state: dict[tuple, int] = {}
 
     if len(candles) < limit + outcome_window_h:
         return results
 
     full_df = _to_df(candles)
-    regimes = classify_series(full_df)
+
+    if precomputed_regimes is not None:
+        regimes = precomputed_regimes
+    else:
+        regimes = classify_series(full_df)
 
     start_idx = limit
     end_idx = len(candles) - outcome_window_h
@@ -234,7 +246,13 @@ def run_permtest_pair(
     if log_progress:
         logger.info(f"  {pair}: running on real candles ...")
 
-    real_stats = _run_strategies_on_candles(pair, candles, c)
+    # Precompute regimes once on real data — reused for all permuted runs.
+    # This tests whether entry signals have edge given the same regime structure,
+    # while eliminating classify_series from O(n_perms) iterations (~10-20x speedup).
+    real_df = _to_df(candles)
+    real_regimes = classify_series(real_df)
+
+    real_stats = _run_strategies_on_candles(pair, candles, c, precomputed_regimes=real_regimes)
     if not real_stats:
         if log_progress:
             logger.info(f"  {pair}: no signals on real data — skipping permutation test")
@@ -255,7 +273,7 @@ def run_permtest_pair(
             logger.info(f"  {pair}: permutation {i+1}/{n_perms} ...")
 
         perm = permute_candles(candles)
-        perm_stats = _run_strategies_on_candles(pair, perm, c)
+        perm_stats = _run_strategies_on_candles(pair, perm, c, precomputed_regimes=real_regimes)
 
         for combo, real_pnls in real_stats.items():
             real_ar = _avg_r(real_pnls)
