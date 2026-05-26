@@ -6,14 +6,14 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "vol_breakout":          "SKIP",  # backtest: -23.05R, 27% WR — lagging entry after breakout already done
         "supply_demand":         "FIRE",  # trending-only from 2026-05-26 — zone rejection with trend; was SKIP (wrong in choppy)
         "liquidity_grab":        "SKIP",
-        "volume_spike":          "FIRE",  # institutional participation on trend continuation
+        "volume_spike":          "SKIP",  # permutation 2026-05-26: avg_R=-0.24, p=0.67-0.8 — consistent negative, no edge
         "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
     },
     "trending-down": {
         "ema_9_21_crossover":    "FIRE",  # SHORT only — generator blocks counter-trend LONGs via regime gate
         "rsi_divergence":        "FIRE",  # bearish divergence (short) — momentum-confirming in downtrend; see DIRECTION_BLOCK
         "rsi_extreme":           "SKIP",
-        "vol_breakout":          "FIRE",  # consolidation-then-breakdown continuation
+        "vol_breakout":          "SKIP",  # permutation 2026-05-26: avg_R=-0.47, p=0.67-1.0 — noise, no edge
         "supply_demand":         "FIRE",  # trending-only from 2026-05-26 — supply zone rejection with downtrend
         "liquidity_grab":        "SKIP",
         "volume_spike":          "SKIP",  # backtest: -17.45R, 32% WR — trend exhaustion, not participation
