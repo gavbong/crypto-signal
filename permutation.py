@@ -20,6 +20,7 @@ Usage:
     python permutation.py --pair BTC/USDT:USDT      # single pair
     python permutation.py --since 2025-08-01        # custom date range
     python permutation.py --run-id 7                # link to a permutation_tests run
+    python permutation.py --sweep                   # test all 8 strategies × all regimes (find disabled combos with edge)
 """
 import argparse
 import json
@@ -40,6 +41,17 @@ from db.schema import init_db, get_conn
 from regime.classifier import classify_series, _to_df
 from signals.selector import active_strategies
 from signals.generator import run_strategy, attach_precomputed
+
+ALL_STRATEGIES = [
+    "ema_9_21_crossover",
+    "rsi_divergence",
+    "rsi_extreme",
+    "vol_breakout",
+    "supply_demand",
+    "liquidity_grab",
+    "volume_spike",
+    "session_open_breakout",
+]
 from signals.quality import is_stop_in_range
 
 
@@ -135,6 +147,7 @@ def _run_strategies_on_candles(
     candles: list,
     c: dict,
     precomputed_regimes: list | None = None,
+    sweep: bool = False,
 ) -> dict:
     """
     Run all strategies on the given candles. Returns per (strategy, regime)
@@ -176,7 +189,7 @@ def _run_strategies_on_candles(
         if regime is None or not regime.stable:
             continue
 
-        strategies = active_strategies(regime.label)
+        strategies = ALL_STRATEGIES if sweep else active_strategies(regime.label)
         if not strategies:
             continue
 
@@ -233,6 +246,7 @@ def run_permtest_pair(
     n_perms: int,
     c: dict,
     log_progress: bool = True,
+    sweep: bool = False,
 ) -> dict:
     """
     Run Monte Carlo permutation test for one pair.
@@ -253,7 +267,7 @@ def run_permtest_pair(
     real_df = _to_df(candles)
     real_regimes = classify_series(real_df)
 
-    real_stats = _run_strategies_on_candles(pair, candles, c, precomputed_regimes=real_regimes)
+    real_stats = _run_strategies_on_candles(pair, candles, c, precomputed_regimes=real_regimes, sweep=sweep)
     if not real_stats:
         if log_progress:
             logger.info(f"  {pair}: no signals on real data — skipping permutation test")
@@ -274,7 +288,7 @@ def run_permtest_pair(
             logger.info(f"  {pair}: permutation {i+1}/{n_perms} ...")
 
         perm = permute_candles(candles)
-        perm_stats = _run_strategies_on_candles(pair, perm, c, precomputed_regimes=real_regimes)
+        perm_stats = _run_strategies_on_candles(pair, perm, c, precomputed_regimes=real_regimes, sweep=sweep)
 
         for combo, real_pnls in real_stats.items():
             real_ar = _avg_r(real_pnls)
@@ -417,6 +431,9 @@ def main() -> None:
                         help="permutation_tests run_id (set by dashboard API)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Run test but do not save results to DB")
+    parser.add_argument("--sweep", action="store_true",
+                        help="Test ALL 8 strategies on every regime, ignoring FIRE/SKIP gates — "
+                             "discovers edge in currently-disabled combos")
     args = parser.parse_args()
 
     c = cfg()
@@ -457,6 +474,7 @@ def main() -> None:
     logger.info(
         f"Permutation test | pairs={[p for p,_ in work]} | "
         f"n_perms={args.n_perms} | since={since_str}"
+        + (" | SWEEP MODE (all 8 strategies)" if args.sweep else "")
     )
 
     all_results: dict[str, dict] = {}
@@ -479,7 +497,7 @@ def main() -> None:
         last_dt = datetime.fromtimestamp(candles[-1][0] / 1000, tz=timezone.utc)
         logger.info(f"  {pair}: {n_candles} candles ({first_dt.date()} to {last_dt.date()})")
 
-        results = run_permtest_pair(pair, candles, args.n_perms, c, log_progress=True)
+        results = run_permtest_pair(pair, candles, args.n_perms, c, log_progress=True, sweep=args.sweep)
         elapsed = time.time() - t0
         logger.info(f"  {pair}: done in {elapsed:.0f}s — {len(results)} combos tested")
 
