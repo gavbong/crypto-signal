@@ -1,44 +1,49 @@
 from signals.selector import active_strategies, action_for, REGIME_STRATEGY_MAP
 
 ALL_STRATEGIES = (
-    "ema_9_21_crossover", "macd_crossover", "rsi_divergence",
-    "rsi_extreme", "vol_breakout", "supply_demand", "liquidity_grab",
+    "ema_9_21_crossover", "rsi_divergence", "rsi_extreme", "vol_breakout",
+    "supply_demand", "liquidity_grab", "volume_spike", "session_open_breakout",
 )
 
 
 class TestActiveStrategies:
-    def test_trending_up_fires_ema_and_vol(self):
+    def test_trending_up_fires_ema_vol_sd_orb(self):
         active = active_strategies("trending-up")
         assert "ema_9_21_crossover" in active
-        assert "vol_breakout" in active       # consolidation-then-breakout continuation
-        assert "macd_crossover" not in active  # n=28, net_r=-3.53R — lagging, entries too late
-        assert "supply_demand" not in active  # requires faster reaction than 15-min polling
+        assert "volume_spike" in active        # institutional participation on trend continuation
+        assert "supply_demand" in active       # trending-only from 2026-05-26 — zone rejection with trend
+        assert "session_open_breakout" in active
+        assert "vol_breakout" not in active    # backtest: -23.05R, 27% WR — lagging entry
         assert "rsi_divergence" not in active
         assert "liquidity_grab" not in active
+        assert "rsi_extreme" not in active
 
-    def test_trending_down_fires_ema_and_vol(self):
+    def test_trending_down_fires_ema_vol_rsi_div_sd_orb(self):
         active = active_strategies("trending-down")
         assert "ema_9_21_crossover" in active
-        assert "vol_breakout" in active
-        assert "macd_crossover" not in active  # whipsaws in downtrends
-        assert "supply_demand" not in active   # requires faster reaction than 15-min polling
-        assert "rsi_divergence" not in active
+        assert "vol_breakout" in active        # consolidation-then-breakdown continuation
+        assert "rsi_divergence" in active      # bearish divergence (short) — momentum-confirming
+        assert "supply_demand" in active       # supply zone rejection with downtrend
+        assert "session_open_breakout" in active
+        assert "rsi_extreme" not in active
+        assert "liquidity_grab" not in active
 
     def test_choppy_fires_rsi_and_liq(self):
         active = active_strategies("choppy")
         assert "rsi_divergence" in active
         assert "liquidity_grab" in active
-        assert "supply_demand" in active       # 1H zones + approach detection
-        assert "rsi_extreme" not in active     # WR 37.5% < BE 40%, net_r=-5.28R — false reversals
-        assert "macd_crossover" not in active  # lagging crossover whipsaws in sideways markets
+        assert "supply_demand" not in active   # moved to trending-only 2026-05-26
+        assert "rsi_extreme" not in active     # WR 37.5% < BE 40%, net_r=-5.28R
         assert "ema_9_21_crossover" not in active
         assert "vol_breakout" not in active
+        assert "session_open_breakout" not in active  # choppy opens prone to false breakout
 
-    def test_high_vol_fires_breakout_and_liq(self):
+    def test_high_vol_fires_breakout_liq_extreme_orb(self):
         active = active_strategies("high-volatility")
         assert "vol_breakout" in active
         assert "rsi_extreme" in active
         assert "liquidity_grab" in active
+        assert "session_open_breakout" in active
         assert "supply_demand" not in active   # 17% WR — removed
         assert "ema_9_21_crossover" not in active
         assert "rsi_divergence" not in active
@@ -53,24 +58,36 @@ class TestActionFor:
         assert action_for("trending-up", "rsi_divergence") == "SKIP"
         assert action_for("choppy", "ema_9_21_crossover") == "SKIP"
         assert action_for("high-volatility", "ema_9_21_crossover") == "SKIP"
+        assert action_for("choppy", "supply_demand") == "SKIP"      # moved to trending-only
 
     def test_fire_returns_fire(self):
         assert action_for("trending-up", "ema_9_21_crossover") == "FIRE"
         assert action_for("trending-down", "ema_9_21_crossover") == "FIRE"
         assert action_for("choppy", "rsi_divergence") == "FIRE"
         assert action_for("high-volatility", "vol_breakout") == "FIRE"
-        assert action_for("trending-up", "vol_breakout") == "FIRE"   # new: trending breakout
         assert action_for("high-volatility", "liquidity_grab") == "FIRE"
+        assert action_for("trending-down", "rsi_divergence") == "FIRE"   # bearish divergence in downtrend
+        assert action_for("trending-up", "supply_demand") == "FIRE"      # trending-only S&D
+        assert action_for("trending-down", "supply_demand") == "FIRE"    # trending-only S&D
+        assert action_for("trending-up", "session_open_breakout") == "FIRE"
+        assert action_for("trending-down", "session_open_breakout") == "FIRE"
+        assert action_for("high-volatility", "session_open_breakout") == "FIRE"
 
     def test_unknown_strategy_returns_skip(self):
         for regime in ("trending-up", "trending-down", "choppy", "high-volatility"):
             assert action_for(regime, "nonexistent_strategy") == "SKIP"
 
-    def test_supply_demand_fires_only_in_choppy(self):
-        assert action_for("choppy", "supply_demand") == "FIRE"         # 1H zones + approach detection
-        assert action_for("trending-up", "supply_demand") == "SKIP"    # too slow for 15-min polling
-        assert action_for("trending-down", "supply_demand") == "SKIP"  # too slow for 15-min polling
+    def test_supply_demand_trending_only(self):
+        assert action_for("trending-up", "supply_demand") == "FIRE"      # zone rejection with trend
+        assert action_for("trending-down", "supply_demand") == "FIRE"    # zone rejection with trend
+        assert action_for("choppy", "supply_demand") == "SKIP"           # moved out 2026-05-26
         assert action_for("high-volatility", "supply_demand") == "SKIP"  # 17% WR
+
+    def test_session_open_breakout_regime_map(self):
+        assert action_for("trending-up", "session_open_breakout") == "FIRE"
+        assert action_for("trending-down", "session_open_breakout") == "FIRE"
+        assert action_for("high-volatility", "session_open_breakout") == "FIRE"
+        assert action_for("choppy", "session_open_breakout") == "SKIP"
 
 
 class TestMapCompleteness:

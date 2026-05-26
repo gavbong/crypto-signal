@@ -130,32 +130,6 @@ def ema_9_21_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
     return None
 
 
-def macd_crossover(pair: str, df: pd.DataFrame, regime: RegimeResult,
-                   timeframe: str) -> Optional[dict]:
-    macd_df = ta.macd(df["close"])
-    if macd_df is None or len(macd_df) < 2:
-        return None
-
-    macd_col = next((c for c in macd_df.columns if c.startswith("MACD_")), None)
-    signal_col = next((c for c in macd_df.columns if c.startswith("MACDs_")), None)
-    hist_col = next((c for c in macd_df.columns if c.startswith("MACDh_")), None)
-
-    if macd_col is None or signal_col is None or hist_col is None:
-        return None
-
-    prev_macd, curr_macd = macd_df[macd_col].iloc[-2], macd_df[macd_col].iloc[-1]
-    prev_sig, curr_sig = macd_df[signal_col].iloc[-2], macd_df[signal_col].iloc[-1]
-    hist = macd_df[hist_col].iloc[-1]
-
-    if any(pd.isna(v) for v in [prev_macd, curr_macd, prev_sig, curr_sig, hist]):
-        return None
-
-    if prev_macd <= prev_sig and curr_macd > curr_sig and hist > 0:
-        return _signal(pair, "long", "macd_crossover", regime, df, timeframe)
-    if prev_macd >= prev_sig and curr_macd < curr_sig and hist < 0:
-        return _signal(pair, "short", "macd_crossover", regime, df, timeframe)
-    return None
-
 
 def rsi_divergence(pair: str, df: pd.DataFrame, regime: RegimeResult,
                    timeframe: str) -> Optional[dict]:
@@ -533,15 +507,105 @@ def volume_spike(pair: str, df: pd.DataFrame, regime: RegimeResult,
     return None
 
 
+def session_open_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                          timeframe: str) -> Optional[dict]:
+    """Opening Range Breakout (ORB): first 2 candles (30 min) after session open define
+    the range. Fires on candles 3-6 (30-90 min after open) when close breaks the range
+    with volume confirmation. SL placed at the far end of the opening range ± 0.5 ATR.
+
+    Applies to DJ30/USD, FTSE100/USD, DAX/USD only. XAU trades 24/7 with no single
+    structural open, so it is excluded.
+    """
+    from zoneinfo import ZoneInfo
+
+    if timeframe != "15m" or pair == "XAU/USD":
+        return None
+
+    full_cfg = cfg()
+    session_hours = full_cfg.get("indices", {}).get("session_hours", {})
+    spec = session_hours.get(pair)
+    if not spec:
+        return None
+
+    try:
+        hours_part, tz_str = spec.rsplit(" ", 1)
+        open_str = hours_part.split("-")[0]
+        open_hour = int(open_str[:2])
+        open_minute = int(open_str[3:])
+        tz = ZoneInfo(tz_str)
+    except Exception:
+        return None
+
+    if df.index.tzinfo is not None:
+        idx_local = df.index.tz_convert(tz)
+    else:
+        idx_local = df.index.tz_localize("UTC").tz_convert(tz)
+
+    last_local = idx_local[-1]
+    session_open = last_local.replace(hour=open_hour, minute=open_minute, second=0, microsecond=0)
+    range_end = session_open + pd.Timedelta(minutes=30)
+    breakout_end = session_open + pd.Timedelta(minutes=90)
+
+    if not (range_end <= last_local < breakout_end):
+        return None
+
+    range_mask = (idx_local >= session_open) & (idx_local < range_end)
+    range_df = df[range_mask]
+    if len(range_df) < 2:
+        return None
+
+    range_high = range_df["high"].max()
+    range_low = range_df["low"].min()
+
+    c = cfg()["signals"]
+    window = c.get("volume_avg_period", 20)
+    avg_vol = df["volume"].iloc[-(window + 1):-1].mean()
+    if pd.isna(avg_vol) or avg_vol == 0:
+        return None
+    if df["volume"].iloc[-1] < avg_vol * c.get("orb_volume_multiplier", 1.5):
+        return None
+
+    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+    if atr_series is None:
+        return None
+    atr = atr_series.iloc[-1]
+    if pd.isna(atr):
+        return None
+
+    close_now = df["close"].iloc[-1]
+
+    if close_now > range_high:
+        sig = _signal(pair, "long", "session_open_breakout", regime, df, timeframe)
+        if sig:
+            sig["suggested_stop_loss"] = round(range_low - 0.5 * atr, 8)
+            sig["suggested_take_profit"] = _calc_take_profit(
+                sig["entry_price"], sig["suggested_stop_loss"],
+                "long", regime.label, "session_open_breakout", pair,
+            )
+        return sig
+
+    if close_now < range_low:
+        sig = _signal(pair, "short", "session_open_breakout", regime, df, timeframe)
+        if sig:
+            sig["suggested_stop_loss"] = round(range_high + 0.5 * atr, 8)
+            sig["suggested_take_profit"] = _calc_take_profit(
+                sig["entry_price"], sig["suggested_stop_loss"],
+                "short", regime.label, "session_open_breakout", pair,
+            )
+        return sig
+
+    return None
+
+
 GENERATORS = {
-    "ema_9_21_crossover": ema_9_21_crossover,
-    "macd_crossover":     macd_crossover,
-    "rsi_divergence":     rsi_divergence,
-    "vol_breakout":       vol_breakout,
-    "rsi_extreme":        rsi_extreme,
-    "supply_demand":      supply_demand,
-    "liquidity_grab":     liquidity_grab,
-    "volume_spike":       volume_spike,
+    "ema_9_21_crossover":    ema_9_21_crossover,
+    "rsi_divergence":        rsi_divergence,
+    "vol_breakout":          vol_breakout,
+    "rsi_extreme":           rsi_extreme,
+    "supply_demand":         supply_demand,
+    "liquidity_grab":        liquidity_grab,
+    "volume_spike":          volume_spike,
+    "session_open_breakout": session_open_breakout,
 }
 
 

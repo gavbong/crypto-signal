@@ -130,6 +130,7 @@ signals:
     rsi_divergence: 2.0               # medium gap risk in choppy markets
     rsi_extreme: 2.0
     ema_9_21_crossover: 2.0
+    session_open_breakout: 1.5         # ORB: range-based SL tends to be wider than ATR; lower RR to keep TP reachable
     # supply_demand: not set — uses asset-class RR (1.2 for indices, regime RR for crypto)
 
   # ── Strategy skip list per pair ───────────────────────────────────────────────
@@ -153,6 +154,7 @@ signals:
   sd_impulse_atr_mult: 2.0             # supply/demand: impulse candle body must exceed N × ATR
   sd_bos_lookback: 10                  # supply/demand: BoS filter — impulse must break N prior bars' high (demand) or low (supply)
   lq_session_window_hours: 4           # liquidity_grab: for index pairs, only fire within N hours of session open (London→NY reversal window)
+  orb_volume_multiplier: 1.5           # session_open_breakout: current candle volume must exceed N× rolling avg to confirm breakout
 
 signal_quality:
   min_quality_score: 40          # lowered 2026-05-26 to allow index pairs to bootstrap — max score at bootstrap_wr is 48 so 60 was unreachable for new combos

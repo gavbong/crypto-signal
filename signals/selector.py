@@ -1,43 +1,43 @@
 REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "trending-up": {
-        "ema_9_21_crossover": "FIRE",  # LONG only — generator blocks counter-trend SHORTs via regime gate
-        "macd_crossover":     "SKIP",  # n=28, net_r=-3.53R, lagging indicator — entries too late into move
-        "rsi_divergence":     "SKIP",
-        "rsi_extreme":        "SKIP",
-        "vol_breakout":       "SKIP",  # backtest: -23.05R, 27% WR — lagging entry after breakout already done
-        "supply_demand":      "SKIP",  # S/D zones require faster reaction than 15-min polling allows
-        "liquidity_grab":     "SKIP",
-        "volume_spike":       "FIRE",  # institutional participation on trend continuation
+        "ema_9_21_crossover":    "FIRE",  # LONG only — generator blocks counter-trend SHORTs via regime gate
+        "rsi_divergence":        "SKIP",
+        "rsi_extreme":           "SKIP",
+        "vol_breakout":          "SKIP",  # backtest: -23.05R, 27% WR — lagging entry after breakout already done
+        "supply_demand":         "FIRE",  # trending-only from 2026-05-26 — zone rejection with trend; was SKIP (wrong in choppy)
+        "liquidity_grab":        "SKIP",
+        "volume_spike":          "FIRE",  # institutional participation on trend continuation
+        "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
     },
     "trending-down": {
-        "ema_9_21_crossover": "FIRE",  # SHORT only — generator blocks counter-trend LONGs via regime gate
-        "macd_crossover":     "SKIP",  # crossovers in downtrends produce more whipsaw than uptrends
-        "rsi_divergence":     "SKIP",
-        "rsi_extreme":        "SKIP",
-        "vol_breakout":       "FIRE",  # consolidation-then-breakdown continuation
-        "supply_demand":      "SKIP",  # S/D zones require faster reaction than 15-min polling allows
-        "liquidity_grab":     "SKIP",
-        "volume_spike":       "SKIP",  # backtest: -17.45R, 32% WR — trend exhaustion, not participation
+        "ema_9_21_crossover":    "FIRE",  # SHORT only — generator blocks counter-trend LONGs via regime gate
+        "rsi_divergence":        "FIRE",  # bearish divergence (short) — momentum-confirming in downtrend; see DIRECTION_BLOCK
+        "rsi_extreme":           "SKIP",
+        "vol_breakout":          "FIRE",  # consolidation-then-breakdown continuation
+        "supply_demand":         "FIRE",  # trending-only from 2026-05-26 — supply zone rejection with downtrend
+        "liquidity_grab":        "SKIP",
+        "volume_spike":          "SKIP",  # backtest: -17.45R, 32% WR — trend exhaustion, not participation
+        "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
     },
     "choppy": {
-        "ema_9_21_crossover": "SKIP",
-        "macd_crossover":     "SKIP",  # lagging crossover whipsaws in sideways markets
-        "rsi_divergence":     "FIRE",  # long only (live: long WR=56%; short WR=35% -11.86R) — see DIRECTION_BLOCK
-        "rsi_extreme":        "SKIP",  # WR 37.5% < BE 40%, net_r=-5.28R — false reversals in ranging markets
-        "vol_breakout":       "SKIP",
-        "supply_demand":      "FIRE",  # 1H zones + approach detection — replaces old zone-entry logic
-        "liquidity_grab":     "FIRE",  # both directions (live: long WR=56% +1.09R; short WR=56% +2.13R)
-        "volume_spike":       "SKIP",  # spikes in choppy = noise, no trend to ride
+        "ema_9_21_crossover":    "SKIP",
+        "rsi_divergence":        "FIRE",  # both directions blocked in DIRECTION_BLOCK (short WR=35% -11.86R; long WR=48% -4.37R below fee-adj BE)
+        "rsi_extreme":           "SKIP",  # WR 37.5% < BE 40%, net_r=-5.28R — false reversals in ranging markets
+        "vol_breakout":          "SKIP",
+        "supply_demand":         "SKIP",  # moved to trending-only 2026-05-26 — choppy S&D has no edge (blocked both directions)
+        "liquidity_grab":        "FIRE",  # both directions (live: long WR=56% +1.09R; short WR=56% +2.13R)
+        "volume_spike":          "SKIP",  # spikes in choppy = noise, no trend to ride
+        "session_open_breakout": "SKIP",  # choppy opens prone to false breakout and rapid reversal
     },
     "high-volatility": {
-        "ema_9_21_crossover": "SKIP",
-        "macd_crossover":     "SKIP",
-        "rsi_divergence":     "SKIP",
-        "rsi_extreme":        "FIRE",  # short only (live: short WR=62% +5.77R; long WR=33% -2.22R) — see DIRECTION_BLOCK
-        "vol_breakout":       "FIRE",
-        "supply_demand":      "SKIP",  # removed entirely — 17% WR across all regimes
-        "liquidity_grab":     "FIRE",
-        "volume_spike":       "SKIP",  # high-vol already captures spike energy via vol_breakout
+        "ema_9_21_crossover":    "SKIP",
+        "rsi_divergence":        "SKIP",
+        "rsi_extreme":           "FIRE",  # short only (live: short WR=62% +5.77R; long WR=33% -2.22R) — see DIRECTION_BLOCK
+        "vol_breakout":          "FIRE",
+        "supply_demand":         "SKIP",  # removed entirely — 17% WR across all regimes
+        "liquidity_grab":        "FIRE",
+        "volume_spike":          "SKIP",  # high-vol already captures spike energy via vol_breakout
+        "session_open_breakout": "FIRE",  # high-vol opens can produce strong clean breakouts
     },
 }
 
@@ -45,10 +45,14 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
 # Format: {regime: {strategy: set_of_blocked_directions}}
 # Updated 2026-05-14: live evidence (n=48-51) overrides backtest — all three were backwards.
 # Updated 2026-05-19: vol_breakout high-vol short blocked — 0/3 live (0% WR) vs 41.8% BT (42pp gap).
+# Updated 2026-05-26: supply_demand removed from choppy entirely (moved to trending-only).
+#                     rsi_divergence added to trending-down, long blocked (bearish-div short only).
 DIRECTION_BLOCK: dict[str, dict[str, set]] = {
     "choppy": {
         "rsi_divergence": {"short", "long"},  # short WR=35% -11.86R (blocked 2026-05-14); long WR=48% -4.37R (blocked 2026-05-22, fee-adj BE=61%)
-        "supply_demand":  {"long"},           # live: long WR=42% -5.05R | short WR=62% +2.48R (fee-adj BE=61%)
+    },
+    "trending-down": {
+        "rsi_divergence": {"long"},  # only bearish divergence shorts; bullish divergence long = counter-trend bounce in downtrend
     },
     "high-volatility": {
         "rsi_extreme": {"long"},      # live: short WR=57% +4.77R | long WR=33% -2.22R
