@@ -141,6 +141,8 @@ signals:
     DAX/USD:
       - supply_demand
       - liquidity_grab
+    DJ30/USD:
+      - supply_demand  # choppy regime: 34 signals, 38.2% WR, -7.36R (backtest run #15); without it DJ30 is +5.24R @ 54.2% WR
 
   # ── Slippage-adjusted TP ─────────────────────────────────────────────────────
   # When true: TP is extended so effective RR (after entry + SL exit fill costs)
