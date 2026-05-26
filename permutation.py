@@ -39,7 +39,7 @@ from backtest import fetch_history, load_index_csv, resolve_outcome
 from db.schema import init_db, get_conn
 from regime.classifier import classify_series, _to_df
 from signals.selector import active_strategies
-from signals.generator import run_strategy
+from signals.generator import run_strategy, attach_precomputed
 from signals.quality import is_stop_in_range
 
 
@@ -161,6 +161,7 @@ def _run_strategies_on_candles(
         return results
 
     full_df = _to_df(candles)
+    attach_precomputed(full_df)  # stamp ATR/RSI/BBands/EMA200/vol_ma once; slices inherit columns
 
     if precomputed_regimes is not None:
         regimes = precomputed_regimes

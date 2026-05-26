@@ -10,9 +10,41 @@ from signals.selector import is_direction_allowed
 from utils.config import get as cfg
 
 
+def attach_precomputed(df: pd.DataFrame) -> None:
+    """Stamp all indicator series onto df in-place so strategy calls can skip recomputation.
+
+    Call once on the full OHLCV series before the per-candle scan loop. Sliced windows
+    inherit these columns automatically, eliminating repeated O(window) TA calls.
+    """
+    c_sig = cfg()["signals"]
+    c_reg = cfg()["regime"]
+    atr_period: int = c_sig["atr_period"]
+    rsi_period: int = c_sig["rsi_period"]
+    vol_period: int = c_sig.get("volume_avg_period", 20)
+    bb_period:  int = c_reg["bb_period"]
+    bb_std:    float = c_reg["bb_std"]
+
+    df["_atr"] = ta.atr(df["high"], df["low"], df["close"], length=atr_period)
+    df["_rsi"] = ta.rsi(df["close"], length=rsi_period)
+    df["_ema200"] = ta.ema(df["close"], length=200)
+    df["_vol_ma"] = df["volume"].rolling(vol_period).mean()
+
+    bb = ta.bbands(df["close"], length=bb_period, std=bb_std)
+    if bb is not None:
+        upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
+        lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
+        if upper_col and lower_col:
+            df["_bbu"] = bb[upper_col]
+            df["_bbl"] = bb[lower_col]
+
+
 def _volume_gate_passes(df: pd.DataFrame) -> bool:
     c = cfg()["signals"]
-    avg_vol = df["volume"].rolling(c["volume_avg_period"]).mean().iloc[-1]
+    avg_vol = (
+        df["_vol_ma"].iloc[-1]
+        if "_vol_ma" in df.columns
+        else df["volume"].rolling(c["volume_avg_period"]).mean().iloc[-1]
+    )
     if pd.isna(avg_vol) or avg_vol == 0:
         return False
     return df["volume"].iloc[-1] > avg_vol * c["volume_spike_multiplier"]
@@ -20,7 +52,11 @@ def _volume_gate_passes(df: pd.DataFrame) -> bool:
 
 def _calc_stop_loss(df: pd.DataFrame, direction: str, regime_label: str = "") -> Optional[float]:
     c = cfg()["signals"]
-    atr = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"]).iloc[-1]
+    atr = (
+        df["_atr"].iloc[-1]
+        if "_atr" in df.columns
+        else ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"]).iloc[-1]
+    )
     if pd.isna(atr):
         return None
     entry = df["close"].iloc[-1]
@@ -179,7 +215,11 @@ def _find_sd_zones(df: pd.DataFrame) -> list[dict]:
     """
     c = cfg()["signals"]
     bos_lookback = c.get("sd_bos_lookback", 10)
-    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+    atr_series = (
+        df["_atr"]
+        if "_atr" in df.columns
+        else ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+    )
 
     if atr_series is None or pd.isna(atr_series.iloc[-1]):
         return []
@@ -230,10 +270,16 @@ def _ema200_clears_zone(zone_df: pd.DataFrame, zone: dict) -> bool:
     """Doyle's 200 EMA filter: demand zone must have 200 EMA below it; supply above it.
     Returns True if the zone passes (EMA position is correct or data insufficient)."""
     try:
-        ema_200 = ta.ema(zone_df["close"], length=200)
-        if ema_200 is None or pd.isna(ema_200.iloc[-1]):
-            return True  # insufficient data — don't filter
-        ema_val = ema_200.iloc[-1]
+        if "_ema200" in zone_df.columns:
+            ema_val_raw = zone_df["_ema200"].iloc[-1]
+            if pd.isna(ema_val_raw):
+                return True
+            ema_val = ema_val_raw
+        else:
+            ema_200 = ta.ema(zone_df["close"], length=200)
+            if ema_200 is None or pd.isna(ema_200.iloc[-1]):
+                return True  # insufficient data — don't filter
+            ema_val = ema_200.iloc[-1]
         if zone["zone_type"] == "demand":
             return ema_val <= zone["bottom"]  # EMA must be below zone
         else:
@@ -383,12 +429,12 @@ def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
         return None
 
     c = cfg()["signals"]
-    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
-    if atr_series is None:
-        return None
-    atr = atr_series.iloc[-1]
-
-    if pd.isna(atr):
+    atr = (
+        df["_atr"].iloc[-1]
+        if "_atr" in df.columns
+        else ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"]).iloc[-1]
+    )
+    if atr is None or pd.isna(atr):
         return None
 
     prior = df.iloc[:-1]
@@ -420,16 +466,21 @@ def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
 
 def vol_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
                  timeframe: str) -> Optional[dict]:
-    c_regime = cfg()["regime"]
-    bb = ta.bbands(df["close"], length=c_regime["bb_period"], std=c_regime["bb_std"])
-    upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
-    lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
+    if "_bbu" in df.columns and "_bbl" in df.columns:
+        upper_s = df["_bbu"]
+        lower_s = df["_bbl"]
+    else:
+        c_regime = cfg()["regime"]
+        bb = ta.bbands(df["close"], length=c_regime["bb_period"], std=c_regime["bb_std"])
+        upper_col = next((c for c in bb.columns if c.startswith("BBU_")), None)
+        lower_col = next((c for c in bb.columns if c.startswith("BBL_")), None)
+        if upper_col is None or lower_col is None:
+            return None
+        upper_s = bb[upper_col]
+        lower_s = bb[lower_col]
 
-    if upper_col is None or lower_col is None:
-        return None
-
-    upper = bb[upper_col].iloc[-1]
-    lower = bb[lower_col].iloc[-1]
+    upper = upper_s.iloc[-1]
+    lower = lower_s.iloc[-1]
 
     if pd.isna(upper) or pd.isna(lower):
         return None
@@ -443,8 +494,8 @@ def vol_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
         return None
 
     prior_closes = df["close"].iloc[-lookback - 1:-1]
-    prior_upper = bb[upper_col].iloc[-lookback - 1:-1]
-    prior_lower = bb[lower_col].iloc[-lookback - 1:-1]
+    prior_upper = upper_s.iloc[-lookback - 1:-1]
+    prior_lower = lower_s.iloc[-lookback - 1:-1]
 
     inside_count = sum(
         1 for i in range(len(prior_closes))
@@ -468,7 +519,7 @@ def rsi_extreme(pair: str, df: pd.DataFrame, regime: RegimeResult,
                 timeframe: str) -> Optional[dict]:
     """Fire when RSI exits oversold/overbought territory. No volume gate."""
     c = cfg()["signals"]
-    rsi = ta.rsi(df["close"], length=c["rsi_period"])
+    rsi = df["_rsi"] if "_rsi" in df.columns else ta.rsi(df["close"], length=c["rsi_period"])
 
     if rsi is None or len(rsi) < 2 or pd.isna(rsi.iloc[-1]) or pd.isna(rsi.iloc[-2]):
         return None
@@ -495,7 +546,11 @@ def volume_spike(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if len(df) < window + 2:
         return None
 
-    avg_vol = df["volume"].iloc[-(window + 1):-1].mean()
+    avg_vol = (
+        df["_vol_ma"].iloc[-2]   # iloc[-2] = prev candle avg (same as iloc[-(window+1):-1].mean())
+        if "_vol_ma" in df.columns
+        else df["volume"].iloc[-(window + 1):-1].mean()
+    )
     if pd.isna(avg_vol) or avg_vol == 0:
         return None
 
@@ -572,11 +627,12 @@ def session_open_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if df["volume"].iloc[-1] < avg_vol * c.get("orb_volume_multiplier", 1.5):
         return None
 
-    atr_series = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
-    if atr_series is None:
-        return None
-    atr = atr_series.iloc[-1]
-    if pd.isna(atr):
+    atr = (
+        df["_atr"].iloc[-1]
+        if "_atr" in df.columns
+        else ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"]).iloc[-1]
+    )
+    if atr is None or pd.isna(atr):
         return None
 
     close_now = df["close"].iloc[-1]
