@@ -97,6 +97,35 @@ def init_db(path: Path | None = None) -> None:
                 pass
 
         conn.executescript("""
+            CREATE TABLE IF NOT EXISTS permutation_runs (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at  TIMESTAMP,
+                since_date   TEXT NOT NULL,
+                pairs        TEXT,
+                n_perms      INTEGER NOT NULL DEFAULT 200,
+                pid          INTEGER,
+                status       TEXT NOT NULL DEFAULT 'running',
+                progress_pct INTEGER NOT NULL DEFAULT 0,
+                progress_msg TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS permutation_tests (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id       INTEGER REFERENCES permutation_runs(id),
+                pair         TEXT NOT NULL,
+                since_date   TEXT NOT NULL,
+                n_perms      INTEGER NOT NULL,
+                n_candles    INTEGER NOT NULL,
+                results_json TEXT NOT NULL,
+                created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_permutation_tests_pair
+            ON permutation_tests (pair, created_at DESC);
+        """)
+
+        conn.executescript("""
             CREATE TABLE IF NOT EXISTS strategy_health (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 strategy     TEXT    NOT NULL,

@@ -1478,6 +1478,155 @@ def create_app() -> Flask:
             conn.commit()
         return jsonify({"run_id": run_id})
 
+    # ── PERMUTATION TEST ROUTES ───────────────────────────────────────────────
+
+    _active_permtest: dict = {"proc": None, "run_id": None, "stderr_path": None}
+
+    @app.route("/api/permutation/run", methods=["POST"])
+    def api_permutation_run():
+        _auth()
+        if _active_permtest.get("proc") is not None and _active_permtest["proc"].poll() is None:
+            return jsonify({"error": "A permutation test is already running"}), 409
+        body = request.get_json(silent=True) or {}
+        since = body.get("since", (datetime.now(timezone.utc) - timedelta(days=270)).strftime("%Y-%m-%d"))
+        n_perms = int(body.get("n_perms", 200))
+        include_indices = bool(body.get("include_indices", False))
+        pairs_str = json.dumps(
+            cfg().get("pairs") or cfg().get("exchanges", {}).get("mexc", {}).get("pairs", [])
+        )
+        with get_conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO permutation_runs (since_date, n_perms, pairs, status) VALUES (?, ?, ?, 'running')",
+                (since, n_perms, pairs_str),
+            )
+            conn.commit()
+            run_id = cur.lastrowid
+        perm_script = str(Path(__file__).parent / "permutation.py")
+        stderr_fh = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".log", prefix="permtest_", delete=False
+        )
+        stderr_path = stderr_fh.name
+        cmd = [sys.executable, perm_script, "--since", since, "--n-perms", str(n_perms),
+               "--run-id", str(run_id)]
+        if include_indices:
+            cmd.append("--indices")
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_fh,
+            env=os.environ.copy(),
+        )
+        stderr_fh.close()
+        _active_permtest["proc"] = proc
+        _active_permtest["run_id"] = run_id
+        _active_permtest["stderr_path"] = stderr_path
+        with get_conn() as conn:
+            conn.execute("UPDATE permutation_runs SET pid=? WHERE id=?", (proc.pid, run_id))
+            conn.commit()
+        return jsonify({"run_id": run_id})
+
+    @app.route("/api/permutation/status")
+    def api_permutation_status():
+        _auth()
+        proc = _active_permtest.get("proc")
+        run_id = _active_permtest.get("run_id")
+        if proc is not None:
+            rc = proc.poll()
+            if rc is not None:
+                _active_permtest["proc"] = None
+                if rc != 0 and run_id is not None:
+                    stderr_path = _active_permtest.get("stderr_path")
+                    error_msg = f"process exited with code {rc}"
+                    if stderr_path and os.path.exists(stderr_path):
+                        try:
+                            tail = open(stderr_path).read()[-800:].strip()
+                            if tail:
+                                last_line = [ln for ln in tail.splitlines() if ln.strip()]
+                                error_msg = last_line[-1][:300] if last_line else error_msg
+                        except Exception:
+                            pass
+                    with get_conn() as conn:
+                        conn.execute(
+                            "UPDATE permutation_runs SET status='failed', progress_msg=? WHERE id=? AND status='running'",
+                            (error_msg, run_id),
+                        )
+                        conn.commit()
+        running = _active_permtest.get("proc") is not None
+        if run_id is not None:
+            with get_conn() as conn:
+                row = conn.execute(
+                    "SELECT status, progress_pct, progress_msg FROM permutation_runs WHERE id=?",
+                    (run_id,),
+                ).fetchone()
+            if row:
+                return jsonify({
+                    "running": running,
+                    "run_id": run_id,
+                    "status": row["status"],
+                    "progress_pct": row["progress_pct"],
+                    "msg": row["progress_msg"] or "",
+                })
+        return jsonify({"running": running, "run_id": run_id, "status": "idle", "progress_pct": 0, "msg": ""})
+
+    @app.route("/api/permutation/results")
+    def api_permutation_results():
+        _auth()
+        run_id = request.args.get("run_id", type=int)
+        pair = request.args.get("pair")
+        with get_conn() as conn:
+            if run_id is not None:
+                rows = conn.execute(
+                    "SELECT * FROM permutation_tests WHERE run_id=? ORDER BY pair",
+                    (run_id,),
+                ).fetchall()
+            elif pair:
+                rows = conn.execute(
+                    "SELECT * FROM permutation_tests WHERE pair=? ORDER BY created_at DESC LIMIT 1",
+                    (pair,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT pt.* FROM permutation_tests pt
+                       INNER JOIN (
+                           SELECT pair, MAX(created_at) as latest
+                           FROM permutation_tests GROUP BY pair
+                       ) latest ON pt.pair=latest.pair AND pt.created_at=latest.latest
+                       ORDER BY pt.pair"""
+                ).fetchall()
+        results = []
+        for row in rows:
+            parsed = json.loads(row["results_json"]) if row["results_json"] else {}
+            combos = []
+            for key, v in parsed.items():
+                s, r = key.split("|", 1)
+                if s == "_overall_":
+                    continue
+                combos.append({**v, "strategy": s, "regime": r})
+            combos.sort(key=lambda x: x["p_value"])
+            overall = parsed.get("_overall_|_all_", {})
+            results.append({
+                "id": row["id"],
+                "pair": row["pair"],
+                "since_date": row["since_date"],
+                "n_perms": row["n_perms"],
+                "n_candles": row["n_candles"],
+                "created_at": row["created_at"],
+                "combos": combos,
+                "overall": overall,
+            })
+        return jsonify(results)
+
+    @app.route("/api/permutation/runs")
+    def api_permutation_runs():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, started_at, finished_at, since_date, n_perms, pairs,
+                          status, progress_pct, progress_msg
+                   FROM permutation_runs ORDER BY id DESC"""
+            ).fetchall()
+        return jsonify([dict(r) for r in rows])
+
     @app.route("/api/diagnostics/wr-comparison")
     def api_wr_comparison():
         try:
