@@ -477,10 +477,9 @@ def main() -> None:
 
     scheduler.add_job(
         signal_job,
-        "interval",
-        minutes=15,
+        CronTrigger(minute="0,15,30,45", second=30, timezone="UTC"),
         args=[exchanges_config, timeframe, limit, dedup_window, shadow_mode],
-        next_run_time=datetime.now(timezone.utc),
+        misfire_grace_time=60,
     )
 
     scheduler.add_job(
