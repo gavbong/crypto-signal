@@ -22,7 +22,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     "choppy": {
         "ema_9_21_crossover":    "SKIP",
         "rsi_divergence":        "FIRE",  # both directions blocked in DIRECTION_BLOCK (short WR=35% -11.86R; long WR=48% -4.37R below fee-adj BE)
-        "rsi_extreme":           "SKIP",  # WR 37.5% < BE 40%, net_r=-5.28R — false reversals in ranging markets
+        "rsi_extreme":           "FIRE",  # ETH: A-grade p=0.005 n=79 WR=59.5% +0.191R (200-perm 2026-05-27); BTC/SOL skipped via skip_strategies_for_pairs
         "vol_breakout":          "SKIP",
         "supply_demand":         "SKIP",  # moved to trending-only 2026-05-26 — choppy S&D has no edge (blocked both directions)
         "liquidity_grab":        "FIRE",  # both directions (live: long WR=56% +1.09R; short WR=56% +2.13R)

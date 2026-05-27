@@ -683,8 +683,15 @@ def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
         logger.warning(f"Unknown strategy: {strategy}")
         return None
     # Per-pair strategy skip list (config: signals.skip_strategies_for_pairs).
+    # Supports both flat lists (all regimes) and regime-keyed dicts:
+    #   flat:   pair: [strategy, ...]
+    #   regime: pair: {regime_label: [strategy, ...]}
     skip_map = cfg().get("signals", {}).get("skip_strategies_for_pairs", {})
-    if strategy in skip_map.get(pair, []):
+    pair_skip = skip_map.get(pair, [])
+    if isinstance(pair_skip, dict):
+        if strategy in pair_skip.get(regime.label, []):
+            return None
+    elif strategy in pair_skip:
         return None
     if strategy in ("supply_demand", "liquidity_grab"):
         signal = gen(pair, df, regime, timeframe, df_1h=df_1h)

@@ -150,6 +150,14 @@ signals:
       - liquidity_grab
     DJ30/USD:
       - supply_demand  # choppy regime: 34 signals, 38.2% WR, -7.36R (backtest run #15); without it DJ30 is +5.24R @ 54.2% WR
+    # rsi_extreme/choppy: ETH A-grade (p=0.005 n=79 WR=59.5%), BTC/SOL D-grade (p=0.435/0.310).
+    # Skip BTC/SOL in choppy only — other regimes (high-vol) remain active for both pairs.
+    BTC/USDT:USDT:
+      choppy:
+        - rsi_extreme
+    SOL/USDT:USDT:
+      choppy:
+        - rsi_extreme
 
   # ── Slippage-adjusted TP ─────────────────────────────────────────────────────
   # When true: TP is extended so effective RR (after entry + SL exit fill costs)
