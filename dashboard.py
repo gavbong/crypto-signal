@@ -1733,6 +1733,10 @@ def create_app() -> Flask:
                     if "/" not in pair:
                         errors += 1
                         continue
+                    raw_ts = int(candle["time"])
+                    # MT4 sends Unix seconds; DB stores milliseconds.
+                    # Guard: if sender already provided ms (>=1e12), store as-is to avoid double-multiply.
+                    ts_ms = raw_ts if raw_ts >= 1_000_000_000_000 else raw_ts * 1000
                     conn.execute(
                         """INSERT OR IGNORE INTO index_candles
                            (pair, timeframe, ts, open, high, low, close, volume)
@@ -1740,7 +1744,7 @@ def create_app() -> Flask:
                         (
                             pair,
                             candle.get("timeframe", "15m"),
-                            int(candle["time"]) * 1000,  # MT4 sends Unix seconds; DB stores milliseconds
+                            ts_ms,
                             float(candle["open"]),
                             float(candle["high"]),
                             float(candle["low"]),
