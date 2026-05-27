@@ -1786,14 +1786,14 @@ def create_app() -> Flask:
 
         if timeframe == "15m":
             candles = [
-                {"time": r["ts"], "open": r["open"], "high": r["high"],
+                {"time": r["ts"] // 1000, "open": r["open"], "high": r["high"],
                  "low": r["low"], "close": r["close"]}
                 for r in rows
             ]
         else:
             buckets: dict = {}
             for r in rows:
-                bts = (r["ts"] // interval) * interval
+                bts = (r["ts"] // 1000 // interval) * interval
                 if bts not in buckets:
                     buckets[bts] = [r["open"], r["high"], r["low"], r["close"]]
                 else:
