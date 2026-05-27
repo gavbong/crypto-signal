@@ -182,6 +182,9 @@ def fetch_poly_leaderboard(top_n: int, min_pnl: float, volume_floor: float) -> l
         if pnl < min_pnl or vol < volume_floor:
             continue
         alias = row.get("name") or row.get("pseudonym")
+        # Discard any alias that looks like a raw checksummed address (starts 0x + 40 hex chars)
+        if alias and len(alias) >= 42 and alias[:2].lower() == "0x" and alias[2:42].isalnum():
+            alias = None
         result.append({"wallet": wallet, "pnl_30d": pnl, "volume_30d": vol, "alias": alias})
 
     result.sort(key=lambda r: r["pnl_30d"], reverse=True)
