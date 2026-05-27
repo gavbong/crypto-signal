@@ -10,7 +10,7 @@ import sys
 import json
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from loguru import logger
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -958,11 +958,31 @@ def poll_new_signals(conn, for_indices: bool = False) -> list[dict]:
     if not all_rows:
         return []
 
+    # Always advance cursor past all rows — prevents re-scan even if rows are stale.
     _set_state(conn, state_key, str(all_rows[-1]["id"]))
 
+    # Drop signals whose candle fired more than 2 hours ago (e.g. backfilled history).
+    # The paper trader prices positions at the current market price, so acting on
+    # a signal from hours/days ago would fill at the wrong price.
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
+    fresh_rows = []
+    skipped = 0
+    for row in all_rows:
+        try:
+            fired_str = dict(row).get("fired_at", "")
+            fired_dt = datetime.fromisoformat(fired_str.replace("Z", "+00:00"))
+            if fired_dt >= cutoff:
+                fresh_rows.append(row)
+            else:
+                skipped += 1
+        except Exception:
+            fresh_rows.append(row)
+    if skipped:
+        logger.warning(f"poll_new_signals: skipped {skipped} stale signal(s) (fired_at > 2h ago)")
+
     if for_indices:
-        return [dict(r) for r in all_rows if (dict(r).get("exchange") or "mexc") == "tradenation"]
-    return [dict(r) for r in all_rows if (dict(r).get("exchange") or "mexc") != "tradenation"]
+        return [dict(r) for r in fresh_rows if (dict(r).get("exchange") or "mexc") == "tradenation"]
+    return [dict(r) for r in fresh_rows if (dict(r).get("exchange") or "mexc") != "tradenation"]
 
 
 # ── Daily snapshot ────────────────────────────────────────────────────────────
