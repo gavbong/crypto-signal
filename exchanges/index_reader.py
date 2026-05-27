@@ -70,13 +70,12 @@ class IndexReader:
                 fetch_limit = limit * _RESAMPLE_FACTORS.get(timeframe, 1) if need_resample else limit
 
                 if since is not None:
-                    since_s = since / 1000  # CCXT passes ms; DB stores seconds
                     rows = conn.execute(
                         """SELECT ts, open, high, low, close, volume
                            FROM index_candles
                            WHERE pair=? AND timeframe=? AND ts >= ?
                            ORDER BY ts ASC LIMIT ?""",
-                        (pair, stored_tf, since_s, fetch_limit),
+                        (pair, stored_tf, since, fetch_limit),
                     ).fetchall()
                 else:
                     rows = conn.execute(
@@ -88,7 +87,7 @@ class IndexReader:
                     ).fetchall()
                     rows = list(reversed(rows))
 
-                data = [[int(r[0]) * 1000, r[1], r[2], r[3], r[4], r[5]] for r in rows]
+                data = [[r[0], r[1], r[2], r[3], r[4], r[5]] for r in rows]
 
                 if need_resample:
                     data = _resample_ohlcv(data, timeframe, limit)
@@ -126,7 +125,7 @@ class IndexReader:
         if row is None or row[0] is None:
             logger.debug(f"IndexReader: no candles yet for {pair}")
             return False
-        age = time.time() - float(row[0])
+        age = time.time() - float(row[0]) / 1000  # DB stores ms; time.time() is seconds
         if age > _STALE_SECONDS:
             logger.warning(
                 f"IndexReader: {pair} last candle {age / 60:.0f}min old — feeder offline?"
