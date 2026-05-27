@@ -68,10 +68,8 @@ def classify_single(df: pd.DataFrame) -> tuple[str, float]:
     if pd.isna(adx_val) or pd.isna(ema_fast_val) or pd.isna(ema_slow_val):
         raise ValueError("NaN in indicator values — insufficient history or data gap")
 
-    # 3-candle EMA slope (% change) + slope acceleration (second derivative)
+    # 3-candle EMA slope (% change)
     ema_slope = (ema_fast.iloc[-1] - ema_fast.iloc[-4]) / ema_fast.iloc[-4]
-    slope_3_ago = (ema_fast.iloc[-4] - ema_fast.iloc[-7]) / ema_fast.iloc[-7] if len(ema_fast) >= 7 else float("nan")
-    slope_accel = ema_slope - slope_3_ago if not pd.isna(slope_3_ago) else float("nan")
 
     slope_thresh = c["ema_slope_threshold"]
     adx_thresh = c["adx_trend_threshold"]
@@ -99,21 +97,12 @@ def classify_single(df: pd.DataFrame) -> tuple[str, float]:
         # Slope magnitude: how steep the current momentum is
         slope_score = min(abs(ema_slope) / (slope_thresh * 10), 1.0)
 
-        # Slope acceleration guard: if momentum is significantly decelerating,
-        # the trend is exhausting — downgrade to choppy rather than fire entries.
-        # Only applies when slope_accel is computable (>= 7 candles of EMA history).
-        accel_ok = pd.isna(slope_accel)  # unknown → allow (fail-open)
-
         if ema_slope > slope_thresh and ema_fast_val > ema_slow_val:
-            decelerating = not accel_ok and slope_accel < -slope_thresh
-            if not decelerating:
-                confidence = 0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score
-                return "trending-up", round(confidence, 3)
+            confidence = 0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score
+            return "trending-up", round(confidence, 3)
         if ema_slope < -slope_thresh and ema_fast_val < ema_slow_val:
-            decelerating = not accel_ok and slope_accel > slope_thresh
-            if not decelerating:
-                confidence = 0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score
-                return "trending-down", round(confidence, 3)
+            confidence = 0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score
+            return "trending-down", round(confidence, 3)
 
     # Choppy (default) — all three indicators must be sleepy
     adx_score = max(1.0 - adx_val / adx_thresh, 0.0)
@@ -150,7 +139,6 @@ def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
     bb_width_s = bb[bb_width_col]
     bb_width_avg_s = bb_width_s.rolling(20).mean()
     ema_slope_s = (ema_fast_s - ema_fast_s.shift(3)) / ema_fast_s.shift(3)
-    ema_slope_accel_s = ema_slope_s - ema_slope_s.shift(3)  # second derivative of EMA
 
     n = len(full_df)
     labels: list[str | None] = []
@@ -167,7 +155,6 @@ def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
         bw = bb_width_s.iloc[i]
         bwa = bb_width_avg_s.iloc[i]
         slope = ema_slope_s.iloc[i]
-        slope_accel = ema_slope_accel_s.iloc[i]
         if pd.isna(adx_val) or pd.isna(efv) or pd.isna(esv):
             labels.append(None)
             confs.append(0.0)
@@ -183,25 +170,18 @@ def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
             ema_sep = abs(efv - esv) / esv
             ema_sep_score = min(ema_sep / 0.03, 1.0)
             slope_score = min(abs(slope) / (slope_thresh * 10), 1.0)
-            accel_known = not pd.isna(slope_accel)
             if slope > slope_thresh and efv > esv:
-                decelerating = accel_known and slope_accel < -slope_thresh
-                if not decelerating:
-                    labels.append("trending-up")
-                    confs.append(round(0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score, 3))
-                    continue
+                labels.append("trending-up")
+                confs.append(round(0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score, 3))
             elif slope < -slope_thresh and efv < esv:
-                decelerating = accel_known and slope_accel > slope_thresh
-                if not decelerating:
-                    labels.append("trending-down")
-                    confs.append(round(0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score, 3))
-                    continue
-            # Decelerating trend or slope mismatch — fall through to choppy
-            adx_s2 = max(1.0 - adx_val / adx_thresh, 0.0)
-            bb_tight = max(1.0 - bw / (bwa * 1.2), 0.0) if bb_valid else 0.5
-            slope_flat = max(1.0 - abs(slope) / (slope_thresh * 3), 0.0)
-            labels.append("choppy")
-            confs.append(round(0.5 * adx_s2 + 0.3 * bb_tight + 0.2 * slope_flat, 3))
+                labels.append("trending-down")
+                confs.append(round(0.4 * adx_score + 0.35 * ema_sep_score + 0.25 * slope_score, 3))
+            else:
+                adx_s2 = max(1.0 - adx_val / adx_thresh, 0.0)
+                bb_tight = max(1.0 - bw / (bwa * 1.2), 0.0) if bb_valid else 0.5
+                slope_flat = max(1.0 - abs(slope) / (slope_thresh * 3), 0.0)
+                labels.append("choppy")
+                confs.append(round(0.5 * adx_s2 + 0.3 * bb_tight + 0.2 * slope_flat, 3))
         else:
             adx_score = max(1.0 - adx_val / adx_thresh, 0.0)
             bb_tight = max(1.0 - bw / (bwa * 1.2), 0.0) if bb_valid else 0.5
