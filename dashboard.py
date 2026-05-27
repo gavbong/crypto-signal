@@ -1740,7 +1740,7 @@ def create_app() -> Flask:
                         (
                             pair,
                             candle.get("timeframe", "15m"),
-                            int(candle["time"]),
+                            int(candle["time"]) * 1000,  # MT4 sends Unix seconds; DB stores milliseconds
                             float(candle["open"]),
                             float(candle["high"]),
                             float(candle["low"]),
