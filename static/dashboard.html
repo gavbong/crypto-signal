@@ -3023,6 +3023,7 @@ let _idxCurrentPair = 'DJ30/USD';
 let _idxCurrentTf = '15m';
 let _idxSignals = [];
 let _idxPriceLines = [];
+let _idxSelectedSignalId = null;
 
 function idxSelectPair(btn, pair) {
   document.querySelectorAll('.idx-pair-btn').forEach(b => b.classList.remove('active'));
@@ -3071,13 +3072,22 @@ function _idxDrawSignalLines(signals, pair) {
   _idxPriceLines.forEach(l => { try { _idxSeries.removePriceLine(l); } catch (_) {} });
   _idxPriceLines = [];
 
-  const latest = signals.find(s => s.pair === pair && !s.outcome);
-  if (!latest) return;
+  // Use selected signal if set, else fall back to latest open for this pair
+  let sig = _idxSelectedSignalId != null
+    ? signals.find(s => s.id === _idxSelectedSignalId)
+    : null;
+  if (!sig) sig = signals.find(s => s.pair === pair && !s.outcome);
+  if (!sig) return;
+
   const lines = [
-    { price: latest.entry, color: '#F0A500', lineStyle: 2, title: 'Entry' },
-    { price: latest.stop,  color: '#EF4444', lineStyle: 2, title: 'SL' },
-    { price: latest.tp,    color: '#22C55E', lineStyle: 2, title: 'TP' },
+    { price: sig.entry, color: '#F0A500', lineStyle: 2, title: 'Entry' },
+    { price: sig.stop,  color: '#EF4444', lineStyle: 2, title: 'SL' },
+    { price: sig.tp,    color: '#22C55E', lineStyle: 2, title: 'TP' },
   ];
+  if (sig.outcome_price) {
+    const exitColor = (sig.outcome === 'tp_hit' || sig.outcome === 'win') ? '#22C55E' : '#EF4444';
+    lines.push({ price: sig.outcome_price, color: exitColor, lineStyle: 0, title: 'Exit' });
+  }
   _idxPriceLines = lines
     .filter(cfg => cfg.price)
     .map(cfg => _idxSeries.createPriceLine(cfg));
@@ -3117,8 +3127,10 @@ function _idxRenderSignalTable(signals) {
     const c = (o === 'tp_hit' || o === 'win') ? '#22C55E' : '#EF4444';
     return `<span style="color:${c}">${o}</span>`;
   };
-  tbody.innerHTML = signals.map(s => `
-    <tr style="border-bottom:1px solid var(--border)">
+  tbody.innerHTML = signals.map(s => {
+    const isSelected = s.id === _idxSelectedSignalId;
+    const rowBg = isSelected ? 'background:rgba(240,165,0,0.08);' : '';
+    return `<tr data-sig-id="${s.id}" style="cursor:pointer;border-bottom:1px solid var(--border);${rowBg}" onclick="idxSelectSignal(${s.id})">
       <td style="padding:6px 12px">${s.pair}</td>
       <td style="padding:6px 12px;color:${dirColor(s.direction)}">${s.direction.toUpperCase()}</td>
       <td style="padding:6px 12px;color:var(--muted)">${s.strategy}</td>
@@ -3129,7 +3141,26 @@ function _idxRenderSignalTable(signals) {
       <td style="padding:6px 12px;text-align:right;color:var(--muted)">${s.quality != null ? Math.round(s.quality) : '—'}</td>
       <td style="padding:6px 12px">${outcomeHtml(s.outcome)}</td>
       <td style="padding:6px 12px;color:var(--muted);font-size:10px">${s.fired_at ? s.fired_at.slice(0,16).replace('T',' ') : ''}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+}
+
+function idxSelectSignal(id) {
+  if (_idxSelectedSignalId === id) {
+    _idxSelectedSignalId = null;
+    _idxDrawSignalLines(_idxSignals, _idxCurrentPair);
+    _idxRenderSignalTable(_idxSignals);
+    return;
+  }
+  _idxSelectedSignalId = id;
+  const sig = _idxSignals.find(s => s.id === id);
+  if (!sig) return;
+  if (sig.pair !== _idxCurrentPair) {
+    const btn = document.querySelector(`.idx-pair-btn[data-pair="${sig.pair}"]`);
+    if (btn) { idxSelectPair(btn, sig.pair); return; }
+  }
+  _idxDrawSignalLines(_idxSignals, _idxCurrentPair);
+  _idxRenderSignalTable(_idxSignals);
 }
 
 // Hook into the view switch to init chart on first visit

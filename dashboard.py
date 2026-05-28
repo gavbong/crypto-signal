@@ -1820,7 +1820,7 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT id, pair, direction, strategy, regime, entry_price,
                           suggested_stop_loss, suggested_take_profit,
-                          fired_at, outcome, pnl_r, quality_score
+                          fired_at, outcome, outcome_price, pnl_r, quality_score
                    FROM signals
                    WHERE exchange='tradenation' AND backtest_run_id IS NULL
                    ORDER BY fired_at DESC LIMIT 50"""
@@ -1837,6 +1837,7 @@ def create_app() -> Flask:
                 "tp": r["suggested_take_profit"],
                 "fired_at": _normalize_ts(r["fired_at"]),
                 "outcome": r["outcome"],
+                "outcome_price": r["outcome_price"],
                 "pnl_r": r["pnl_r"],
                 "quality": r["quality_score"],
             }
