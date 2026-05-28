@@ -586,7 +586,7 @@ body{
       <thead>
         <tr>
           <th>Pair</th><th>Exch</th><th>Dir</th><th>Strategy</th><th>Regime</th><th>Opened</th><th>Closed</th>
-          <th>Entry</th><th>Exit</th><th>Reason</th>
+          <th>Entry</th><th class="r">Size</th><th>Exit</th><th>Reason</th>
           <th class="r">Costs ⓘ</th><th class="r">Net P&amp;L</th>
         </tr>
       </thead>
@@ -1723,6 +1723,7 @@ function _renderTradePage(prevIds, tradesOverride) {
       <td class="td-date">${fmtDT(t.opened_at)}</td>
       <td class="td-date">${fmtDT(t.closed_at)}</td>
       <td class="td-mono">${fmt(t.entry_price)}</td>
+      <td class="td-mono cell-r" style="color:var(--muted)">${t.contracts != null ? +t.contracts.toPrecision(4) : '—'}</td>
       <td class="td-mono">${fmt(t.exit_price)}</td>
       <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
       <td class="cell-r costs-cell" data-tip="${costsTip}">${costsStr}</td>
