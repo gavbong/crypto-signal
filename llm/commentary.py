@@ -19,7 +19,7 @@ def _get_client() -> anthropic.Anthropic:
 
 
 _SYSTEM_PROMPT = """\
-You are a crypto futures signal analyst. A signal has fired on a MEXC perpetual pair.
+You are a futures and index signal analyst. A signal has fired on a trading pair.
 Your job is to write 2-3 sentences of clear, specific commentary for a trader who is
 deciding whether to act on this signal.
 
@@ -49,6 +49,7 @@ def generate_commentary(signal: dict, regime_context: dict) -> Optional[str]:
     context_block = {
         "signal": {
             "pair": signal["pair"],
+            "exchange": signal.get("exchange", "unknown"),
             "direction": signal["direction"],
             "strategy": signal["strategy"],
             "regime": signal["regime"],
