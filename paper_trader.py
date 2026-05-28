@@ -201,6 +201,21 @@ def get_free_balance_indices(conn) -> float:
     return INITIAL_BALANCE + closed - locked
 
 
+def get_realized_equity(conn, for_indices: bool) -> float:
+    """Realized equity for drawdown calculation: INITIAL_BALANCE + closed P&L.
+
+    Excludes locked margin from the denominator so open positions don't trigger
+    false drawdown lockouts. Unrealized P&L is intentionally excluded — drawdown
+    protection should only fire on actual closed losses, not intrabar fluctuations.
+    """
+    exc_filter = "exchange = 'tradenation'" if for_indices else "exchange != 'tradenation'"
+    closed = conn.execute(
+        f"SELECT COALESCE(SUM(pnl_usdt), 0) FROM paper_positions "
+        f"WHERE exit_price IS NOT NULL AND {exc_filter}"
+    ).fetchone()[0]
+    return INITIAL_BALANCE + closed
+
+
 def _fetch_tickers(exchange_map: dict, positions: list) -> dict[tuple, float]:
     """Fetch live prices for positions, routing each to its originating exchange.
     Returns {(exchange_id, pair): price}."""
@@ -689,8 +704,9 @@ def open_position(conn, signal: dict, live_price: float) -> dict | None:
         logger.warning("Paper: no free balance — skipping")
         return None
 
-    # Drawdown gate — check mode before sizing so half_size can reduce risk_pct
-    _dd_mode = _drawdown_mode(conn, _cb_pfx, free)
+    # Drawdown gate — use realized equity (not free cash) so open positions don't
+    # trigger false lockouts. Locked margin is not a loss.
+    _dd_mode = _drawdown_mode(conn, _cb_pfx, get_realized_equity(conn, exchange_id == "tradenation"))
     if _dd_mode in ("lockout", "halt"):
         logger.debug(
             f"Paper: drawdown mode={_dd_mode} — skipping signal {signal.get('id')}"
@@ -1063,8 +1079,8 @@ def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
     _cb_pfx = "idx_" if for_indices else ""
 
     # Refresh daily/weekly open balance (handles day/week boundary resets)
-    _current_balance = (get_free_balance_indices(conn) if for_indices
-                        else get_free_balance(conn))
+    # Use realized equity (not free cash) — open positions lock margin but are not losses.
+    _current_balance = get_realized_equity(conn, for_indices)
     _refresh_drawdown_state(conn, _cb_pfx, _current_balance)
 
     # Drawdown halt: close all open positions and skip new signals
