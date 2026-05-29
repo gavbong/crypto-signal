@@ -50,6 +50,11 @@ MIN_CONTRACTS: dict[str, float] = {
     "SOL/USDT:USDT": 0.1,
     "BNB/USDT:USDT": 0.01,
     "ZEC/USDT:USDT": 0.1,
+    # Trade Nation CFD minimums (0.1 lot for major indices, 0.01 for gold)
+    "DJ30/USD":    0.1,
+    "FTSE100/USD": 0.1,
+    "DAX/USD":     0.1,
+    "XAU/USD":     0.01,
 }
 DEFAULT_MIN_CONTRACT = 0.01
 
