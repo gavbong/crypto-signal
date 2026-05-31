@@ -1,6 +1,6 @@
 # mexc-signal-engine
 
-Multi-exchange perpetual futures signal engine. Classifies market regime on 1h candles, fires long/short entry signals on 15m candles across MEXC, Binance, and OKX, and manages a simulated paper-trading account with realistic fees, slippage, and funding costs. A Flask dashboard ties it all together.
+Multi-exchange perpetual futures and index CFD signal engine. Classifies market regime on 1h candles, fires long/short entry signals on 15m candles across MEXC, Binance, OKX (crypto) and Trade Nation (DJ30/FTSE100/DAX indices), and manages a simulated paper-trading account with realistic fees, slippage, and funding costs. A Flask dashboard ties it all together.
 
 ---
 
@@ -12,14 +12,14 @@ signal_engine.py      — APScheduler loop, runs every 15 min
 ├── signals/selector.py    — regime → active strategies + direction blocks
 ├── signals/generator.py   — per-strategy signal logic, ATR stops, take-profit calc
 ├── signals/quality.py     — composite quality score, strategy health auto-disable
-└── alerts/telegram.py     — Telegram signal cards
+└── alerts/telegram.py     — Telegram signal cards with LLM commentary
 
 paper_trader.py       — APScheduler loop, simulates fills with fees + slippage
 copy_trader.py        — APScheduler loop, mirrors Hyperliquid leaderboard traders
 polymarket_trader.py  — APScheduler loop, tracks Polymarket wallet positions
 dashboard.py          — Flask API + single-page dashboard
 backtest.py           — Offline backtest runner
-strategy_advisor.py   — LLM-driven weekly strategy health review
+strategy_advisor.py   — Daily strategy health review (net_r + win-rate gates)
 eval/outcomes.py      — Outcome evaluator (TP / SL / timeout labelling)
 ```
 
@@ -52,6 +52,7 @@ python dashboard.py         # dashboard at http://127.0.0.1:5000
 | MEXC | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT · XAUT/USDT:USDT | Active |
 | Binance | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT | Active |
 | OKX | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT | Active |
+| Trade Nation | DJ30/USD · FTSE100/USD · DAX/USD | Active (index CFDs) |
 | Hyperliquid | — | Disabled (high slippage + USDC funding costs) |
 
 Toggle exchanges in `config.yaml` under `exchanges.<name>.enabled`.
@@ -77,49 +78,49 @@ Runs on 1h candles before each signal cycle. Output: one of four labels + a conf
 
 Each strategy is enabled or disabled per regime in `signals/selector.py`. Direction blocks suppress specific long/short trades calibrated from live results.
 
-| Strategy | Active in regimes | Notes |
+| Strategy | Active regimes | Notes |
 |---|---|---|
-| `ema_9_21_crossover` | trending-up (long only), trending-down (short only) | EMA 9/21 crossover with volume confirmation |
-| `volume_spike` | trending-up | Volume > 2× avg; institutional participation |
-| `vol_breakout` | trending-down, high-volatility | Momentum breakout with volume gate |
-| `rsi_divergence` | choppy (long only) | Price/RSI divergence; short direction blocked by live data |
-| `supply_demand` | choppy | 1h supply/demand zone approach detection |
-| `liquidity_grab` | choppy, high-volatility | Stop sweep + reversal; confidence gates block losers |
-| `rsi_extreme` | high-volatility (short only) | RSI exits extreme zone; long direction blocked by live data |
+| `ema_9_21_crossover` | trending-up (long), trending-down (short) | EMA 9/21 crossover with volume confirmation |
+| `rsi_divergence` | trending-down (short only) | Bearish divergence confirming downtrend; long direction blocked |
+| `rsi_extreme` | choppy (ETH only), high-volatility (short only) | RSI exits extreme zone; long blocked in high-vol; BTC/SOL blocked in choppy |
+| `vol_breakout` | high-volatility (long only) | Momentum breakout; short direction blocked by live data |
+| `supply_demand` | trending-up, trending-down | Zone rejection with trend direction; no edge in choppy (SKIP) |
+| `liquidity_grab` | choppy, high-volatility | Stop sweep + reversal; both directions active |
+| `session_open_breakout` | trending-up, trending-down, high-volatility | ORB: indices only (DJ30/FTSE100/DAX); first 30 min defines range, fires 30-90 min after open with volume confirmation |
 
-**Liquidity grab confidence gates** (added 2026-05-18 after live loss analysis):
-- choppy + confidence < 0.30 → blocked (WR 40.8%, avg_r −0.078)
-- high-volatility + confidence ≥ 0.50 → blocked (trending move, not reversal)
+Per-pair skips (configured in `config.yaml → skip_strategies_for_pairs`):
+- DAX: `supply_demand`, `liquidity_grab` — 0-20% WR in backtest
+- DJ30: `supply_demand` — 38% WR, −7.36R in choppy
+- BTC/SOL: `rsi_extreme` in choppy only — ETH A-grade (WR 59.5%, p=0.005); BTC/SOL D-grade
 
 ---
 
 ## Risk parameters
 
-Take-profit and stop-loss use ATR-based sizing. RR ratios stack: regime-level defaults are overridden by per-strategy values when present.
+Take-profit and stop-loss use ATR-based sizing. RR ratios stack: regime-level defaults are overridden by per-strategy values when present, and by per-regime-per-strategy overrides at the highest precision.
 
 ```yaml
 # Regime-level RR
-rr_ratio: 2.0          # choppy / high-vol
 rr_ratio_choppy: 1.5
 rr_ratio_trending: 2.5
 rr_ratio_high_vol: 2.0
 
-# Per-strategy overrides (calibrated from 15 live trades, 2026-05-18)
+# Per-strategy overrides
 rr_ratio_strategy:
-  liquidity_grab: 2.5  # failed sweeps gap hard through SL
+  liquidity_grab: 2.5       # failed sweeps gap hard through SL
   vol_breakout: 2.0
   rsi_divergence: 2.0
-  supply_demand: 2.0
   rsi_extreme: 2.0
   ema_9_21_crossover: 2.0
+  session_open_breakout: 1.5  # ORB: range-based SL wider; lower RR keeps TP reachable
 
-# Stop width by regime
-atr_stop_multiplier: 1.5
-atr_stop_multiplier_choppy: 2.0
-atr_stop_multiplier_high_vol: 2.5
+# Per-regime-per-strategy (highest priority)
+rr_ratio_regime_overrides:
+  choppy:
+    liquidity_grab: 1.5     # mean-reversion in chop: 2.5R TP never hit; 1.5R is
 ```
 
-Asset class profiles in `asset_class_profiles` apply separate stop floor/ceiling for crypto vs gold (XAUT).
+Asset class profiles (`asset_class_profiles`) apply separate stop floor/ceiling for crypto, gold (XAUT), and indices.
 
 ---
 
@@ -130,18 +131,24 @@ Every signal gets a composite quality score (0–100) before it fires:
 | Component | Weight | Source |
 |---|---|---|
 | Regime confidence | 20% | Classifier output |
-| Rolling 30d win rate | 80% | Live closed signals for this pair+strategy+regime |
+| Rolling 30d win rate | 80% | Live closed signals for this strategy+regime+direction |
 
-Signals below `signal_quality.min_quality_score: 40` are suppressed. A bootstrap win rate of 45% is assumed when fewer than 20 live signals exist for a combo.
+Signals below `signal_quality.min_quality_score: 40` are suppressed. A bootstrap win rate of **0.40** is assumed when fewer than 20 live signals exist for a combo.
 
-**Strategy health auto-disable:**
+> **Quality ceiling math:** `score = (0.20 × conf + 0.80 × wr) × 100`. At bootstrap WR 0.40, max score = 52. Do not raise `min_quality_score` above 52 without also raising `bootstrap_wr`, or all new strategy/regime combos will be silently blocked.
 
-| Status | Win rate threshold |
+**Strategy health auto-disable** (`signals/quality.py`, updated per resolved outcome):
+
+| Status | Condition |
 |---|---|
-| WATCH | < 38% |
-| CAUTION | < 33% |
-| DISABLED | < 30% (approx breakeven at RR 2.33) |
-| Re-enabled | > 40% for 14+ days |
+| HEALTHY | WR ≥ 38% and net_r/trade ≥ −0.10 |
+| CAUTION | WR < 38%, or WR ≥ 38% but net_r/trade < −0.10 |
+| DISABLED | WR < 30%, or net_r/trade < −0.20 (regardless of WR) |
+| Re-enabled | WR > 40% sustained for 14+ days |
+
+The net_r/trade gate catches combos that pass the WR breakeven check but still lose money due to bad R:R (e.g. wins too small relative to losses). Thresholds: `net_r_per_trade_caution: -0.10`, `net_r_per_trade_disable: -0.20` in `config.yaml`.
+
+The daily `strategy_advisor.py` review mirrors these thresholds and writes `analysis/review-YYYY-MM-DD.{json,md}`, alerting via Telegram if any DISABLE rows exist.
 
 ---
 
@@ -229,7 +236,7 @@ Single-page app at `http://localhost:5000`. Six tabs:
 | `GET /api/regime` | Regime timeline segments |
 | `GET /api/health` | Engine heartbeat |
 | `GET /api/config/pairs` | Active exchange/pair list |
-| `GET /api/analysis/latest` | Latest LLM strategy analysis |
+| `GET /api/analysis/latest` | Latest strategy health analysis |
 | `GET /api/copy/account` | Copy trader account summary |
 | `GET /api/copy/traders` | Active HL traders |
 | `GET /api/copy/positions` | Open copy positions |
@@ -255,7 +262,9 @@ Single-page app at `http://localhost:5000`. Six tabs:
 python backtest.py --start 2025-01-01 --end 2025-12-31
 ```
 
-Results are stored in the DB and visible in the Backtest tab. Use A/B compare mode to overlay two runs. Best run to date: Run #12 (+64.20R, 48% WR, 1960 signals).
+Results are stored in the DB and visible in the Backtest tab. Use A/B compare mode to overlay two runs.
+
+Best full-year run to date (run #22, since 2026-01-01): **+7.14R net, 46.2% WR, Sharpe 0.30, 956 signals.** May-only window (run #19): +13.8R, 49.2% WR, Sharpe 3.67.
 
 ---
 
@@ -266,9 +275,11 @@ Two models are used:
 | Model | Role |
 |---|---|
 | `claude-haiku-4-5-20251001` | Per-signal commentary appended to Telegram alerts |
-| `claude-sonnet-4-6` | Weekly strategy health analysis (`strategy_advisor.py`) |
+| `claude-sonnet-4-6` | Daily strategy health analysis (`strategy_advisor.py`) |
 
-Commentary is cached for `llm.cache_ttl_seconds: 300`. Set `ANTHROPIC_API_KEY` in `.env`.
+Commentary pulls recent CoinTelegraph/CoinDesk RSS headlines for news context. Cached for `llm.cache_ttl_seconds: 300`. Set `ANTHROPIC_API_KEY` in `.env`.
+
+All LLM output fields are HTML-escaped before injection into Telegram `parse_mode=HTML` messages.
 
 ---
 
