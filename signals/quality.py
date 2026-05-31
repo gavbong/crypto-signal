@@ -149,6 +149,16 @@ def update_strategy_health(conn: sqlite3.Connection, strategy: str,
         status = "HEALTHY"
         disabled_at = None
 
+    nr_caution_t = h_cfg.get("net_r_per_trade_caution", -0.10)
+    nr_disable_t = h_cfg.get("net_r_per_trade_disable", -0.20)
+    net_r_per_trade = net_r / total
+    if net_r_per_trade < nr_disable_t and status != "DISABLED":
+        status = "DISABLED"
+        disabled_at = now
+    elif net_r_per_trade < nr_caution_t and status == "HEALTHY":
+        status = "CAUTION"
+        disabled_at = None
+
     conn.execute(
         """INSERT INTO strategy_health
                (strategy, regime, direction, asset_class, window_start, window_end,

@@ -100,9 +100,12 @@ def run_strategy_review() -> list[dict]:
         else:
             status = "DISABLE"
 
-        # WR above breakeven but net_r/trade is negative means actual losses exceed
-        # assumed RR (slippage, partial fills, early stops). Demote to CAUTION.
-        if status == "HEALTHY" and n > 0 and (net_r / n) < -0.1:
+        # net_r/trade gate: negative R-per-trade means losses exceed wins in value even
+        # with adequate WR (slippage, partial fills, early stops, bad RR).
+        nr_per_trade = (net_r / n) if n > 0 else 0
+        if nr_per_trade < -0.20:
+            status = "DISABLE"
+        elif nr_per_trade < -0.10 and status == "HEALTHY":
             status = "CAUTION"
 
         rows.append({

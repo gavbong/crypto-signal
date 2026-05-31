@@ -186,6 +186,8 @@ strategy_health:
   watch_threshold: 0.38          # WR below this → WATCH
   caution_threshold: 0.33        # WR below this → CAUTION
   disable_threshold: 0.30        # WR below this → DISABLED (approx breakeven for RR=2.33)
+  net_r_per_trade_caution: -0.10  # net_r/trade below this demotes HEALTHY → CAUTION
+  net_r_per_trade_disable: -0.20  # net_r/trade below this forces DISABLED regardless of WR
   re_enable_threshold: 0.40      # auto re-enable if WR recovers above this for 14d
   re_enable_min_days: 14
 

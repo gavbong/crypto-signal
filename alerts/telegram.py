@@ -7,6 +7,7 @@ Copy alerts:    COPY_TELEGRAM_BOT_TOKEN + COPY_TELEGRAM_CHAT_ID (separate bot)
 Silently skips if credentials are missing or still placeholders — the engine
 and copy trader keep running without Telegram configured.
 """
+import html
 import os
 import requests
 from loguru import logger
@@ -70,16 +71,16 @@ def _format_message(signal: dict) -> str:
         tp_pct = f"  <i>(+{pct:.1f}%)</i>" if direction == "LONG" else f"  <i>(-{pct:.1f}%)</i>"
 
     session = signal.get("market_session", "")
-    session_line = f"<b>Session </b>  {session}" if session else ""
+    session_line = f"<b>Session </b>  {html.escape(session)}" if session else ""
 
     _EXCHANGE_LABELS = {"tradenation": "Trade Nation", "mexc": "MEXC"}
     exchange = _EXCHANGE_LABELS.get(signal.get("exchange", "mexc"), signal.get("exchange", "mexc").upper())
 
     lines = [
-        f"{colour} <b>{direction}</b>  {pair}  <code>[{exchange}]</code>  <code>[{mode}]</code>",
+        f"{colour} <b>{direction}</b>  {html.escape(pair)}  <code>[{html.escape(exchange)}]</code>  <code>[{mode}]</code>",
         f"",
-        f"<b>Strategy</b>  {strategy}",
-        f"<b>Regime  </b>  {regime}  <i>(conf {confidence:.0%})</i>",
+        f"<b>Strategy</b>  {html.escape(strategy)}",
+        f"<b>Regime  </b>  {html.escape(regime)}  <i>(conf {confidence:.0%})</i>",
     ]
     if session_line:
         lines.append(session_line)
@@ -91,7 +92,7 @@ def _format_message(signal: dict) -> str:
 
     commentary = signal.get("llm_commentary")
     if commentary:
-        lines += ["", commentary]
+        lines += ["", html.escape(commentary)]
 
     return "\n".join(lines)
 

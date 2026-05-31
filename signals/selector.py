@@ -21,7 +21,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
     },
     "choppy": {
         "ema_9_21_crossover":    "SKIP",
-        "rsi_divergence":        "FIRE",  # both directions blocked in DIRECTION_BLOCK (short WR=35% -11.86R; long WR=48% -4.37R below fee-adj BE)
+        "rsi_divergence":        "SKIP",  # both directions unprofitable in choppy (short -11.86R; long -4.37R); was FIRE+DIRECTION_BLOCK(both) — simplified to SKIP
         "rsi_extreme":           "FIRE",  # ETH: A-grade p=0.005 n=79 WR=59.5% +0.191R (200-perm 2026-05-27); BTC/SOL skipped via skip_strategies_for_pairs
         "vol_breakout":          "SKIP",
         "supply_demand":         "SKIP",  # moved to trending-only 2026-05-26 — choppy S&D has no edge (blocked both directions)
@@ -47,10 +47,8 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
 # Updated 2026-05-19: vol_breakout high-vol short blocked — 0/3 live (0% WR) vs 41.8% BT (42pp gap).
 # Updated 2026-05-26: supply_demand removed from choppy entirely (moved to trending-only).
 #                     rsi_divergence added to trending-down, long blocked (bearish-div short only).
+# Updated 2026-05-31: rsi_divergence choppy changed to SKIP in map; DIRECTION_BLOCK entry removed.
 DIRECTION_BLOCK: dict[str, dict[str, set]] = {
-    "choppy": {
-        "rsi_divergence": {"short", "long"},  # short WR=35% -11.86R (blocked 2026-05-14); long WR=48% -4.37R (blocked 2026-05-22, fee-adj BE=61%)
-    },
     "trending-down": {
         "rsi_divergence": {"long"},  # only bearish divergence shorts; bullish divergence long = counter-trend bounce in downtrend
     },
