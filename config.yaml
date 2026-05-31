@@ -178,7 +178,7 @@ signal_quality:
     stop_quality: 0.00           # zeroed — 15m crypto stops (0.3-0.8%) cluster near the min of the 0.3-3% range,
                                  # giving near-zero scores and blocking valid signals. Hard gate (is_stop_in_range)
                                  # already handles truly bad stops.
-  bootstrap_wr: 0.35             # WR assumed when <20 live signals exist for a combo; lowered 2026-05-22 (was 0.45 — near fee-adj BE, new combos fired too freely)
+  bootstrap_wr: 0.40             # WR assumed when <20 live signals exist for a combo. MATH: quality=bootstrap_wr*0.8*100+conf*0.2*100; need>=40. At 0.35 requires conf>=0.60 — blocks ALL trending-down combos (conf~0.52-0.59). At 0.40 requires conf>=0.40. Raised 2026-05-28 (was 0.35; was 0.45 before 2026-05-22 but that fired too freely at higher min_quality). Do not lower below 0.40 without also adjusting min_quality or w_conf.
 
 strategy_health:
   auto_disable_window_days: 30   # rolling window for WR calculation
