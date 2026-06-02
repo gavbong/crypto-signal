@@ -39,7 +39,8 @@ def _make_db() -> sqlite3.Connection:
 
 
 def _insert(conn, pair="DJ30/USD", age_seconds=60):
-    ts = int(time.time()) - age_seconds
+    # DB stores timestamps in milliseconds (post ISSUE-003 migration)
+    ts = (int(time.time()) - age_seconds) * 1000
     conn.execute(
         "INSERT OR REPLACE INTO index_candles (pair,timeframe,ts,open,high,low,close,volume) "
         "VALUES (?,?,?,?,?,?,?,?)",
@@ -105,6 +106,8 @@ def test_fetch_ticker_returns_last_close():
         ticker = reader.fetch_ticker("DJ30/USD")
     assert ticker is not None
     assert ticker["last"] == 34510.0
+    assert ticker["high"] == 34560.0
+    assert ticker["low"]  == 34480.0
     assert ticker["symbol"] == "DJ30/USD"
 
 
@@ -121,9 +124,9 @@ def test_fetch_ticker_stale_returns_none():
 def test_since_filters_candles():
     conn = _make_db()
     now = int(time.time())
-    # Insert three candles at t-300, t-200, t-100
+    # Insert three candles at t-300, t-200, t-100 (ts in ms, post ISSUE-003)
     for age in (300, 200, 100):
-        ts = now - age
+        ts = (now - age) * 1000
         conn.execute(
             "INSERT OR REPLACE INTO index_candles (pair,timeframe,ts,open,high,low,close,volume) "
             "VALUES (?,?,?,?,?,?,?,?)",
