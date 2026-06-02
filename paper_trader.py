@@ -221,21 +221,22 @@ def get_realized_equity(conn, for_indices: bool) -> float:
     return INITIAL_BALANCE + closed
 
 
-def _fetch_tickers(exchange_map: dict, positions: list) -> dict[tuple, float]:
-    """Fetch live prices for positions, routing each to its originating exchange.
-    Returns {(exchange_id, pair): price}."""
+def _fetch_tickers(exchange_map: dict, positions: list) -> dict[tuple, dict]:
+    """Fetch live tickers for positions, routing each to its originating exchange.
+    Returns {(exchange_id, pair): ticker_dict} where ticker_dict has at least 'last'.
+    IndexReader tickers also carry 'high' and 'low' for intrabar SL/TP detection."""
     by_exchange: dict[str, set] = {}
     for pos in positions:
         exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
         by_exchange.setdefault(exc_id, set()).add(pos["pair"])
 
-    prices: dict[tuple, float] = {}
+    prices: dict[tuple, dict] = {}
     for exc_id, pairs in by_exchange.items():
         exchange = exchange_map.get(exc_id) or next(iter(exchange_map.values()))
         for pair in pairs:
             ticker = fetch_ticker_safe(exchange, pair)
             if ticker and ticker.get("last"):
-                prices[(exc_id, pair)] = float(ticker["last"])
+                prices[(exc_id, pair)] = ticker
     return prices
 
 
@@ -258,9 +259,10 @@ def get_unrealized_pnl(conn, exchange_map: dict, exchange_filter: str | None = N
     total = 0.0
     for pos in rows:
         exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
-        live = prices.get((exc_id, pos["pair"]))
-        if live is None:
+        ticker = prices.get((exc_id, pos["pair"]))
+        if ticker is None:
             continue
+        live = float(ticker["last"])
         if pos["direction"] == "long":
             total += (live - pos["entry_price"]) * pos["contracts"]
         else:
@@ -914,27 +916,39 @@ def check_positions(conn, exchange_map: dict) -> int:
     closed = 0
     for pos in rows:
         exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
-        live = prices.get((exc_id, pos["pair"]))
-        if live is None:
+        ticker = prices.get((exc_id, pos["pair"]))
+        if ticker is None:
             logger.warning(f"Paper: no ticker for {pos['pair']} ({exc_id}) — skipping position check")
             continue
 
+        live = float(ticker["last"])
         conn.execute("UPDATE paper_positions SET last_price=? WHERE id=?", (live, pos["id"]))
 
-        if pos["direction"] == "long":
-            if live <= pos["stop_loss"]:
-                close_position(conn, pos, live, "stop_loss")
-                closed += 1
-            elif live >= pos["take_profit"]:
-                close_position(conn, pos, live, "take_profit")
-                closed += 1
-        else:  # short
-            if live >= pos["stop_loss"]:
-                close_position(conn, pos, live, "stop_loss")
-                closed += 1
-            elif live <= pos["take_profit"]:
-                close_position(conn, pos, live, "take_profit")
-                closed += 1
+        if exc_id == "tradenation":
+            # Use candle high/low for intrabar SL/TP detection; fill at the SL/TP level
+            c_high = float(ticker.get("high") or live)
+            c_low  = float(ticker.get("low")  or live)
+            if pos["direction"] == "long":
+                if c_low <= pos["stop_loss"]:
+                    close_position(conn, pos, pos["stop_loss"], "stop_loss"); closed += 1
+                elif c_high >= pos["take_profit"]:
+                    close_position(conn, pos, pos["take_profit"], "take_profit"); closed += 1
+            else:
+                if c_high >= pos["stop_loss"]:
+                    close_position(conn, pos, pos["stop_loss"], "stop_loss"); closed += 1
+                elif c_low <= pos["take_profit"]:
+                    close_position(conn, pos, pos["take_profit"], "take_profit"); closed += 1
+        else:
+            if pos["direction"] == "long":
+                if live <= pos["stop_loss"]:
+                    close_position(conn, pos, live, "stop_loss"); closed += 1
+                elif live >= pos["take_profit"]:
+                    close_position(conn, pos, live, "take_profit"); closed += 1
+            else:
+                if live >= pos["stop_loss"]:
+                    close_position(conn, pos, live, "stop_loss"); closed += 1
+                elif live <= pos["take_profit"]:
+                    close_position(conn, pos, live, "take_profit"); closed += 1
     conn.commit()
     return closed
 
@@ -954,10 +968,10 @@ def check_timeouts(conn, exchange_map: dict) -> int:
     closed = 0
     for pos in rows:
         exc_id = (dict(pos).get("exchange") or "mexc")
-        live = prices.get((exc_id, pos["pair"]))
-        if live is None:
+        ticker = prices.get((exc_id, pos["pair"]))
+        if ticker is None:
             continue
-        close_position(conn, dict(pos), live, "timeout")
+        close_position(conn, dict(pos), float(ticker["last"]), "timeout")
         closed += 1
     return closed
 
@@ -1098,9 +1112,9 @@ def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
             halt_prices = _fetch_tickers(exchange_map, halt_rows)
             for pos in halt_rows:
                 exc_id = dict(pos).get("exchange") or "mexc"
-                live = halt_prices.get((exc_id, pos["pair"]))
-                if live:
-                    close_position(conn, dict(pos), live, f"drawdown_{_dd_mode}")
+                ticker = halt_prices.get((exc_id, pos["pair"]))
+                if ticker:
+                    close_position(conn, dict(pos), float(ticker["last"]), f"drawdown_{_dd_mode}")
             logger.warning(
                 f"Paper[{acct}]: drawdown {_dd_mode} — closed {len(halt_rows)} position(s), "
                 f"skipping new signals"
@@ -1148,21 +1162,37 @@ def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
         for pos in rows:
             exc_id = pos["exchange"] if "exchange" in pos.keys() else "mexc"
-            live = prices.get((exc_id, pos["pair"]))
-            if live is None:
+            ticker = prices.get((exc_id, pos["pair"]))
+            if ticker is None:
                 logger.warning(f"Paper[{acct}]: no ticker for {pos['pair']} — skipping")
                 continue
+            live = float(ticker["last"])
             conn.execute("UPDATE paper_positions SET last_price=? WHERE id=?", (live, pos["id"]))
-            if pos["direction"] == "long":
-                if live <= pos["stop_loss"]:
-                    close_position(conn, dict(pos), live, "stop_loss"); closed += 1
-                elif live >= pos["take_profit"]:
-                    close_position(conn, dict(pos), live, "take_profit"); closed += 1
+            if exc_id == "tradenation":
+                # Use candle high/low for intrabar SL/TP detection; fill at the SL/TP level
+                c_high = float(ticker.get("high") or live)
+                c_low  = float(ticker.get("low")  or live)
+                if pos["direction"] == "long":
+                    if c_low <= pos["stop_loss"]:
+                        close_position(conn, dict(pos), pos["stop_loss"], "stop_loss"); closed += 1
+                    elif c_high >= pos["take_profit"]:
+                        close_position(conn, dict(pos), pos["take_profit"], "take_profit"); closed += 1
+                else:
+                    if c_high >= pos["stop_loss"]:
+                        close_position(conn, dict(pos), pos["stop_loss"], "stop_loss"); closed += 1
+                    elif c_low <= pos["take_profit"]:
+                        close_position(conn, dict(pos), pos["take_profit"], "take_profit"); closed += 1
             else:
-                if live >= pos["stop_loss"]:
-                    close_position(conn, dict(pos), live, "stop_loss"); closed += 1
-                elif live <= pos["take_profit"]:
-                    close_position(conn, dict(pos), live, "take_profit"); closed += 1
+                if pos["direction"] == "long":
+                    if live <= pos["stop_loss"]:
+                        close_position(conn, dict(pos), live, "stop_loss"); closed += 1
+                    elif live >= pos["take_profit"]:
+                        close_position(conn, dict(pos), live, "take_profit"); closed += 1
+                else:
+                    if live >= pos["stop_loss"]:
+                        close_position(conn, dict(pos), live, "stop_loss"); closed += 1
+                    elif live <= pos["take_profit"]:
+                        close_position(conn, dict(pos), live, "take_profit"); closed += 1
             if pos["opened_at"] < cutoff and pos["id"] not in []:
                 pass  # handled below
         conn.commit()
@@ -1182,9 +1212,9 @@ def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
         prices_t = _fetch_tickers(exchange_map, timed_rows)
         for pos in timed_rows:
             exc_id = dict(pos).get("exchange") or "mexc"
-            live = prices_t.get((exc_id, pos["pair"]))
-            if live:
-                close_position(conn, dict(pos), live, "timeout")
+            ticker = prices_t.get((exc_id, pos["pair"]))
+            if ticker:
+                close_position(conn, dict(pos), float(ticker["last"]), "timeout")
                 logger.info(f"Paper[{acct}]: timeout close {pos['pair']}")
 
     # New signals

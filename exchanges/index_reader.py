@@ -105,14 +105,19 @@ class IndexReader:
                     return None
 
                 row = conn.execute(
-                    """SELECT close FROM index_candles
+                    """SELECT close, high, low FROM index_candles
                        WHERE pair=?
                        ORDER BY ts DESC LIMIT 1""",
                     (pair,),
                 ).fetchone()
                 if row is None:
                     return None
-                return {"last": float(row[0]), "symbol": pair}
+                return {
+                    "last": float(row[0]),
+                    "high": float(row[1]),
+                    "low":  float(row[2]),
+                    "symbol": pair,
+                }
         except sqlite3.Error as exc:
             logger.warning(f"IndexReader.fetch_ticker({pair}): DB error — {exc}")
             return None
