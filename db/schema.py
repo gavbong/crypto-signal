@@ -85,7 +85,7 @@ def init_db(path: Path | None = None) -> None:
         """)
 
         for migration in [
-            "ALTER TABLE signals ADD COLUMN backtest_run_id INTEGER REFERENCES backtest_runs(id)",
+            "ALTER TABLE signals ADD COLUMN backtest_run_id INTEGER",
             "CREATE INDEX IF NOT EXISTS idx_signals_backtest_run ON signals(backtest_run_id, fired_at)",
             "ALTER TABLE signals ADD COLUMN quality_score REAL",
             "ALTER TABLE backtest_runs ADD COLUMN sharpe REAL",

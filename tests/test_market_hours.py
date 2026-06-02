@@ -72,10 +72,10 @@ def test_de_whit_monday_closed():
     assert _call("DAX/USD", dt) is False
 
 
-def test_xau_open_on_bank_holiday():
-    # XAU/USD has no holiday calendar — trades 24/7 except weekends
-    dt = datetime(2026, 5, 25, 12, 0, 0, tzinfo=ZoneInfo("UTC"))  # Monday
-    assert _call("XAU/USD", dt) is True
+def test_xau_closed_on_us_bank_holiday():
+    # XAU/USD mapped to "us" calendar — COMEX gold closes on US bank holidays
+    dt = datetime(2026, 5, 25, 12, 0, 0, tzinfo=ZoneInfo("UTC"))  # Memorial Day
+    assert _call("XAU/USD", dt) is False
 
 
 # ── DJ30 (09:30–16:00 New York) ──────────────────────────────────────────────

@@ -28,7 +28,8 @@ def _signal(direction="long", shadow=0, regime="trending-up", fired_at=None):
 
 
 @pytest.fixture
-def client(tmp_db):
+def client(tmp_db, monkeypatch):
+    monkeypatch.delenv("DASHBOARD_TOKEN", raising=False)
     import db.schema as schema_module
     original = schema_module.db_path
     schema_module.db_path = lambda: tmp_db
@@ -48,6 +49,7 @@ def client_auth(tmp_db, monkeypatch):
     import db.schema as schema_module
     monkeypatch.setattr(schema_module, "db_path", lambda: tmp_db)
     monkeypatch.setenv("DASHBOARD_TOKEN", "test-secret-xyz")
+    monkeypatch.delenv("DASHBOARD_USERNAME", raising=False)
 
     import dashboard as dash_mod
     from utils.config import get as original_cfg
@@ -236,7 +238,7 @@ class TestHealthAPI:
         assert data["engine_running"] is True
 
     def test_old_log_engine_stale(self, client, tmp_db):
-        self._insert_regime_log(tmp_db, datetime.now(timezone.utc) - timedelta(minutes=15))
+        self._insert_regime_log(tmp_db, datetime.now(timezone.utc) - timedelta(minutes=25))
         r = client.get("/api/health")
         data = json.loads(r.data)
         assert data["engine_running"] is False
@@ -444,10 +446,10 @@ class TestLoginFlow:
         assert r.status_code == 302
         assert "error=1" in r.headers["Location"]
 
-    def test_unauthenticated_index_redirects_to_login(self, client_auth):
+    def test_unauthenticated_index_redirects_to_landing(self, client_auth):
         r = client_auth.get("/")
         assert r.status_code == 302
-        assert "/login" in r.headers["Location"]
+        assert "/landing" in r.headers["Location"]
 
     def test_authenticated_session_serves_dashboard(self, client_auth):
         with client_auth.session_transaction() as sess:
@@ -461,7 +463,7 @@ class TestLoginFlow:
             sess["authed"] = True
         r = client_auth.get("/logout")
         assert r.status_code == 302
-        assert "/login" in r.headers["Location"]
+        assert "/landing" in r.headers["Location"]
         # session should be cleared — index should now redirect
         r2 = client_auth.get("/")
         assert r2.status_code == 302

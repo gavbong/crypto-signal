@@ -34,7 +34,7 @@ def _make_signal_row(direction="long", entry=50000.0, stop=49000.0,
 def _mock_exchange(candles):
     ex = MagicMock()
     ex.fetch_ohlcv.return_value = candles
-    return ex
+    return {"mexc": ex}
 
 
 def _candle(ts_offset_h: int, low: float, high: float, close: float,

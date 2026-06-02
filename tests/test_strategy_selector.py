@@ -10,10 +10,10 @@ class TestActiveStrategies:
     def test_trending_up_fires_ema_vol_sd_orb(self):
         active = active_strategies("trending-up")
         assert "ema_9_21_crossover" in active
-        assert "volume_spike" in active        # institutional participation on trend continuation
         assert "supply_demand" in active       # trending-only from 2026-05-26 — zone rejection with trend
         assert "session_open_breakout" in active
         assert "vol_breakout" not in active    # backtest: -23.05R, 27% WR — lagging entry
+        assert "volume_spike" not in active    # permutation: avg_R=-0.24, consistent negative
         assert "rsi_divergence" not in active
         assert "liquidity_grab" not in active
         assert "rsi_extreme" not in active
@@ -21,19 +21,19 @@ class TestActiveStrategies:
     def test_trending_down_fires_ema_vol_rsi_div_sd_orb(self):
         active = active_strategies("trending-down")
         assert "ema_9_21_crossover" in active
-        assert "vol_breakout" in active        # consolidation-then-breakdown continuation
         assert "rsi_divergence" in active      # bearish divergence (short) — momentum-confirming
         assert "supply_demand" in active       # supply zone rejection with downtrend
         assert "session_open_breakout" in active
+        assert "vol_breakout" not in active    # permutation: avg_R=-0.47, no edge
         assert "rsi_extreme" not in active
         assert "liquidity_grab" not in active
 
     def test_choppy_fires_rsi_and_liq(self):
         active = active_strategies("choppy")
-        assert "rsi_divergence" in active
+        assert "rsi_divergence" not in active  # 2026-05-31: both directions unprofitable — changed to SKIP
         assert "liquidity_grab" in active
+        assert "rsi_extreme" in active         # ETH A-grade: 59.5% WR, +0.191R (BTC/SOL blocked via skip_strategies_for_pairs)
         assert "supply_demand" not in active   # moved to trending-only 2026-05-26
-        assert "rsi_extreme" not in active     # WR 37.5% < BE 40%, net_r=-5.28R
         assert "ema_9_21_crossover" not in active
         assert "vol_breakout" not in active
         assert "session_open_breakout" not in active  # choppy opens prone to false breakout
@@ -63,7 +63,6 @@ class TestActionFor:
     def test_fire_returns_fire(self):
         assert action_for("trending-up", "ema_9_21_crossover") == "FIRE"
         assert action_for("trending-down", "ema_9_21_crossover") == "FIRE"
-        assert action_for("choppy", "rsi_divergence") == "FIRE"
         assert action_for("high-volatility", "vol_breakout") == "FIRE"
         assert action_for("high-volatility", "liquidity_grab") == "FIRE"
         assert action_for("trending-down", "rsi_divergence") == "FIRE"   # bearish divergence in downtrend

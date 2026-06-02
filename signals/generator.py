@@ -432,11 +432,11 @@ def liquidity_grab(pair: str, df: pd.DataFrame, regime: RegimeResult,
         return None
 
     c = cfg()["signals"]
-    atr = (
-        df["_atr"].iloc[-1]
-        if "_atr" in df.columns
-        else ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"]).iloc[-1]
-    )
+    if "_atr" in df.columns:
+        atr = df["_atr"].iloc[-1]
+    else:
+        _atr_s = ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"])
+        atr = _atr_s.iloc[-1] if _atr_s is not None else float("nan")
     if atr is None or pd.isna(atr):
         return None
 

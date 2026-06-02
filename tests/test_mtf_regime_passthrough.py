@@ -1,3 +1,4 @@
+import sqlite3
 from unittest.mock import MagicMock, patch
 from regime.classifier import RegimeResult
 from signal_engine import _collect_candidates
@@ -26,13 +27,16 @@ class TestMtfRegimePassthrough:
 
         mock_exchange = MagicMock()
 
+        conn = sqlite3.connect(str(tmp_db))
+        conn.row_factory = sqlite3.Row
         with patch("signal_engine.fetch_ohlcv_safe", return_value=_make_mock_ohlcv()), \
              patch("signal_engine.fetch_ticker_safe", return_value={"last": 100.5}), \
              patch("signal_engine.run_strategy", return_value=None):
             candidates = _collect_candidates(
                 mock_exchange, [pair], "15m", 100,
-                regimes_1h, None, "mexc", True,
+                regimes_1h, None, "mexc", True, conn,
             )
+        conn.close()
         assert isinstance(candidates, list)
 
     def test_pair_missing_from_regimes_skipped(self, tmp_db):
@@ -41,13 +45,15 @@ class TestMtfRegimePassthrough:
         regimes_1h = {}  # empty — ETH not classified
 
         mock_exchange = MagicMock()
-
+        conn = sqlite3.connect(str(tmp_db))
+        conn.row_factory = sqlite3.Row
         with patch("signal_engine.fetch_ohlcv_safe", return_value=_make_mock_ohlcv()), \
              patch("signal_engine.fetch_ticker_safe", return_value={"last": 200.0}):
             candidates = _collect_candidates(
                 mock_exchange, [pair], "15m", 100,
-                regimes_1h, None, "mexc", True,
+                regimes_1h, None, "mexc", True, conn,
             )
+        conn.close()
         assert candidates == []
 
     def test_pair_with_unstable_regime_skipped(self, tmp_db):
@@ -56,11 +62,13 @@ class TestMtfRegimePassthrough:
         regimes_1h = {pair: _make_regime("trending-up", stable=False, age=2)}
 
         mock_exchange = MagicMock()
-
+        conn = sqlite3.connect(str(tmp_db))
+        conn.row_factory = sqlite3.Row
         with patch("signal_engine.run_strategy") as mock_run:
             candidates = _collect_candidates(
                 mock_exchange, [pair], "15m", 100,
-                regimes_1h, None, "mexc", True,
+                regimes_1h, None, "mexc", True, conn,
             )
+        conn.close()
         mock_run.assert_not_called()
         assert candidates == []

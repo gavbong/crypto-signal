@@ -45,7 +45,8 @@ def _seed(conn, strategy, regime, wins, losses, pnl_r_win=2.5, pnl_r_loss=-1.0, 
 
 
 @pytest.fixture
-def client(tmp_db):
+def client(tmp_db, monkeypatch):
+    monkeypatch.delenv("DASHBOARD_TOKEN", raising=False)
     import db.schema as schema_module
     original = schema_module.db_path
     schema_module.db_path = lambda: tmp_db
@@ -114,11 +115,11 @@ class TestStatusThresholds:
         assert row["status"] == "DISABLE"
 
     def test_choppy_breakeven_is_40_pct(self, patched_db):
-        # choppy rr=1.5, breakeven=1/2.5=0.40 — use rsi_divergence (FIRE in choppy)
+        # choppy rr=1.5, breakeven=1/2.5=0.40 — use liquidity_grab (FIRE in choppy)
         with get_conn(patched_db) as conn:
-            _seed(conn, "rsi_divergence", "choppy", wins=0, losses=30)
+            _seed(conn, "liquidity_grab", "choppy", wins=0, losses=30)
         rows = _review(patched_db)
-        row = next(r for r in rows if r["strategy"] == "rsi_divergence"
+        row = next(r for r in rows if r["strategy"] == "liquidity_grab"
                    and r["regime"] == "choppy")
         assert abs(row["breakeven"] - 0.4) < 0.001
         assert row["status"] == "DISABLE"

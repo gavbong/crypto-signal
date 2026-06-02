@@ -40,7 +40,9 @@ def conn():
             fired_at              TIMESTAMP,
             shadow_mode           INTEGER DEFAULT 0,
             llm_commentary        TEXT,
-            commentary_status     TEXT
+            commentary_status     TEXT,
+            exchange              TEXT DEFAULT 'mexc',
+            backtest_run_id       INTEGER
         );
     """)
     pt.init_paper_db(c)
@@ -51,13 +53,15 @@ def conn():
 def _signal(conn, direction="long", entry=100.0, stop=95.0, tp=110.0,
             pair=TEST_PAIR) -> dict:
     """Insert a fake signal and return it as a dict."""
+    from datetime import datetime, timezone
+    fired_at = datetime.now(timezone.utc).isoformat()
     cur = conn.execute(
         """INSERT INTO signals
            (pair, direction, strategy, regime, entry_price,
             suggested_stop_loss, suggested_take_profit, timeframe, fired_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (pair, direction, "rsi_extreme", "trending_up", entry, stop, tp,
-         "15m", "2026-01-01T00:00:00"),
+         "15m", fired_at),
     )
     conn.commit()
     return {
@@ -234,37 +238,40 @@ def test_check_positions_no_open_positions(conn):
 
 def test_poll_new_signals_returns_new(conn):
     _signal(conn)
-    signals = pt.poll_new_signals(conn, [TEST_PAIR])
+    signals = pt.poll_new_signals(conn)
     assert len(signals) == 1
     assert signals[0]["pair"] == TEST_PAIR
 
 
 def test_poll_new_signals_advances_cursor(conn):
     _signal(conn)
-    pt.poll_new_signals(conn, [TEST_PAIR])
+    pt.poll_new_signals(conn)
     _signal(conn)
-    second = pt.poll_new_signals(conn, [TEST_PAIR])
+    second = pt.poll_new_signals(conn)
     assert len(second) == 1
 
 
 def test_poll_new_signals_filters_other_pairs(conn):
-    """Signals for pairs not in the watch list are excluded."""
+    """Tradenation signals are excluded from the crypto (non-indices) poll."""
+    from datetime import datetime, timezone
+    fired_at = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """INSERT INTO signals (pair, direction, strategy, regime, entry_price,
-           suggested_stop_loss, suggested_take_profit, timeframe, fired_at)
-           VALUES ('XRP/USDT:USDT', 'long', 'rsi_extreme', 'trending_up',
-                   0.5, 0.45, 0.55, '15m', '2026-01-01T00:00:00')"""
+           suggested_stop_loss, suggested_take_profit, timeframe, fired_at, exchange)
+           VALUES ('DJ30/USD', 'long', 'session_open_breakout', 'trending_up',
+                   34000.0, 33800.0, 34400.0, '15m', ?, 'tradenation')""",
+        (fired_at,),
     )
     conn.commit()
-    signals = pt.poll_new_signals(conn, [TEST_PAIR])
+    signals = pt.poll_new_signals(conn)  # for_indices=False → excludes tradenation
     assert signals == []
 
 
 def test_poll_new_signals_includes_all_configured_pairs(conn):
-    """Signals for multiple configured pairs are all returned."""
+    """Multiple crypto signals (any pair) are all returned."""
     _signal(conn, pair=TEST_PAIR)
     _signal(conn, pair=OTHER_PAIR)
-    signals = pt.poll_new_signals(conn, [TEST_PAIR, OTHER_PAIR])
+    signals = pt.poll_new_signals(conn)
     assert len(signals) == 2
 
 
