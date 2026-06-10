@@ -61,7 +61,7 @@ def _build_regime_context(
         if ohlcv is None or len(ohlcv) < 55:
             continue
         try:
-            result = classify(ohlcv)
+            result = classify(ohlcv, pair=pair)
             context[pair] = result
             df_1h_map[pair] = _to_df(ohlcv)
         except ValueError:

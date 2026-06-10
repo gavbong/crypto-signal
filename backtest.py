@@ -210,7 +210,7 @@ def run_pair(pair: str, candles: list, conn, c: dict, dry_run: bool, run_id: int
 
     # Precompute full DataFrame + all regime classifications once (O(n) vs O(n²))
     full_df = _to_df(candles)
-    regimes = classify_series(full_df)
+    regimes = classify_series(full_df, pair=pair)
 
     for i in range(start_idx, end_idx):
         regime = regimes[i]

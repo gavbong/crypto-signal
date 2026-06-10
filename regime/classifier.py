@@ -17,6 +17,23 @@ class RegimeResult(NamedTuple):
 
 _LABELS = ("trending-up", "trending-down", "choppy", "high-volatility")
 
+
+def _thresholds_for_pair(pair: str | None) -> tuple[float, float, float]:
+    """Return (adx_thresh, slope_thresh, hv_mult) for a pair, using asset_class_profiles overrides."""
+    c = cfg()["regime"]
+    defaults = (c["adx_trend_threshold"], c["ema_slope_threshold"], c["high_vol_bb_multiplier"])
+    if pair is None:
+        return defaults
+    profiles = cfg().get("asset_class_profiles", {})
+    for profile in profiles.values():
+        if pair in profile.get("pairs", []):
+            return (
+                profile.get("adx_trend_threshold", defaults[0]),
+                profile.get("ema_slope_threshold", defaults[1]),
+                profile.get("high_vol_bb_multiplier", defaults[2]),
+            )
+    return defaults
+
 _FLICKER_WINDOW = 20   # candles to inspect for regime changes
 _FLICKER_MAX    = 4    # max label transitions allowed before flagging as flickering
 
@@ -38,11 +55,12 @@ def _to_df(ohlcv: list) -> pd.DataFrame:
     return df.astype(float)
 
 
-def classify_single(df: pd.DataFrame) -> tuple[str, float]:
+def classify_single(df: pd.DataFrame, pair: str | None = None) -> tuple[str, float]:
     """
     Classify market regime for the most recent candle in df.
     Returns (label, confidence).
     Requires at least 55 rows (EMA50 + warmup).
+    Pass pair to use asset_class_profiles thresholds (lower ADX/slope for indices).
     """
     c = cfg()["regime"]
 
@@ -71,9 +89,7 @@ def classify_single(df: pd.DataFrame) -> tuple[str, float]:
     # 3-candle EMA slope (% change)
     ema_slope = (ema_fast.iloc[-1] - ema_fast.iloc[-4]) / ema_fast.iloc[-4]
 
-    slope_thresh = c["ema_slope_threshold"]
-    adx_thresh = c["adx_trend_threshold"]
-    hv_mult = c["high_vol_bb_multiplier"]
+    adx_thresh, slope_thresh, hv_mult = _thresholds_for_pair(pair)
 
     bb_valid = not pd.isna(bb_width) and not pd.isna(bb_width_avg) and bb_width_avg > 0
 
@@ -114,18 +130,17 @@ def classify_single(df: pd.DataFrame) -> tuple[str, float]:
     return "choppy", round(confidence, 3)
 
 
-def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
+def classify_series(full_df: pd.DataFrame, pair: str | None = None) -> list[RegimeResult | None]:
     """
     Vectorized regime classification across a full candle DataFrame.
     Computes all indicators once — O(n) instead of O(n²) per-window recalc.
     Returns one RegimeResult (or None if not enough history) per candle.
     Used by backtest to avoid re-running indicator math on every sliding window.
+    Pass pair to use asset_class_profiles thresholds (lower ADX/slope for indices).
     """
     c = cfg()["regime"]
     adx_period = c["adx_period"]
-    slope_thresh = c["ema_slope_threshold"]
-    adx_thresh = c["adx_trend_threshold"]
-    hv_mult = c["high_vol_bb_multiplier"]
+    adx_thresh, slope_thresh, hv_mult = _thresholds_for_pair(pair)
     stability_n = c["stability_candles"]
     stability_min = c["stability_min_match"]
     min_idx = c["ema_slow"] + 5
@@ -218,10 +233,11 @@ def classify_series(full_df: pd.DataFrame) -> list[RegimeResult | None]:
     return results
 
 
-def classify(ohlcv: list) -> RegimeResult:
+def classify(ohlcv: list, pair: str | None = None) -> RegimeResult:
     """
     Full classification with stability check and age count.
     ohlcv: list of [ts_ms, open, high, low, close, volume]
+    Pass pair to use asset_class_profiles thresholds (lower ADX/slope for indices).
     """
     c = cfg()["regime"]
     df = _to_df(ohlcv)
@@ -237,7 +253,7 @@ def classify(ohlcv: list) -> RegimeResult:
     labels: list[str] = []
     for i in range(max(len(df) - lookback, c["ema_slow"] + 5), len(df)):
         try:
-            label, _ = classify_single(df.iloc[: i + 1])
+            label, _ = classify_single(df.iloc[: i + 1], pair)
             labels.append(label)
         except ValueError:
             labels.append("unknown")
@@ -245,7 +261,7 @@ def classify(ohlcv: list) -> RegimeResult:
     if not labels:
         raise ValueError("Could not compute any regime labels")
 
-    current_label, current_conf = classify_single(df)
+    current_label, current_conf = classify_single(df, pair)
 
     # Stability: do the last stability_min candles all agree?
     recent = labels[-stability_n:]

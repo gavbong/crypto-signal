@@ -956,17 +956,24 @@ def check_positions(conn, exchange_map: dict) -> int:
 def check_timeouts(conn, exchange_map: dict) -> int:
     """Close positions open longer than position_timeout_hours at market price."""
     from datetime import timedelta
-    timeout_h = cfg().get("paper_trader", {}).get("position_timeout_hours", 48)
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
+    pt = cfg().get("paper_trader", {})
+    default_timeout_h = pt.get("position_timeout_hours", 48)
+    timeout_by_exc = pt.get("position_timeout_hours_by_exchange", {})
+    now = datetime.now(timezone.utc)
     rows = conn.execute(
-        "SELECT * FROM paper_positions WHERE exit_price IS NULL AND opened_at < ?",
-        (cutoff,),
+        "SELECT * FROM paper_positions WHERE exit_price IS NULL",
     ).fetchall()
-    if not rows:
+    stale = [
+        pos for pos in rows
+        if pos["opened_at"] < (now - timedelta(hours=timeout_by_exc.get(
+            dict(pos).get("exchange") or "mexc", default_timeout_h
+        ))).isoformat()
+    ]
+    if not stale:
         return 0
-    prices = _fetch_tickers(exchange_map, rows)
+    prices = _fetch_tickers(exchange_map, stale)
     closed = 0
-    for pos in rows:
+    for pos in stale:
         exc_id = (dict(pos).get("exchange") or "mexc")
         ticker = prices.get((exc_id, pos["pair"]))
         if ticker is None:
@@ -1199,15 +1206,21 @@ def _run_poll(conn, exchange_map: dict, for_indices: bool) -> None:
         if closed:
             logger.info(f"Paper[{acct}]: closed {closed} position(s) this tick")
 
-    # Timeout check
+    # Timeout check — per-exchange timeout (e.g. tradenation indices use 96h, crypto 48h)
     from datetime import timedelta
     pt = cfg().get("paper_trader", {})
-    timeout_h = pt.get("position_timeout_hours", 48)
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=timeout_h)).isoformat()
-    timed_rows = conn.execute(
-        f"SELECT * FROM paper_positions WHERE exit_price IS NULL AND opened_at < ? AND {exc_filter}",
-        (cutoff,),
+    default_timeout_h = pt.get("position_timeout_hours", 48)
+    timeout_by_exc = pt.get("position_timeout_hours_by_exchange", {})
+    now_ts = datetime.now(timezone.utc)
+    all_open = conn.execute(
+        f"SELECT * FROM paper_positions WHERE exit_price IS NULL AND {exc_filter}",
     ).fetchall()
+    timed_rows = [
+        pos for pos in all_open
+        if pos["opened_at"] < (now_ts - timedelta(hours=timeout_by_exc.get(
+            dict(pos).get("exchange") or "mexc", default_timeout_h
+        ))).isoformat()
+    ]
     if timed_rows:
         prices_t = _fetch_tickers(exchange_map, timed_rows)
         for pos in timed_rows:
