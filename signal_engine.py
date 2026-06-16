@@ -358,31 +358,30 @@ def daily_digest_job() -> None:
         from alerts.telegram import send_telegram
         from paper_trader import INITIAL_BALANCE
 
-        conn = get_conn()
+        with get_conn() as conn:
+            state = conn.execute(
+                "SELECT value FROM paper_state WHERE key='balance'"
+            ).fetchone()
+            balance = float(state[0]) if state else INITIAL_BALANCE
 
-        state = conn.execute(
-            "SELECT value FROM paper_state WHERE key='balance'"
-        ).fetchone()
-        balance = float(state[0]) if state else INITIAL_BALANCE
+            trades = conn.execute("""
+                SELECT exit_reason, COUNT(*) as n, COALESCE(SUM(pnl_usdt), 0) as pnl
+                FROM paper_positions
+                WHERE closed_at >= datetime('now', '-1 day') AND closed_at IS NOT NULL
+                GROUP BY exit_reason
+            """).fetchall()
 
-        trades = conn.execute("""
-            SELECT exit_reason, COUNT(*) as n, COALESCE(SUM(pnl_usdt), 0) as pnl
-            FROM paper_positions
-            WHERE closed_at >= datetime('now', '-1 day') AND closed_at IS NOT NULL
-            GROUP BY exit_reason
-        """).fetchall()
+            wrs = conn.execute("""
+                SELECT strategy, COUNT(*) as n,
+                       SUM(CASE WHEN exit_reason='take_profit' THEN 1 ELSE 0 END) as wins
+                FROM paper_positions
+                WHERE closed_at >= datetime('now', '-7 days') AND closed_at IS NOT NULL
+                GROUP BY strategy HAVING n >= 2
+            """).fetchall()
 
-        wrs = conn.execute("""
-            SELECT strategy, COUNT(*) as n,
-                   SUM(CASE WHEN exit_reason='take_profit' THEN 1 ELSE 0 END) as wins
-            FROM paper_positions
-            WHERE closed_at >= datetime('now', '-7 days') AND closed_at IS NOT NULL
-            GROUP BY strategy HAVING n >= 2
-        """).fetchall()
-
-        cb = conn.execute(
-            "SELECT value FROM paper_state WHERE key='circuit_breaker_until'"
-        ).fetchone()
+            cb = conn.execute(
+                "SELECT value FROM paper_state WHERE key='circuit_breaker_until'"
+            ).fetchone()
 
         today_pnl = sum(r["pnl"] for r in trades)
         today_n   = sum(r["n"] for r in trades)
@@ -420,6 +419,7 @@ def daily_digest_job() -> None:
         logger.info("Daily digest sent")
     except Exception as e:
         logger.error(f"Daily digest failed: {e}")
+
 
 
 def main() -> None:
