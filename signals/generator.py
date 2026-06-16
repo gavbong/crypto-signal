@@ -663,6 +663,189 @@ def session_open_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
     return None
 
 
+def _ict_get_session_bounds(df: pd.DataFrame) -> Optional[dict]:
+    """Compute combined Asia (20:00–03:00 ET) and London (03:00–09:00 ET) session H/L."""
+    from zoneinfo import ZoneInfo
+    try:
+        tz_et = ZoneInfo("America/New_York")
+        idx_et = (
+            df.index.tz_convert(tz_et)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz_et)
+        )
+        last_et = idx_et[-1]
+        today = last_et.normalize()
+        yesterday = today - pd.Timedelta(days=1)
+
+        asia_start = yesterday + pd.Timedelta(hours=20)
+        london_start = today + pd.Timedelta(hours=3)
+        london_end = today + pd.Timedelta(hours=9)
+
+        asia_df = df[(idx_et >= asia_start) & (idx_et < london_start)]
+        london_df = df[(idx_et >= london_start) & (idx_et < london_end)]
+
+        if len(asia_df) == 0 or len(london_df) == 0:
+            return None
+        return {
+            "combined_high": float(max(asia_df["high"].max(), london_df["high"].max())),
+            "combined_low":  float(min(asia_df["low"].min(),  london_df["low"].min())),
+        }
+    except Exception:
+        return None
+
+
+def _ict_in_killzone(df: pd.DataFrame, pair: str) -> bool:
+    """Return True if the current candle is inside the ICT NY killzone for this pair."""
+    from zoneinfo import ZoneInfo
+    ict_cfg = cfg().get("signals", {}).get("ict_session_sweep", {})
+    spec = ict_cfg.get("killzone_hours", {}).get(pair) or \
+           ict_cfg.get("killzone_hours", {}).get("default", "09:00-11:00 America/New_York")
+    try:
+        hours_part, tz_str = spec.rsplit(" ", 1)
+        start_str, end_str = hours_part.split("-")
+        start_h, start_m = int(start_str[:2]), int(start_str[3:])
+        end_h, end_m = int(end_str[:2]), int(end_str[3:])
+        tz = ZoneInfo(tz_str)
+        idx_local = (
+            df.index.tz_convert(tz)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz)
+        )
+        last_local = idx_local[-1]
+        kz_start = last_local.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+        kz_end   = last_local.replace(hour=end_h,   minute=end_m,   second=0, microsecond=0)
+        return kz_start <= last_local < kz_end
+    except Exception:
+        return False
+
+
+def _ict_find_sweep(df: pd.DataFrame, session_bounds: dict, atr: float) -> Optional[dict]:
+    """Scan the last N candles for a wick through the combined session H/L that closes back inside."""
+    ict_cfg = cfg().get("signals", {}).get("ict_session_sweep", {})
+    body_mult = ict_cfg.get("sweep_body_atr_mult", 1.0)
+    lookback  = ict_cfg.get("sweep_lookback_candles", 6)
+    combined_high = session_bounds["combined_high"]
+    combined_low  = session_bounds["combined_low"]
+
+    for i in range(len(df) - 1, max(len(df) - 1 - lookback, -1), -1):
+        row  = df.iloc[i]
+        body = abs(float(row["close"]) - float(row["open"]))
+        if float(row["high"]) > combined_high and float(row["close"]) < combined_high and body < body_mult * atr:
+            return {"direction": "short", "sweep_price": float(row["high"]), "sweep_idx": i}
+        if float(row["low"]) < combined_low and float(row["close"]) > combined_low and body < body_mult * atr:
+            return {"direction": "long",  "sweep_price": float(row["low"]),  "sweep_idx": i}
+    return None
+
+
+def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[dict]:
+    """Find the most recent 3-candle Fair Value Gap at or after sweep_idx where the current close is inside."""
+    ict_cfg   = cfg().get("signals", {}).get("ict_session_sweep", {})
+    lookback  = ict_cfg.get("fvg_lookback_candles", 8)
+    close_now = float(df["close"].iloc[-1])
+    fvg_found = None
+
+    for i in range(sweep_idx, min(len(df) - 2, sweep_idx + lookback)):
+        if i + 2 >= len(df):
+            break
+        c0_h = float(df["high"].iloc[i])
+        c0_l = float(df["low"].iloc[i])
+        c2_h = float(df["high"].iloc[i + 2])
+        c2_l = float(df["low"].iloc[i + 2])
+
+        if direction == "long" and c0_h < c2_l and c0_h <= close_now <= c2_l:
+            fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h}
+        elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= c0_l:
+            fvg_found = {"fvg_top": c0_l, "fvg_bottom": c2_h}
+
+    return fvg_found
+
+
+def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                      timeframe: str) -> Optional[dict]:
+    """ICT NY Killzone: Asia/London session liquidity sweep with FVG reversal entry.
+
+    1. TIME GATE  — current candle inside pair-specific NY killzone.
+    2. SESSION H/L — Asia (20:00–03:00 ET) and London (03:00–09:00 ET) combined bounds.
+    3. SWEEP      — last 6 candles show a wick through the combined H/L that closed back inside.
+    4. FVG        — 3-candle Fair Value Gap after the sweep with current close inside the gap.
+    5. STOP       — beyond the sweep wick + ATR buffer.
+    6. TARGET     — opposing session liquidity; ATR fallback if outside [min_rr, max_rr].
+    7. REGIME     — fires in any regime except high-volatility.
+    """
+    if timeframe != "15m":
+        return None
+    if regime.label == "high-volatility":
+        return None
+    if len(df) < 50:
+        return None
+
+    c = cfg()["signals"]
+    atr = (
+        df["_atr"].iloc[-1]
+        if "_atr" in df.columns
+        else ta.atr(df["high"], df["low"], df["close"], length=c["atr_period"]).iloc[-1]
+    )
+    if atr is None or pd.isna(atr):
+        return None
+
+    if not _ict_in_killzone(df, pair):
+        return None
+
+    session_bounds = _ict_get_session_bounds(df)
+    if session_bounds is None:
+        return None
+
+    sweep = _ict_find_sweep(df, session_bounds, atr)
+    if sweep is None:
+        return None
+
+    fvg = _ict_find_fvg(df, sweep["sweep_idx"], sweep["direction"])
+    if fvg is None:
+        return None
+
+    direction = sweep["direction"]
+    entry     = float(df["close"].iloc[-1])
+
+    ict_cfg    = cfg().get("signals", {}).get("ict_session_sweep", {})
+    buf        = ict_cfg.get("stop_atr_buffer", 0.1) * atr
+    stop       = round(
+        sweep["sweep_price"] - buf if direction == "long" else sweep["sweep_price"] + buf, 8
+    )
+
+    if (direction == "long"  and stop >= entry) or \
+       (direction == "short" and stop <= entry):
+        return None
+
+    risk = abs(entry - stop)
+    if risk == 0:
+        return None
+
+    sig = _signal(pair, direction, "ict_session_sweep", regime, df, timeframe)
+    if sig is None:
+        return None
+
+    sig["suggested_stop_loss"] = stop
+
+    min_rr = ict_cfg.get("min_rr", 0.5)
+    max_rr = ict_cfg.get("max_rr", 4.0)
+
+    if direction == "long":
+        target        = session_bounds["combined_high"]
+        rr_to_target  = (target - entry) / risk
+    else:
+        target        = session_bounds["combined_low"]
+        rr_to_target  = (entry - target) / risk
+
+    if min_rr <= rr_to_target <= max_rr:
+        sig["suggested_take_profit"] = round(target, 8)
+    else:
+        sig["suggested_take_profit"] = _calc_take_profit(
+            entry, stop, direction, regime.label, "ict_session_sweep", pair
+        )
+
+    return sig
+
+
 GENERATORS = {
     "ema_9_21_crossover":    ema_9_21_crossover,
     "rsi_divergence":        rsi_divergence,
@@ -672,6 +855,7 @@ GENERATORS = {
     "liquidity_grab":        liquidity_grab,
     "volume_spike":          volume_spike,
     "session_open_breakout": session_open_breakout,
+    "ict_session_sweep":     ict_session_sweep,
 }
 
 

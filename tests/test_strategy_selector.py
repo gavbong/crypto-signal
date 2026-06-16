@@ -3,6 +3,7 @@ from signals.selector import active_strategies, action_for, REGIME_STRATEGY_MAP
 ALL_STRATEGIES = (
     "ema_9_21_crossover", "rsi_divergence", "rsi_extreme", "vol_breakout",
     "supply_demand", "liquidity_grab", "volume_spike", "session_open_breakout",
+    "ict_session_sweep",
 )
 
 
@@ -12,6 +13,7 @@ class TestActiveStrategies:
         assert "ema_9_21_crossover" in active
         assert "supply_demand" in active       # trending-only from 2026-05-26 — zone rejection with trend
         assert "session_open_breakout" in active
+        assert "ict_session_sweep" in active   # sweep fires in any non-high-vol regime
         assert "vol_breakout" not in active    # backtest: -23.05R, 27% WR — lagging entry
         assert "volume_spike" not in active    # permutation: avg_R=-0.24, consistent negative
         assert "rsi_divergence" not in active
@@ -24,6 +26,7 @@ class TestActiveStrategies:
         assert "rsi_divergence" in active      # bearish divergence (short) — momentum-confirming
         assert "supply_demand" in active       # supply zone rejection with downtrend
         assert "session_open_breakout" in active
+        assert "ict_session_sweep" in active   # sweep fires in any non-high-vol regime
         assert "vol_breakout" not in active    # permutation: avg_R=-0.47, no edge
         assert "rsi_extreme" not in active
         assert "liquidity_grab" not in active
@@ -33,6 +36,7 @@ class TestActiveStrategies:
         assert "rsi_divergence" not in active  # 2026-05-31: both directions unprofitable — changed to SKIP
         assert "liquidity_grab" in active
         assert "rsi_extreme" in active         # ETH A-grade: 59.5% WR, +0.191R (BTC/SOL blocked via skip_strategies_for_pairs)
+        assert "ict_session_sweep" in active   # sweep fires in any non-high-vol regime
         assert "supply_demand" not in active   # moved to trending-only 2026-05-26
         assert "ema_9_21_crossover" not in active
         assert "vol_breakout" not in active
@@ -44,6 +48,7 @@ class TestActiveStrategies:
         assert "rsi_extreme" in active
         assert "liquidity_grab" in active
         assert "session_open_breakout" in active
+        assert "ict_session_sweep" not in active  # blocked — expanded ranges invalidate FVG sizing
         assert "supply_demand" not in active   # 17% WR — removed
         assert "ema_9_21_crossover" not in active
         assert "rsi_divergence" not in active
@@ -59,6 +64,7 @@ class TestActionFor:
         assert action_for("choppy", "ema_9_21_crossover") == "SKIP"
         assert action_for("high-volatility", "ema_9_21_crossover") == "SKIP"
         assert action_for("choppy", "supply_demand") == "SKIP"      # moved to trending-only
+        assert action_for("high-volatility", "ict_session_sweep") == "SKIP"  # blocked in high-vol
 
     def test_fire_returns_fire(self):
         assert action_for("trending-up", "ema_9_21_crossover") == "FIRE"
@@ -71,6 +77,9 @@ class TestActionFor:
         assert action_for("trending-up", "session_open_breakout") == "FIRE"
         assert action_for("trending-down", "session_open_breakout") == "FIRE"
         assert action_for("high-volatility", "session_open_breakout") == "FIRE"
+        assert action_for("trending-up", "ict_session_sweep") == "FIRE"
+        assert action_for("trending-down", "ict_session_sweep") == "FIRE"
+        assert action_for("choppy", "ict_session_sweep") == "FIRE"
 
     def test_unknown_strategy_returns_skip(self):
         for regime in ("trending-up", "trending-down", "choppy", "high-volatility"):

@@ -8,6 +8,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "liquidity_grab":        "SKIP",
         "volume_spike":          "SKIP",  # permutation 2026-05-26: avg_R=-0.24, p=0.67-0.8 — consistent negative, no edge
         "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
+        "ict_session_sweep":     "FIRE",  # sweep is the reversal signal — fires in any regime except high-vol
     },
     "trending-down": {
         "ema_9_21_crossover":    "FIRE",  # SHORT only — generator blocks counter-trend LONGs via regime gate
@@ -18,6 +19,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "liquidity_grab":        "SKIP",
         "volume_spike":          "SKIP",  # backtest: -17.45R, 32% WR — trend exhaustion, not participation
         "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
+        "ict_session_sweep":     "FIRE",  # sweep is the reversal signal — fires in any regime except high-vol
     },
     "choppy": {
         "ema_9_21_crossover":    "SKIP",
@@ -28,6 +30,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "liquidity_grab":        "FIRE",  # both directions (live: long WR=56% +1.09R; short WR=56% +2.13R)
         "volume_spike":          "SKIP",  # spikes in choppy = noise, no trend to ride
         "session_open_breakout": "SKIP",  # choppy opens prone to false breakout and rapid reversal
+        "ict_session_sweep":     "FIRE",  # sweep is the reversal signal — fires in any regime except high-vol
     },
     "high-volatility": {
         "ema_9_21_crossover":    "SKIP",
@@ -38,6 +41,7 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "liquidity_grab":        "FIRE",
         "volume_spike":          "SKIP",  # high-vol already captures spike energy via vol_breakout
         "session_open_breakout": "FIRE",  # high-vol opens can produce strong clean breakouts
+        "ict_session_sweep":     "SKIP",  # blocked — expanded ranges invalidate FVG sizing assumptions
     },
 }
 

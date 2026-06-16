@@ -131,6 +131,7 @@ signals:
     rsi_extreme: 2.0
     ema_9_21_crossover: 2.0
     session_open_breakout: 1.5         # ORB: range-based SL tends to be wider than ATR; lower RR to keep TP reachable
+    ict_session_sweep: 1.5             # fallback when session-liquidity target gives RR outside [0.5, 4.0]
     # supply_demand: not set — uses asset-class RR (1.2 for indices, regime RR for crypto)
 
   # Per-regime-per-strategy overrides — highest precision, applied after strategy-level.
@@ -175,6 +176,24 @@ signals:
   sd_bos_lookback: 10                  # supply/demand: BoS filter — impulse must break N prior bars' high (demand) or low (supply)
   lq_session_window_hours: 4           # liquidity_grab: for index pairs, only fire within N hours of session open (London→NY reversal window)
   orb_volume_multiplier: 1.5           # session_open_breakout: current candle volume must exceed N× rolling avg to confirm breakout
+
+  # ── ICT NY Killzone strategy ────────────────────────────────────────────────────
+  # Asia session: 20:00–03:00 ET (prev day 20:00 → today 03:00)
+  # London session: 03:00–09:00 ET
+  # Fires during the NY killzone when the combined Asia+London H/L is swept and an FVG forms.
+  ict_session_sweep:
+    killzone_hours:
+      DJ30/USD:    "09:00-11:00 America/New_York"
+      FTSE100/USD: "08:00-10:00 Europe/London"
+      DAX/USD:     "09:00-11:00 Europe/Berlin"
+      XAU/USD:     "09:00-11:00 America/New_York"
+      default:     "09:00-11:00 America/New_York"   # crypto pairs
+    sweep_lookback_candles: 6    # scan this many recent candles for a sweep wick
+    sweep_body_atr_mult: 1.0     # sweep candle body must be < N× ATR (wick-dominated candle)
+    fvg_lookback_candles: 8      # candles after sweep to search for a Fair Value Gap
+    stop_atr_buffer: 0.1         # ATR buffer beyond the sweep wick for stop placement
+    min_rr: 0.5                  # if session-liquidity target gives < 0.5R, fall back to ATR TP
+    max_rr: 4.0                  # if session-liquidity target gives > 4.0R, fall back to ATR TP
 
 signal_quality:
   min_quality_score: 40          # lowered 2026-05-26 to allow index pairs to bootstrap — max score at bootstrap_wr is 48 so 60 was unreachable for new combos
