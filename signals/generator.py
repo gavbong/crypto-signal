@@ -738,11 +738,27 @@ def _ict_find_sweep(df: pd.DataFrame, session_bounds: dict, atr: float) -> Optio
 
 
 def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[dict]:
-    """Find the most recent 3-candle Fair Value Gap at or after sweep_idx where the current close is inside."""
+    """Find the most recent 3-candle Fair Value Gap at or after sweep_idx where the current close is inside.
+
+    Two ICT quality filters beyond the basic gap check:
+    - CHoCH: the FVG's impulse candle (c1) must break the local swing H/L from the N candles
+      immediately before the sweep — confirming algorithmic displacement, not just noise.
+    - Body confirmation: current candle open must be on the entry side of the gap, ensuring
+      price is retracing INTO the FVG (not bubbling up through the bottom on a long, etc.).
+    """
     ict_cfg   = cfg().get("signals", {}).get("ict_session_sweep", {})
     lookback  = ict_cfg.get("fvg_lookback_candles", 8)
+    choch_lb  = ict_cfg.get("choch_lookback_candles", 10)
     close_now = float(df["close"].iloc[-1])
+    open_now  = float(df["open"].iloc[-1])
     fvg_found = None
+
+    # Local swing reference for CHoCH: H/L in the N candles immediately before the sweep.
+    pre_start  = max(0, sweep_idx - choch_lb)
+    pre_highs  = df["high"].iloc[pre_start:sweep_idx]
+    pre_lows   = df["low"].iloc[pre_start:sweep_idx]
+    pre_swing_high = float(pre_highs.max()) if len(pre_highs) > 0 else None
+    pre_swing_low  = float(pre_lows.min())  if len(pre_lows)  > 0 else None
 
     for i in range(sweep_idx, min(len(df) - 2, sweep_idx + lookback)):
         if i + 2 >= len(df):
@@ -751,10 +767,24 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
         c0_l = float(df["low"].iloc[i])
         c2_h = float(df["high"].iloc[i + 2])
         c2_l = float(df["low"].iloc[i + 2])
+        c1_h = float(df["high"].iloc[i + 1])
+        c1_l = float(df["low"].iloc[i + 1])
 
         if direction == "long" and c0_h < c2_l and c0_h <= close_now <= c2_l:
+            # CHoCH: impulse must break above the pre-sweep local swing high.
+            if pre_swing_high is not None and c1_h <= pre_swing_high:
+                continue
+            # Body confirmation: open must be at or above FVG bottom (approaching from above).
+            if open_now < c0_h:
+                continue
             fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h}
         elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= c0_l:
+            # CHoCH: impulse must break below the pre-sweep local swing low.
+            if pre_swing_low is not None and c1_l >= pre_swing_low:
+                continue
+            # Body confirmation: open must be at or below FVG top (approaching from below).
+            if open_now > c0_l:
+                continue
             fvg_found = {"fvg_top": c0_l, "fvg_bottom": c2_h}
 
     return fvg_found

@@ -191,6 +191,7 @@ signals:
     sweep_lookback_candles: 6    # scan this many recent candles for a sweep wick
     sweep_body_atr_mult: 1.0     # sweep candle body must be < N× ATR (wick-dominated candle)
     fvg_lookback_candles: 8      # candles after sweep to search for a Fair Value Gap
+    choch_lookback_candles: 10   # pre-sweep window for CHoCH: impulse candle must break this local swing
     stop_atr_buffer: 0.1         # ATR buffer beyond the sweep wick for stop placement
     min_rr: 0.5                  # if session-liquidity target gives < 0.5R, fall back to ATR TP
     max_rr: 4.0                  # if session-liquidity target gives > 4.0R, fall back to ATR TP
