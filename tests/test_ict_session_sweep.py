@@ -299,3 +299,46 @@ class TestIctSessionSweepTP:
         # session_low = 99.0; entry ≈ 100.35; stop ≈ 101.34
         # risk ≈ 0.99; reward to target ≈ 1.35; RR ≈ 1.36 → inside [0.5, 4.0] → use target
         assert abs(result["suggested_take_profit"] - 99.0) < 0.01
+
+
+class TestIctSessionSweepFVGQuality:
+    def test_no_signal_bearish_impulse_for_long(self):
+        """BISI filter: a down-close c1 on a long setup must be rejected."""
+        df = _make_ict_df(direction="long")
+        # Flip c1 (idx 77) to bearish: close below open
+        df.iloc[77, df.columns.get_loc("close")] = df.iloc[77]["open"] - 0.1
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is None
+
+    def test_no_signal_bullish_impulse_for_short(self):
+        """SIBI filter: an up-close c1 on a short setup must be rejected."""
+        df = _make_ict_df(direction="short")
+        # Flip c1 (idx 77) to bullish: close above open
+        df.iloc[77, df.columns.get_loc("close")] = df.iloc[77]["open"] + 0.1
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("ETH/USDT:USDT", df, regime, "15m")
+        assert result is None
+
+    def test_signal_contains_fvg_ce(self):
+        """Signal dict must include fvg_ce (Consequent Encroachment = FVG midpoint)."""
+        df = _make_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert "fvg_ce" in result
+        # Long FVG: [fvg_bottom=99.5, fvg_top=99.8] → CE = 99.65
+        assert abs(result["fvg_ce"] - 99.65) < 0.001
+
+    def test_fvg_ce_is_midpoint(self):
+        """CE must equal (fvg_top + fvg_bottom) / 2 for both directions."""
+        for direction, pair in [("long", "BTC/USDT:USDT"), ("short", "ETH/USDT:USDT")]:
+            df = _make_ict_df(direction=direction)
+            regime = _make_regime("choppy")
+            result = ict_session_sweep(pair, df, regime, "15m")
+            assert result is not None
+            # Derive expected CE from the FVG bounds in _make_ict_df:
+            # long  FVG: [99.5, 99.8] → CE = 99.65
+            # short FVG: [100.2, 100.5] → CE = 100.35
+            expected_ce = 99.65 if direction == "long" else 100.35
+            assert abs(result["fvg_ce"] - expected_ce) < 0.001

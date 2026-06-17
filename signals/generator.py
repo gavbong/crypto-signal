@@ -740,11 +740,15 @@ def _ict_find_sweep(df: pd.DataFrame, session_bounds: dict, atr: float) -> Optio
 def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[dict]:
     """Find the most recent 3-candle Fair Value Gap at or after sweep_idx where the current close is inside.
 
-    Two ICT quality filters beyond the basic gap check:
+    Three ICT quality filters beyond the basic gap check:
     - CHoCH: the FVG's impulse candle (c1) must break the local swing H/L from the N candles
       immediately before the sweep — confirming algorithmic displacement, not just noise.
     - Body confirmation: current candle open must be on the entry side of the gap, ensuring
       price is retracing INTO the FVG (not bubbling up through the bottom on a long, etc.).
+    - BISI/SIBI: the impulse candle must close in the direction of the trade (up-close for
+      longs = Buy Side Imbalance; down-close for shorts = Sell Side Imbalance).
+
+    Returns dict with fvg_top, fvg_bottom, and fvg_ce (Consequent Encroachment = midpoint).
     """
     ict_cfg   = cfg().get("signals", {}).get("ict_session_sweep", {})
     lookback  = ict_cfg.get("fvg_lookback_candles", 8)
@@ -767,8 +771,10 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
         c0_l = float(df["low"].iloc[i])
         c2_h = float(df["high"].iloc[i + 2])
         c2_l = float(df["low"].iloc[i + 2])
-        c1_h = float(df["high"].iloc[i + 1])
-        c1_l = float(df["low"].iloc[i + 1])
+        c1_h     = float(df["high"].iloc[i + 1])
+        c1_l     = float(df["low"].iloc[i + 1])
+        c1_open  = float(df["open"].iloc[i + 1])
+        c1_close = float(df["close"].iloc[i + 1])
 
         if direction == "long" and c0_h < c2_l and c0_h <= close_now <= c2_l:
             # CHoCH: impulse must break above the pre-sweep local swing high.
@@ -777,7 +783,11 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
             # Body confirmation: open must be at or above FVG bottom (approaching from above).
             if open_now < c0_h:
                 continue
-            fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h}
+            # BISI: impulse candle must be up-close (Buy Side Imbalance, Sell Side Inefficiency).
+            if c1_close <= c1_open:
+                continue
+            fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h,
+                         "fvg_ce": round((c2_l + c0_h) / 2, 8)}
         elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= c0_l:
             # CHoCH: impulse must break below the pre-sweep local swing low.
             if pre_swing_low is not None and c1_l >= pre_swing_low:
@@ -785,7 +795,11 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
             # Body confirmation: open must be at or below FVG top (approaching from below).
             if open_now > c0_l:
                 continue
-            fvg_found = {"fvg_top": c0_l, "fvg_bottom": c2_h}
+            # SIBI: impulse candle must be down-close (Sell Side Imbalance, Buy Side Inefficiency).
+            if c1_close >= c1_open:
+                continue
+            fvg_found = {"fvg_top": c0_l, "fvg_bottom": c2_h,
+                         "fvg_ce": round((c0_l + c2_h) / 2, 8)}
 
     return fvg_found
 
@@ -855,6 +869,7 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
         return None
 
     sig["suggested_stop_loss"] = stop
+    sig["fvg_ce"] = fvg["fvg_ce"]
 
     min_rr = ict_cfg.get("min_rr", 0.5)
     max_rr = ict_cfg.get("max_rr", 4.0)
@@ -869,9 +884,19 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if min_rr <= rr_to_target <= max_rr:
         sig["suggested_take_profit"] = round(target, 8)
     else:
-        sig["suggested_take_profit"] = _calc_take_profit(
-            entry, stop, direction, regime.label, "ict_session_sweep", pair
-        )
+        # CE (Consequent Encroachment) fallback: FVG midpoint as intermediate TP
+        # when session level is outside the valid RR window.
+        ce = fvg["fvg_ce"]
+        ce_rr = (ce - entry) / risk if direction == "long" else (entry - ce) / risk
+        if min_rr <= ce_rr and (
+            (direction == "long"  and ce > entry) or
+            (direction == "short" and ce < entry)
+        ):
+            sig["suggested_take_profit"] = ce
+        else:
+            sig["suggested_take_profit"] = _calc_take_profit(
+                entry, stop, direction, regime.label, "ict_session_sweep", pair
+            )
 
     return sig
 
