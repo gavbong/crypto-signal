@@ -13,6 +13,9 @@ Symbol map:
     FTSE100/USD → ^FTSE  (FTSE 100)
     DAX/USD     → ^GDAXI (DAX)
     XAU/USD     → GC=F   (Gold futures front month)
+    US500/USD   → ES=F   (S&P 500 E-mini futures)
+    NAS100/USD  → NQ=F   (Nasdaq-100 E-mini futures)
+    BRENT/USD   → BZ=F   (Brent crude oil futures)
 """
 import argparse
 import csv
@@ -31,6 +34,9 @@ SYMBOLS = {
     "FTSE100/USD": "^FTSE",
     "DAX/USD":     "^GDAXI",
     "XAU/USD":     "GC=F",
+    "US500/USD":   "ES=F",
+    "NAS100/USD":  "NQ=F",
+    "BRENT/USD":   "BZ=F",
 }
 
 
