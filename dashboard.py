@@ -526,8 +526,16 @@ def create_app() -> Flask:
     @app.route("/api/config/pairs")
     def api_config_pairs():
         _auth()
-        exchanges = cfg().get("exchanges", {})
         seen, result = set(), []
+        # Index pairs from TradeNation MT4
+        indices_cfg = cfg().get("indices", {})
+        if indices_cfg.get("enabled", False):
+            for p in indices_cfg.get("pairs", []):
+                if p not in seen:
+                    seen.add(p)
+                    result.append({"pair": p, "exchange": "tradenation"})
+        # Crypto pairs from exchanges
+        exchanges = cfg().get("exchanges", {})
         for exc_id, exc_cfg in exchanges.items():
             if not exc_cfg.get("enabled", False):
                 continue

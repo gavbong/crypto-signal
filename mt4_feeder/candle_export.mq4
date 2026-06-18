@@ -6,10 +6,10 @@
 //| Install:                                                         |
 //|   1. Copy to MetaTrader 4/MQL4/Experts/                         |
 //|   2. Attach to a chart for each instrument:                      |
-//|        DJ30 chart    → PairName = "DJ30/USD"                     |
-//|        FTSE100 chart → PairName = "FTSE100/USD"                  |
-//|        DAX chart     → PairName = "DAX/USD"                      |
-//|        XAU chart     → PairName = "XAU/USD"                      |
+//|        XAU chart     → PairName = "XAU/USD"                     |
+//|        US500 chart   → PairName = "US500/USD" (TN: US500/USTEC) |
+//|        NAS100 chart  → PairName = "NAS100/USD" (TN: USTEC/NAS100)|
+//|        XTI chart     → PairName = "XTI/USD" (TN: USOIL/WTI)    |
 //|   3. On ALL charts, set FeederBatPath to the full path of        |
 //|      mt4_feeder\run_feeder.bat and enable "Allow DLL imports"    |
 //|                                                                  |

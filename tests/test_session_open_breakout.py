@@ -78,7 +78,7 @@ class TestSessionOpenBreakout:
     def test_long_signal_in_window(self):
         df = _make_orb_df(breakout_dir="long", in_window=True, vol_multiple=2.0)
         regime = _make_regime("trending-up")
-        result = session_open_breakout("DJ30/USD", df, regime, "15m")
+        result = session_open_breakout("US500/USD", df, regime, "15m")
         assert result is not None
         assert result["direction"] == "long"
         assert result["strategy"] == "session_open_breakout"
@@ -88,7 +88,7 @@ class TestSessionOpenBreakout:
     def test_short_signal_in_window(self):
         df = _make_orb_df(breakout_dir="short", in_window=True, vol_multiple=2.0)
         regime = _make_regime("trending-down")
-        result = session_open_breakout("DJ30/USD", df, regime, "15m")
+        result = session_open_breakout("US500/USD", df, regime, "15m")
         assert result is not None
         assert result["direction"] == "short"
         assert result["suggested_stop_loss"] > result["entry_price"]
@@ -97,13 +97,13 @@ class TestSessionOpenBreakout:
     def test_no_signal_outside_window(self):
         df = _make_orb_df(breakout_dir="long", in_window=False, vol_multiple=2.0)
         regime = _make_regime("trending-up")
-        result = session_open_breakout("DJ30/USD", df, regime, "15m")
+        result = session_open_breakout("US500/USD", df, regime, "15m")
         assert result is None
 
     def test_no_signal_low_volume(self):
         df = _make_orb_df(breakout_dir="long", in_window=True, vol_multiple=0.5)
         regime = _make_regime("trending-up")
-        result = session_open_breakout("DJ30/USD", df, regime, "15m")
+        result = session_open_breakout("US500/USD", df, regime, "15m")
         assert result is None
 
     def test_xau_skipped(self):
@@ -127,9 +127,9 @@ class TestSessionOpenBreakout:
     def test_signal_schema_complete(self):
         df = _make_orb_df(breakout_dir="long", in_window=True, vol_multiple=2.0)
         regime = _make_regime("trending-up")
-        result = session_open_breakout("DJ30/USD", df, regime, "15m")
+        result = session_open_breakout("US500/USD", df, regime, "15m")
         if result is not None:
-            assert result["pair"] == "DJ30/USD"
+            assert result["pair"] == "US500/USD"
             assert result["entry_price"] > 0
             assert result["suggested_stop_loss"] is not None
             assert result["suggested_take_profit"] is not None

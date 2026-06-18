@@ -1,37 +1,31 @@
 indices:
   enabled: true
   pairs:
-    - DJ30/USD
-    - FTSE100/USD
-    - DAX/USD
     - XAU/USD
+    - US500/USD
+    - NAS100/USD
+    - BRENT/USD
   session_hours:
     # Format: HH:MM-HH:MM (zero-padded 24h clock) IANA-timezone
-    DJ30/USD:    "09:30-16:00 America/New_York"
-    FTSE100/USD: "08:00-16:30 Europe/London"
-    DAX/USD:     "09:00-17:30 Europe/Berlin"
     XAU/USD:     "00:01-23:59 UTC"      # gold: 24h on weekdays, weekends blocked by _is_market_open
+    US500/USD:   "09:30-16:00 America/New_York"
+    NAS100/USD:  "09:30-16:00 America/New_York"
+    BRENT/USD:   "00:01-23:59 UTC"      # Brent crude: near-24h on weekdays
 
 exchanges:
   mexc:
     enabled: true
     pairs:
       - BTC/USDT:USDT
-      - ETH/USDT:USDT
-      - SOL/USDT:USDT
       - XAUT/USDT:USDT
   binance:
     enabled: true
     pairs:
       - BTC/USDT:USDT
-      - ETH/USDT:USDT
-      - SOL/USDT:USDT
   okx:
     enabled: true
     pairs:
       - BTC/USDT:USDT
-      - ETH/USDT:USDT
-      - SOL/USDT:USDT
   hyperliquid:
     enabled: false              # excluded — high slippage + USDC funding costs vs USDT pairs
     pairs:
@@ -132,6 +126,9 @@ signals:
     ema_9_21_crossover: 2.0
     session_open_breakout: 1.5         # ORB: range-based SL tends to be wider than ATR; lower RR to keep TP reachable
     ict_session_sweep: 1.5             # fallback when session-liquidity target gives RR outside [0.5, 4.0]
+    bb_reversion: 1.5                  # mean-reversion snap-back: close TP, price oscillates shorter
+    momentum_breakout_1h: 2.5          # 1H breakout on BTC: trend continuation, wider target
+    trend_following_4h: 3.0            # 4H trend on gold/oil: sustained moves justify wide target
     # supply_demand: not set — uses asset-class RR (1.2 for indices, regime RR for crypto)
 
   # Per-regime-per-strategy overrides — highest precision, applied after strategy-level.
@@ -144,25 +141,25 @@ signals:
   # 60-day backtest (run #14): DAX uniformly underperforms across all strategies.
   #   supply_demand DAX: 0% WR (3 signals)
   #   liquidity_grab DAX: 20% WR (10 signals), -2.54R
-  # Skip these until DAX accumulates enough live signals for re-evaluation.
+  # momentum_breakout_1h and trend_following_4h are restricted by pair (not all pairs need all strategies).
   skip_strategies_for_pairs:
-    DAX/USD:
-      - supply_demand
-      - liquidity_grab
-      - rsi_extreme  # live: 3 trades, 0% WR, -27.78 USDT; mean-reversion premise invalid on trending index
-    DJ30/USD:
-      - supply_demand  # choppy regime: 34 signals, 38.2% WR, -7.36R (backtest run #15); without it DJ30 is +5.24R @ 54.2% WR
-      - rsi_extreme    # live: 1 trade, 0% WR, -18.62 USDT; RSI extremes on indices = trend days, not reversals
-    FTSE100/USD:
-      - rsi_extreme    # live: 2 trades, 50% WR but only timeout win; strategy thesis doesn't hold on FTSE
     XAU/USD:
-      - rsi_extreme    # no live data yet; gold CFD same gap-risk profile as equity indices
-    # rsi_extreme/choppy: ETH A-grade (p=0.005 n=79 WR=59.5%), BTC/SOL D-grade (p=0.435/0.310).
-    # Skip BTC/SOL in choppy only — other regimes (high-vol) remain active for both pairs.
+      - momentum_breakout_1h
+      - session_open_breakout         # gold: 24h market, no structural session open
+    BRENT/USD:
+      - momentum_breakout_1h
+      - session_open_breakout         # Brent: 24h market, no structural session open
+    US500/USD:
+      - trend_following_4h
+      - momentum_breakout_1h
+    NAS100/USD:
+      - trend_following_4h
+      - momentum_breakout_1h
+    XAUT/USDT:USDT:
+      - momentum_breakout_1h
+      - trend_following_4h
+    # rsi_extreme/choppy: BTC D-grade (p=0.435). Skip in choppy only — high-vol remains active.
     BTC/USDT:USDT:
-      choppy:
-        - rsi_extreme
-    SOL/USDT:USDT:
       choppy:
         - rsi_extreme
 
@@ -177,16 +174,34 @@ signals:
   lq_session_window_hours: 4           # liquidity_grab: for index pairs, only fire within N hours of session open (London→NY reversal window)
   orb_volume_multiplier: 1.5           # session_open_breakout: current candle volume must exceed N× rolling avg to confirm breakout
 
+  # ── BB Reversion (mean reversion) ────────────────────────────────────────────
+  # Fires when price breaches a Bollinger Band on the prior candle and re-enters
+  # on the current candle. RSI must confirm the extreme.
+  # BB params reuse regime.bb_period / regime.bb_std already in attach_precomputed.
+  bb_reversion_min_rsi_long: 45         # RSI must be ≤ this for bullish snap-back confirmation
+  bb_reversion_max_rsi_short: 55        # RSI must be ≥ this for bearish snap-back confirmation
+
+  # ── Momentum Breakout 1H (BTC only) ─────────────────────────────────────────
+  # Fires when the last closed 1H candle closes above the N-bar range high (long)
+  # or below the N-bar range low (short) with volume confirmation.
+  momentum_breakout_1h_lookback: 20     # 1H bars to define the range (20h ≈ 1 trading day)
+
+  # ── Trend Following 4H (gold + oil only) ──────────────────────────────────────
+  # EMA9 × EMA21 crossover on 4H candles; ADX filter for trend confirmation.
+  trend_4h_ema_fast: 9
+  trend_4h_ema_slow: 21
+  trend_4h_adx_threshold: 20
+
   # ── ICT NY Killzone strategy ────────────────────────────────────────────────────
   # Asia session: 20:00–03:00 ET (prev day 20:00 → today 03:00)
   # London session: 03:00–09:00 ET
   # Fires during the NY killzone when the combined Asia+London H/L is swept and an FVG forms.
   ict_session_sweep:
     killzone_hours:
-      DJ30/USD:    "09:00-11:00 America/New_York"
-      FTSE100/USD: "08:00-10:00 Europe/London"
-      DAX/USD:     "09:00-11:00 Europe/Berlin"
       XAU/USD:     "09:00-11:00 America/New_York"
+      US500/USD:   "09:00-11:00 America/New_York"
+      NAS100/USD:  "09:00-11:00 America/New_York"
+      BRENT/USD:   "09:00-11:00 America/New_York"   # NY open most liquid for Brent
       default:     "09:00-11:00 America/New_York"   # crypto pairs
     sweep_lookback_candles: 6    # scan this many recent candles for a sweep wick
     sweep_body_atr_mult: 1.0     # sweep candle body must be < N× ATR (wick-dominated candle)
@@ -234,8 +249,6 @@ asset_class_profiles:
   crypto:
     pairs:
       - BTC/USDT:USDT
-      - ETH/USDT:USDT
-      - SOL/USDT:USDT
     adx_trend_threshold: 25
     ema_slope_threshold: 0.001
     high_vol_bb_multiplier: 1.5
@@ -251,9 +264,8 @@ asset_class_profiles:
     stop_max_pct: 0.025
   indices:
     pairs:
-      - DJ30/USD
-      - FTSE100/USD
-      - DAX/USD
+      - US500/USD
+      - NAS100/USD
     adx_trend_threshold: 18      # indices trend more slowly than crypto
     ema_slope_threshold: 0.0005  # lower slope threshold for low-vol instruments
     high_vol_bb_multiplier: 1.3
@@ -267,9 +279,30 @@ asset_class_profiles:
     high_vol_bb_multiplier: 1.3
     stop_min_pct: 0.001
     stop_max_pct: 0.012          # gold on TN CFD: tighter range than crypto gold
+  oil:
+    pairs:
+      - BRENT/USD
+    adx_trend_threshold: 20
+    ema_slope_threshold: 0.0005
+    high_vol_bb_multiplier: 1.4
+    stop_min_pct: 0.001
+    stop_max_pct: 0.015          # Brent crude CFD: similar volatility to equity indices
 
 deduplication:
   window_candles: 3              # suppress same pair+dir+strategy+regime within N candles
+
+# ── Correlation filter ─────────────────────────────────────────────────────────
+# Block a new signal if too many correlated pairs already have an open position
+# in the same direction. Prevents 3× account drawdown from a single market event.
+correlation_filter:
+  us_equity_group:
+    - US500/USD
+    - NAS100/USD
+  max_concurrent_per_direction: 1  # allow at most 1 open long (or short) per group at a time
+
+# ── 4H candle config ──────────────────────────────────────────────────────────
+# Used by trend_following_4h strategy. IndexReader resamples from stored 15m candles.
+regime_4h_limit: 50               # candles to fetch for 4H trend detection (50 × 4h = 200h ≈ 8 days)
 
 walk_forward:
   outcome_window_hours: 8        # how long after fire to check outcome

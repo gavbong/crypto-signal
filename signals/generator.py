@@ -578,12 +578,13 @@ def session_open_breakout(pair: str, df: pd.DataFrame, regime: RegimeResult,
     the range. Fires on candles 3-6 (30-90 min after open) when close breaks the range
     with volume confirmation. SL placed at the far end of the opening range ± 0.5 ATR.
 
-    Applies to DJ30/USD, FTSE100/USD, DAX/USD only. XAU trades 24/7 with no single
-    structural open, so it is excluded.
+    Applies to equity index pairs with a defined session open (US500, NAS100).
+    Pairs trading 24h (XAU/USD, XTI/USD) are excluded — no structural open exists.
     """
     from zoneinfo import ZoneInfo
 
-    if timeframe != "15m" or pair == "XAU/USD":
+    _24H_PAIRS = {"XAU/USD", "XTI/USD", "BRENT/USD", "XAUT/USDT:USDT"}
+    if timeframe != "15m" or pair in _24H_PAIRS:
         return None
 
     full_cfg = cfg()
@@ -1011,6 +1012,135 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     return sig
 
 
+def bb_reversion(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                 timeframe: str) -> Optional[dict]:
+    """Mean-reversion signal: price closed outside a Bollinger Band on the prior
+    candle and re-enters on the current candle. RSI confirms the extreme.
+
+    Designed for choppy/ranging markets on index and crypto pairs where price
+    overextends then snaps back to value. BB params come from regime config
+    (bb_period / bb_std) — same bands already used for regime classification.
+    """
+    if "_bbu" not in df.columns or "_bbl" not in df.columns or "_rsi" not in df.columns:
+        return None
+    if len(df) < 3:
+        return None
+
+    c = cfg()["signals"]
+    prev = df.iloc[-2]
+    curr = df.iloc[-1]
+
+    bbu_prev = prev["_bbu"]
+    bbl_prev = prev["_bbl"]
+    bbu_curr = curr["_bbu"]
+    bbl_curr = curr["_bbl"]
+    rsi = curr["_rsi"]
+
+    if pd.isna(bbu_prev) or pd.isna(bbl_prev) or pd.isna(bbu_curr) or pd.isna(bbl_curr) or pd.isna(rsi):
+        return None
+
+    min_rsi_long  = c.get("bb_reversion_min_rsi_long",  45)
+    max_rsi_short = c.get("bb_reversion_max_rsi_short", 55)
+
+    # Bullish reversion: prev close was below lower band, current close back inside
+    if prev["close"] < bbl_prev and curr["close"] >= bbl_curr and rsi <= min_rsi_long:
+        return _signal(pair, "long", "bb_reversion", regime, df, timeframe)
+
+    # Bearish reversion: prev close was above upper band, current close back inside
+    if prev["close"] > bbu_prev and curr["close"] <= bbu_curr and rsi >= max_rsi_short:
+        return _signal(pair, "short", "bb_reversion", regime, df, timeframe)
+
+    return None
+
+
+def momentum_breakout_1h(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                         timeframe: str,
+                         df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
+    """1H momentum breakout for BTC: fires when the last completed 1H candle closes
+    above the N-bar range high (long) or below the N-bar range low (short) with
+    volume confirmation. Uses df_1h which is already fetched for regime classification.
+    """
+    if df_1h is None or len(df_1h) < 5:
+        return None
+
+    c = cfg()["signals"]
+    lookback = c.get("momentum_breakout_1h_lookback", 20)
+
+    if len(df_1h) < lookback + 2:
+        return None
+
+    # df_1h[-1] = most recently closed 1H bar; df_1h[-2] is the one before that.
+    # Use [-2] as the breakout trigger bar so we only fire on a completed candle.
+    breakout_bar = df_1h.iloc[-2]
+    prior = df_1h.iloc[-(lookback + 2):-2]
+
+    range_high = prior["high"].max()
+    range_low  = prior["low"].min()
+    vol_avg = df_1h["volume"].iloc[-(lookback + 2):-2].mean()
+
+    if pd.isna(range_high) or pd.isna(range_low) or pd.isna(vol_avg) or vol_avg == 0:
+        return None
+
+    breakout_vol = breakout_bar["volume"]
+    if pd.isna(breakout_vol) or breakout_vol < vol_avg:
+        return None
+
+    if breakout_bar["close"] > range_high:
+        return _signal(pair, "long", "momentum_breakout_1h", regime, df, timeframe)
+    if breakout_bar["close"] < range_low:
+        return _signal(pair, "short", "momentum_breakout_1h", regime, df, timeframe)
+
+    return None
+
+
+def trend_following_4h(pair: str, df: pd.DataFrame, regime: RegimeResult,
+                       timeframe: str,
+                       df_4h: Optional[pd.DataFrame] = None) -> Optional[dict]:
+    """4H EMA crossover trend-following for gold (XAU/USD) and oil (XTI/USD).
+    EMA9 crossing above EMA21 on the 4H chart = bullish trend entry (long).
+    EMA9 crossing below EMA21 = bearish trend entry (short).
+    ADX filter ensures there is actual trend momentum before firing.
+    """
+    if df_4h is None or len(df_4h) < 30:
+        return None
+
+    c = cfg()["signals"]
+    fast = c.get("trend_4h_ema_fast", 9)
+    slow = c.get("trend_4h_ema_slow", 21)
+    adx_threshold = c.get("trend_4h_adx_threshold", 20)
+
+    try:
+        ema_fast = ta.ema(df_4h["close"], length=fast)
+        ema_slow = ta.ema(df_4h["close"], length=slow)
+        adx_df   = ta.adx(df_4h["high"], df_4h["low"], df_4h["close"], length=14)
+    except Exception:
+        return None
+
+    if ema_fast is None or ema_slow is None or adx_df is None:
+        return None
+
+    if (pd.isna(ema_fast.iloc[-1]) or pd.isna(ema_fast.iloc[-2]) or
+            pd.isna(ema_slow.iloc[-1]) or pd.isna(ema_slow.iloc[-2])):
+        return None
+
+    adx_col = next((c for c in adx_df.columns if c.startswith("ADX_")), None)
+    if adx_col is None or pd.isna(adx_df[adx_col].iloc[-1]):
+        return None
+    if adx_df[adx_col].iloc[-1] < adx_threshold:
+        return None
+
+    # Crossover detection: prev EMA9 < EMA21 → current EMA9 > EMA21 (golden cross)
+    prev_fast, prev_slow = ema_fast.iloc[-2], ema_slow.iloc[-2]
+    curr_fast, curr_slow = ema_fast.iloc[-1], ema_slow.iloc[-1]
+
+    if prev_fast <= prev_slow and curr_fast > curr_slow:
+        return _signal(pair, "long", "trend_following_4h", regime, df, timeframe)
+    if prev_fast >= prev_slow and curr_fast < curr_slow:
+        return _signal(pair, "short", "trend_following_4h", regime, df, timeframe)
+
+    return None
+
+
 GENERATORS = {
     "ema_9_21_crossover":    ema_9_21_crossover,
     "rsi_divergence":        rsi_divergence,
@@ -1021,12 +1151,16 @@ GENERATORS = {
     "volume_spike":          volume_spike,
     "session_open_breakout": session_open_breakout,
     "ict_session_sweep":     ict_session_sweep,
+    "bb_reversion":          bb_reversion,
+    "momentum_breakout_1h":  momentum_breakout_1h,
+    "trend_following_4h":    trend_following_4h,
 }
 
 
 def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
                  regime: RegimeResult, timeframe: str,
-                 df_1h: Optional[pd.DataFrame] = None) -> Optional[dict]:
+                 df_1h: Optional[pd.DataFrame] = None,
+                 df_4h: Optional[pd.DataFrame] = None) -> Optional[dict]:
     gen = GENERATORS.get(strategy)
     if gen is None:
         logger.warning(f"Unknown strategy: {strategy}")
@@ -1042,8 +1176,10 @@ def run_strategy(strategy: str, pair: str, df: pd.DataFrame,
             return None
     elif strategy in pair_skip:
         return None
-    if strategy in ("supply_demand", "liquidity_grab"):
+    if strategy in ("supply_demand", "liquidity_grab", "momentum_breakout_1h"):
         signal = gen(pair, df, regime, timeframe, df_1h=df_1h)
+    elif strategy == "trend_following_4h":
+        signal = gen(pair, df, regime, timeframe, df_4h=df_4h)
     else:
         signal = gen(pair, df, regime, timeframe)
     if signal is not None and not is_direction_allowed(regime.label, strategy, signal["direction"]):

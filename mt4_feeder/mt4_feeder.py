@@ -43,7 +43,6 @@ SYMBOL_MAP: dict[str, str] = {
     # Generic / other brokers
     "US30":     "DJ30/USD",
     "US30.":    "DJ30/USD",
-    "USTEC":    "DJ30/USD",
     "UK100":    "FTSE100/USD",
     "UK100.":   "FTSE100/USD",
     "GER40":    "DAX/USD",
@@ -54,6 +53,36 @@ SYMBOL_MAP: dict[str, str] = {
     "XAUUSD":   "XAU/USD",
     "GOLD":     "XAU/USD",
     "XAU":      "XAU/USD",
+    # S&P 500 — check your MT4 Market Watch for the exact name
+    ".US500.":  "US500/USD",
+    "US500":    "US500/USD",
+    "US500.":   "US500/USD",
+    "SPX500":   "US500/USD",
+    "SP500":    "US500/USD",
+    # NASDAQ 100 — Trade Nation often calls this USTEC or NAS100
+    ".USTEC.":  "NAS100/USD",
+    ".NAS100.": "NAS100/USD",
+    "USTEC":    "NAS100/USD",
+    "NAS100":   "NAS100/USD",
+    "NAS100.":  "NAS100/USD",
+    "NDX100":   "NAS100/USD",
+    "US100":    "NAS100/USD",
+    # WTI Oil
+    ".WTI.":    "XTI/USD",
+    "USOIL":    "XTI/USD",
+    "USOIL.":   "XTI/USD",
+    "WTI":      "XTI/USD",
+    "XTIUSD":   "XTI/USD",
+    "OILUSD":   "XTI/USD",
+    "CRUDEOIL": "XTI/USD",
+    # Brent Crude Oil (Trade Nation: BrentFut)
+    "BrentFut":  "BRENT/USD",
+    "BRENT":     "BRENT/USD",
+    "BRENT.":    "BRENT/USD",
+    ".BRENT.":   "BRENT/USD",
+    "UKOIL":     "BRENT/USD",
+    "UKOIL.":    "BRENT/USD",
+    "XBRUSD":    "BRENT/USD",
 }
 
 # ── Paths & defaults ──────────────────────────────────────────────────────────

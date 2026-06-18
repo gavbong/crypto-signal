@@ -69,6 +69,51 @@ def _build_regime_context(
     return context, df_1h_map
 
 
+def _build_4h_context(exchange, pairs: list, limit: int) -> dict:
+    """Fetch 4H candles for trend_following_4h strategy (gold + oil pairs).
+    IndexReader resamples from stored 15m data; crypto exchanges fetch 4H natively.
+    Returns df_4h_map keyed by pair — missing pairs are simply absent."""
+    df_4h_map: dict = {}
+    for pair in pairs:
+        ohlcv = fetch_ohlcv_safe(exchange, pair, "4h", limit)
+        if ohlcv is None or len(ohlcv) < 10:
+            continue
+        df_4h_map[pair] = _to_df(ohlcv)
+    return df_4h_map
+
+
+def _equity_correlation_filter_passes(pair: str, direction: str, conn) -> bool:
+    """Return False if too many US equity index pairs already have an open position
+    in the same direction — prevents 2-3× correlated drawdown from a single event.
+    Only applies to the us_equity_group defined in config.correlation_filter."""
+    corr_cfg = cfg().get("correlation_filter", {})
+    group = corr_cfg.get("us_equity_group", [])
+    max_concurrent = corr_cfg.get("max_concurrent_per_direction", 1)
+
+    if pair not in group or not group:
+        return True
+
+    try:
+        rows = conn.execute(
+            "SELECT pair, direction FROM paper_positions "
+            "WHERE exit_price IS NULL AND exchange = 'tradenation' AND pair IN ({})".format(
+                ",".join("?" * len(group))
+            ),
+            group,
+        ).fetchall()
+    except Exception:
+        return True  # fail open — don't block signals if DB query fails
+
+    same_dir_count = sum(1 for r in rows if r["direction"] == direction)
+    if same_dir_count >= max_concurrent:
+        logger.debug(
+            f"Correlation filter: {pair} {direction} blocked — "
+            f"{same_dir_count} US equity positions already open in same direction"
+        )
+        return False
+    return True
+
+
 def _collect_candidates(
     exchange,
     pairs: list,
@@ -81,6 +126,7 @@ def _collect_candidates(
     conn,
     macro_label: str = "neutral",
     macro_conf: float = 0.0,
+    df_4h_map: dict | None = None,
 ) -> list[dict]:
     """Collect potential signals from one exchange without emitting.
     No dedup check, no LLM commentary, no alerts. Returns raw candidates
@@ -145,10 +191,16 @@ def _collect_candidates(
             logger.warning(f"{pair} [{exchange_id}]: ticker failed, using candle close")
 
         df_1h = (df_1h_map or {}).get(pair)
+        df_4h = (df_4h_map or {}).get(pair)
 
         for strategy in strategies:
-            signal = run_strategy(strategy, pair, df, regime, timeframe, df_1h=df_1h)
+            signal = run_strategy(strategy, pair, df, regime, timeframe,
+                                  df_1h=df_1h, df_4h=df_4h)
             if signal is None:
+                continue
+
+            # Correlation filter: block if too many US equity positions open same direction
+            if not _equity_correlation_filter_passes(pair, signal["direction"], conn):
                 continue
 
             if live_price is not None:
@@ -277,10 +329,27 @@ def signal_job(exchanges_config: list, timeframe: str, limit: int,
             regimes_1h, df_1h_map = _build_regime_context(
                 exchange, active_pairs, c["regime_timeframe"], c["regime_limit"]
             )
+            trend_4h_pairs = cfg().get("signals", {}).get(
+                "skip_strategies_for_pairs", {}
+            )
+            # Fetch 4H candles only for pairs that have trend_following_4h active
+            # (i.e., pairs NOT in the skip list for trend_following_4h)
+            _4h_candidates = [
+                p for p in active_pairs
+                if "trend_following_4h" not in (
+                    cfg().get("signals", {})
+                    .get("skip_strategies_for_pairs", {})
+                    .get(p, [])
+                )
+            ]
+            df_4h_map = _build_4h_context(
+                exchange, _4h_candidates, c.get("regime_4h_limit", 50)
+            ) if _4h_candidates else {}
             candidates = _collect_candidates(
                 exchange, active_pairs, timeframe, limit,
                 regimes_1h, df_1h_map, exchange_id, shadow_mode, conn,
                 macro_label=macro_label, macro_conf=macro_conf,
+                df_4h_map=df_4h_map,
             )
             all_candidates.extend(candidates)
 

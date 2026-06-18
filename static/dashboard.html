@@ -1030,21 +1030,21 @@ body{
 <div id="view-indices" class="view">
   <div class="stats-row-hdr">
     <span class="stats-row-title">Indices</span>
-    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">DJ30 · FTSE100 · DAX · XAU via Trade Nation MT4</span>
+    <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">US500 · NAS100 · BRENT · XAU via Trade Nation MT4</span>
   </div>
 
   <!-- Pair selector -->
   <div style="display:flex;gap:6px;margin-top:14px;flex-wrap:wrap">
-    <button class="idx-pair-btn active" data-pair="DJ30/USD" onclick="idxSelectPair(this,'DJ30/USD')">DJ30</button>
-    <button class="idx-pair-btn" data-pair="FTSE100/USD" onclick="idxSelectPair(this,'FTSE100/USD')">FTSE100</button>
-    <button class="idx-pair-btn" data-pair="DAX/USD" onclick="idxSelectPair(this,'DAX/USD')">DAX</button>
+    <button class="idx-pair-btn active" data-pair="US500/USD" onclick="idxSelectPair(this,'US500/USD')">US500</button>
+    <button class="idx-pair-btn" data-pair="NAS100/USD" onclick="idxSelectPair(this,'NAS100/USD')">NAS100</button>
+    <button class="idx-pair-btn" data-pair="BRENT/USD" onclick="idxSelectPair(this,'BRENT/USD')">BRENT</button>
     <button class="idx-pair-btn" data-pair="XAU/USD" onclick="idxSelectPair(this,'XAU/USD')">XAU</button>
   </div>
 
   <!-- Chart -->
   <div class="panel" style="margin-top:10px">
     <div class="panel-hdr">
-      <span class="panel-title" id="idx-chart-title">DJ30/USD — 15m</span>
+      <span class="panel-title" id="idx-chart-title">US500/USD — 15m</span>
       <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)" id="idx-regime-label"></span>
       <div style="display:flex;gap:4px;margin-left:auto">
         <button class="idx-tf-btn active" onclick="idxSelectTf(this,'15m')">15m</button>
@@ -1149,7 +1149,7 @@ function fmtPair(p) {
   return p.replace('/USDT:USDT', '/USDT').replace('/USDC:USDC', '/USDC');
 }
 
-const EXC_LABEL = {mexc:'MEXC', binance:'BINANCE', okx:'OKX', hyperliquid:'HL'};
+const EXC_LABEL = {mexc:'MEXC', binance:'BINANCE', okx:'OKX', hyperliquid:'HL', tradenation:'MT4'};
 function excBadge(exc) {
   const label = EXC_LABEL[exc] || (exc || 'MEXC').toUpperCase();
   return `<span style="font-family:var(--font-mono);font-size:9px;font-weight:500;color:var(--muted);background:var(--surface-up);border:1px solid var(--border);border-radius:2px;padding:1px 4px;letter-spacing:0.04em">${label}</span>`;
@@ -3019,7 +3019,7 @@ async function refreshSettings() {
 
 let _idxChart = null;
 let _idxSeries = null;
-let _idxCurrentPair = 'DJ30/USD';
+let _idxCurrentPair = 'US500/USD';
 let _idxCurrentTf = '15m';
 let _idxSignals = [];
 let _idxPriceLines = [];

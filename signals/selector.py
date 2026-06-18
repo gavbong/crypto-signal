@@ -7,8 +7,11 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "supply_demand":         "FIRE",  # trending-only from 2026-05-26 — zone rejection with trend; was SKIP (wrong in choppy)
         "liquidity_grab":        "SKIP",
         "volume_spike":          "SKIP",  # permutation 2026-05-26: avg_R=-0.24, p=0.67-0.8 — consistent negative, no edge
-        "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
+        "session_open_breakout": "FIRE",  # ORB: US500/NAS100 only, 30-90 min after open
         "ict_session_sweep":     "FIRE",  # sweep is the reversal signal — fires in any regime except high-vol
+        "bb_reversion":          "SKIP",  # mean-reversion in trending = counter-trend risk
+        "momentum_breakout_1h":  "FIRE",  # BTC 1H breakout: trend-confirming; pair-restricted via skip list
+        "trend_following_4h":    "FIRE",  # gold/oil 4H trend entry; pair-restricted via skip list
     },
     "trending-down": {
         "ema_9_21_crossover":    "FIRE",  # SHORT only — generator blocks counter-trend LONGs via regime gate
@@ -18,19 +21,25 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "supply_demand":         "FIRE",  # trending-only from 2026-05-26 — supply zone rejection with downtrend
         "liquidity_grab":        "SKIP",
         "volume_spike":          "SKIP",  # backtest: -17.45R, 32% WR — trend exhaustion, not participation
-        "session_open_breakout": "FIRE",  # ORB: indices only, DJ30/FTSE/DAX, 30-90 min after open
+        "session_open_breakout": "FIRE",  # ORB: US500/NAS100 only, 30-90 min after open
         "ict_session_sweep":     "FIRE",  # sweep is the reversal signal — fires in any regime except high-vol
+        "bb_reversion":          "SKIP",  # mean-reversion in trending = counter-trend risk
+        "momentum_breakout_1h":  "FIRE",  # BTC 1H breakdown: trend-confirming short; pair-restricted via skip list
+        "trend_following_4h":    "FIRE",  # gold/oil 4H trend entry; pair-restricted via skip list
     },
     "choppy": {
         "ema_9_21_crossover":    "SKIP",
         "rsi_divergence":        "SKIP",  # both directions unprofitable in choppy (short -11.86R; long -4.37R); was FIRE+DIRECTION_BLOCK(both) — simplified to SKIP
-        "rsi_extreme":           "FIRE",  # ETH: A-grade p=0.005 n=79 WR=59.5% +0.191R (200-perm 2026-05-27); BTC/SOL skipped via skip_strategies_for_pairs
+        "rsi_extreme":           "FIRE",  # ETH: A-grade p=0.005 n=79 WR=59.5% +0.191R (200-perm 2026-05-27); BTC skipped via skip_strategies_for_pairs
         "vol_breakout":          "SKIP",
         "supply_demand":         "SKIP",  # moved to trending-only 2026-05-26 — choppy S&D has no edge (blocked both directions)
         "liquidity_grab":        "FIRE",  # both directions (live: long WR=56% +1.09R; short WR=56% +2.13R)
         "volume_spike":          "SKIP",  # spikes in choppy = noise, no trend to ride
         "session_open_breakout": "SKIP",  # choppy opens prone to false breakout and rapid reversal
         "ict_session_sweep":     "FIRE",  # sweep is the reversal signal — fires in any regime except high-vol
+        "bb_reversion":          "FIRE",  # primary mean-reversion signal — BB breach + RSI extreme in choppy
+        "momentum_breakout_1h":  "SKIP",  # breakouts fail in choppy — false breakouts dominate
+        "trend_following_4h":    "SKIP",  # no sustained trend in choppy; 4H EMA crossover unreliable
     },
     "high-volatility": {
         "ema_9_21_crossover":    "SKIP",
@@ -42,6 +51,9 @@ REGIME_STRATEGY_MAP: dict[str, dict[str, str]] = {
         "volume_spike":          "SKIP",  # high-vol already captures spike energy via vol_breakout
         "session_open_breakout": "FIRE",  # high-vol opens can produce strong clean breakouts
         "ict_session_sweep":     "SKIP",  # blocked — expanded ranges invalidate FVG sizing assumptions
+        "bb_reversion":          "SKIP",  # high-vol BB bands expand rapidly — re-entry signal unreliable
+        "momentum_breakout_1h":  "FIRE",  # BTC high-vol breakouts are strongest; pair-restricted via skip list
+        "trend_following_4h":    "SKIP",  # 4H signals lag too much in high-vol; not useful
     },
 }
 

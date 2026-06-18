@@ -261,14 +261,14 @@ class TestIctSessionSweepBlocking:
         assert result is None
 
     def test_fires_for_index_pair_in_killzone(self):
-        """Index pair (DJ30/USD) should use the killzone_hours config, not default."""
+        """Index pair (US500/USD) should use the killzone_hours config, not default."""
         tz_et = ZoneInfo("America/New_York")
         today = pd.Timestamp.now(tz=tz_et).normalize()
-        # Build standard long setup — killzone_hours for DJ30/USD = 09:00-11:00 ET
+        # Build standard long setup — killzone_hours for US500/USD = 09:00-11:00 ET
         df = _make_ict_df(direction="long", in_killzone=True)
         regime = _make_regime("choppy")
-        # DJ30/USD uses the same 09:00-11:00 ET window, so it should fire too
-        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        # US500/USD uses the same 09:00-11:00 ET window, so it should fire too
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
         # Fires if killzone matches (10:00 ET is inside 09:00-11:00 ET)
         assert result is not None
 
@@ -397,7 +397,7 @@ class TestIctSessionSweepNDOG:
         if not found:
             pytest.skip("NDOG candles not in 80-candle window (Monday/weekend run)")
         regime = _make_regime("choppy")
-        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
         assert result is not None
         # NDOG gap [99.8, 100.2]: only high=100.2 clears min_rr=0.5
         # (entry≈99.65, risk≈0.99 → RR=(100.2-99.65)/0.99≈0.56 ✓)
@@ -421,7 +421,7 @@ class TestIctSessionSweepNDOG:
         if not found:
             pytest.skip("NDOG candles not in 80-candle window (Monday/weekend run)")
         regime = _make_regime("choppy")
-        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
         assert result is not None
         # NDOG gap [99.8, 100.8]: only low=99.8 clears min_rr=0.5 for a short
         # (entry≈100.35, risk≈0.99 → RR=(100.35-99.8)/0.99≈0.56 ✓)
@@ -434,7 +434,7 @@ class TestIctSessionSweepNDOG:
         # Default df: close/open at 100.0 → only NDOG level is 100.0
         # RR=(100.0-99.65)/0.99≈0.35 < min_rr=0.5 → no valid NDOG level
         regime = _make_regime("choppy")
-        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
         assert result is not None
         assert "ndog_tp" not in result
         assert abs(result["suggested_take_profit"] - 101.0) < 0.01
