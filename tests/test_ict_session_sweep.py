@@ -330,6 +330,26 @@ class TestIctSessionSweepFVGQuality:
         # Long FVG: [fvg_bottom=99.5, fvg_top=99.8] → CE = 99.65
         assert abs(result["fvg_ce"] - 99.65) < 0.001
 
+    def test_no_signal_close_below_ce_for_long(self):
+        """CE half-split: close in lower half of BISI must be rejected (breakaway gap absent)."""
+        df = _make_ict_df(direction="long")
+        # Move close to 99.60 — inside FVG [99.5, 99.8] but below CE (99.65)
+        df.iloc[79, df.columns.get_loc("close")] = 99.60
+        df.iloc[79, df.columns.get_loc("open")]  = 99.60
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is None
+
+    def test_no_signal_close_above_ce_for_short(self):
+        """CE half-split: close in upper half of SIBI must be rejected (breakaway gap absent)."""
+        df = _make_ict_df(direction="short")
+        # Move close to 100.40 — inside FVG [100.2, 100.5] but above CE (100.35)
+        df.iloc[79, df.columns.get_loc("close")] = 100.40
+        df.iloc[79, df.columns.get_loc("open")]  = 100.40
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("ETH/USDT:USDT", df, regime, "15m")
+        assert result is None
+
     def test_fvg_ce_is_midpoint(self):
         """CE must equal (fvg_top + fvg_bottom) / 2 for both directions."""
         for direction, pair in [("long", "BTC/USDT:USDT"), ("short", "ETH/USDT:USDT")]:

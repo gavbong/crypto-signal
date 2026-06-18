@@ -740,13 +740,16 @@ def _ict_find_sweep(df: pd.DataFrame, session_bounds: dict, atr: float) -> Optio
 def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[dict]:
     """Find the most recent 3-candle Fair Value Gap at or after sweep_idx where the current close is inside.
 
-    Three ICT quality filters beyond the basic gap check:
+    Four ICT quality filters beyond the basic gap check:
     - CHoCH: the FVG's impulse candle (c1) must break the local swing H/L from the N candles
       immediately before the sweep — confirming algorithmic displacement, not just noise.
     - Body confirmation: current candle open must be on the entry side of the gap, ensuring
       price is retracing INTO the FVG (not bubbling up through the bottom on a long, etc.).
     - BISI/SIBI: the impulse candle must close in the direction of the trade (up-close for
       longs = Buy Side Imbalance; down-close for shorts = Sell Side Imbalance).
+    - CE half-split: for BISI (long) only fills in the upper half [CE, fvg_top] are accepted;
+      for SIBI (short) only fills in the lower half [fvg_bottom, CE]. An upper-half fill on a
+      BISI means the lower half is a breakaway gap — algorithmic signature of explosive expansion.
 
     Returns dict with fvg_top, fvg_bottom, and fvg_ce (Consequent Encroachment = midpoint).
     """
@@ -776,7 +779,7 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
         c1_open  = float(df["open"].iloc[i + 1])
         c1_close = float(df["close"].iloc[i + 1])
 
-        if direction == "long" and c0_h < c2_l and c0_h <= close_now <= c2_l:
+        if direction == "long" and c0_h < c2_l and (c0_h + c2_l) / 2 <= close_now <= c2_l:
             # CHoCH: impulse must break above the pre-sweep local swing high.
             if pre_swing_high is not None and c1_h <= pre_swing_high:
                 continue
@@ -788,7 +791,7 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
                 continue
             fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h,
                          "fvg_ce": round((c2_l + c0_h) / 2, 8)}
-        elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= c0_l:
+        elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= (c2_h + c0_l) / 2:
             # CHoCH: impulse must break below the pre-sweep local swing low.
             if pre_swing_low is not None and c1_l >= pre_swing_low:
                 continue
