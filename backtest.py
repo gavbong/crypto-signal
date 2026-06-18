@@ -495,7 +495,7 @@ def main() -> None:
 
     run_id = args.run_id
 
-    if run_id is not None and not args.dry_run:
+    if not args.dry_run:
         from signals.selector import REGIME_STRATEGY_MAP
         sig_cfg = c.get("signals", {})
         snapshot = {
@@ -507,12 +507,24 @@ def main() -> None:
             "trending_max_confidence": c.get("regime", {}).get("trending_max_confidence"),
             "regime_strategy_map": REGIME_STRATEGY_MAP,
         }
-        with get_conn() as conn:
-            conn.execute(
-                "UPDATE backtest_runs SET config_snapshot=?, pid=? WHERE id=?",
-                (_json.dumps(snapshot), os.getpid(), run_id),
-            )
-            conn.commit()
+        if run_id is not None:
+            with get_conn() as conn:
+                conn.execute(
+                    "UPDATE backtest_runs SET config_snapshot=?, pid=? WHERE id=?",
+                    (_json.dumps(snapshot), os.getpid(), run_id),
+                )
+                conn.commit()
+        else:
+            # CLI run — auto-create a backtest_runs record so results appear in the dashboard
+            with get_conn() as conn:
+                cur = conn.execute(
+                    "INSERT INTO backtest_runs (started_at, since_date, status, progress_pct, progress_msg, config_snapshot, pid) "
+                    "VALUES (CURRENT_TIMESTAMP, ?, 'running', 0, 'Starting...', ?, ?)",
+                    (since_dt.date().isoformat(), _json.dumps(snapshot), os.getpid()),
+                )
+                run_id = cur.lastrowid
+                conn.commit()
+            logger.info(f"Created backtest run #{run_id}")
 
     mode = "DRY RUN" if args.dry_run else "WRITE"
 
