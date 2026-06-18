@@ -807,6 +807,95 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
     return fvg_found
 
 
+def _ict_find_ndog(df: pd.DataFrame, direction: str, entry: float, risk: float,
+                   min_rr: float, max_rr: float) -> Optional[float]:
+    """Nearest NDOG or NWOG level in the trade direction within valid RR range.
+
+    NDOG: last-candle-before-5PM-ET close vs first-candle-at-6PM-ET open, Mon–Thu.
+          Life cycle: 5 trading days.
+    NWOG: Friday 5PM ET close vs Sunday 6PM ET open.  Life cycle: 5 weeks.
+    Only called for index pairs; caller is responsible for filtering.
+    Returns the nearest level (high, low, or CE midpoint) as a TP price, or None.
+    """
+    from zoneinfo import ZoneInfo
+    try:
+        tz_et = ZoneInfo("America/New_York")
+        idx_et = (
+            df.index.tz_convert(tz_et)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz_et)
+        )
+        last_et = idx_et[-1]
+        levels: list[float] = []
+
+        def _gap_levels(a: float, b: float) -> list[float]:
+            hi, lo = max(a, b), min(a, b)
+            return [hi, (hi + lo) / 2, lo]
+
+        def _pos_before(cutoff) -> Optional[int]:
+            arr = idx_et < cutoff
+            idxs = arr.nonzero()[0] if hasattr(arr, "nonzero") else arr.values.nonzero()[0]
+            return int(idxs[-1]) if len(idxs) else None
+
+        def _pos_at_or_after(cutoff, window_h: float = 1.0) -> Optional[int]:
+            arr = (idx_et >= cutoff) & (idx_et < cutoff + pd.Timedelta(hours=window_h))
+            idxs = arr.nonzero()[0] if hasattr(arr, "nonzero") else arr.values.nonzero()[0]
+            return int(idxs[0]) if len(idxs) else None
+
+        # ── NDOG: last 5 trading days ────────────────────────────────────
+        trading_days = 0
+        for offset in range(14):
+            d = (last_et - pd.Timedelta(days=offset)).normalize()
+            if d.dayofweek >= 5:
+                continue
+            trading_days += 1
+            if trading_days > 5:
+                break
+            pre  = _pos_before(d + pd.Timedelta(hours=17))
+            post = _pos_at_or_after(d + pd.Timedelta(hours=18))
+            if pre is None or post is None:
+                continue
+            levels.extend(_gap_levels(
+                float(df["close"].iloc[pre]),
+                float(df["open"].iloc[post]),
+            ))
+
+        # ── NWOG: last 5 Fridays ─────────────────────────────────────────
+        fridays = 0
+        for offset in range(35):
+            d = (last_et - pd.Timedelta(days=offset)).normalize()
+            if d.dayofweek != 4:
+                continue
+            fridays += 1
+            if fridays > 5:
+                break
+            fri_pre  = _pos_before(d + pd.Timedelta(hours=17))
+            sun_post = _pos_at_or_after(d + pd.Timedelta(days=2, hours=18))
+            if fri_pre is None or sun_post is None:
+                continue
+            levels.extend(_gap_levels(
+                float(df["close"].iloc[fri_pre]),
+                float(df["open"].iloc[sun_post]),
+            ))
+
+        # ── pick nearest valid TP ────────────────────────────────────────
+        valid: list[float] = []
+        for lvl in levels:
+            if direction == "long" and lvl > entry:
+                rr = (lvl - entry) / risk
+                if min_rr <= rr <= max_rr:
+                    valid.append(lvl)
+            elif direction == "short" and lvl < entry:
+                rr = (entry - lvl) / risk
+                if min_rr <= rr <= max_rr:
+                    valid.append(lvl)
+        if not valid:
+            return None
+        return round(min(valid, key=lambda x: abs(x - entry)), 8)
+    except Exception:
+        return None
+
+
 def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
                       timeframe: str) -> Optional[dict]:
     """ICT NY Killzone: Asia/London session liquidity sweep with FVG reversal entry.
@@ -877,18 +966,33 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     min_rr = ict_cfg.get("min_rr", 0.5)
     max_rr = ict_cfg.get("max_rr", 4.0)
 
-    if direction == "long":
-        target        = session_bounds["combined_high"]
-        rr_to_target  = (target - entry) / risk
-    else:
-        target        = session_bounds["combined_low"]
-        rr_to_target  = (entry - target) / risk
+    # TP priority: NDOG/NWOG > session level > CE > ATR
+    full_cfg   = cfg()
+    index_pairs = full_cfg.get("indices", {}).get("pairs", [])
+    tp_set = False
 
-    if min_rr <= rr_to_target <= max_rr:
-        sig["suggested_take_profit"] = round(target, 8)
-    else:
-        # CE (Consequent Encroachment) fallback: FVG midpoint as intermediate TP
-        # when session level is outside the valid RR window.
+    # 1. NDOG/NWOG — equity opening gaps act as primary price draws (index pairs only)
+    if pair in index_pairs:
+        ndog_tp = _ict_find_ndog(df, direction, entry, risk, min_rr, max_rr)
+        if ndog_tp is not None:
+            sig["suggested_take_profit"] = ndog_tp
+            sig["ndog_tp"] = ndog_tp
+            tp_set = True
+
+    # 2. Session level (opposing Asia/London H or L)
+    if not tp_set:
+        if direction == "long":
+            target       = session_bounds["combined_high"]
+            rr_to_target = (target - entry) / risk
+        else:
+            target       = session_bounds["combined_low"]
+            rr_to_target = (entry - target) / risk
+        if min_rr <= rr_to_target <= max_rr:
+            sig["suggested_take_profit"] = round(target, 8)
+            tp_set = True
+
+    # 3. CE (Consequent Encroachment) — FVG midpoint when session level is out of range
+    if not tp_set:
         ce = fvg["fvg_ce"]
         ce_rr = (ce - entry) / risk if direction == "long" else (entry - ce) / risk
         if min_rr <= ce_rr and (
@@ -896,10 +1000,13 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
             (direction == "short" and ce < entry)
         ):
             sig["suggested_take_profit"] = ce
-        else:
-            sig["suggested_take_profit"] = _calc_take_profit(
-                entry, stop, direction, regime.label, "ict_session_sweep", pair
-            )
+            tp_set = True
+
+    # 4. ATR fallback
+    if not tp_set:
+        sig["suggested_take_profit"] = _calc_take_profit(
+            entry, stop, direction, regime.label, "ict_session_sweep", pair
+        )
 
     return sig
 

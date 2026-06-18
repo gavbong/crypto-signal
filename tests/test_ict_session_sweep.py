@@ -5,7 +5,7 @@ import pytest
 from zoneinfo import ZoneInfo
 
 from regime.classifier import RegimeResult
-from signals.generator import ict_session_sweep
+from signals.generator import ict_session_sweep, _ict_find_ndog
 
 
 def _make_regime(label="choppy"):
@@ -362,3 +362,79 @@ class TestIctSessionSweepFVGQuality:
             # short FVG: [100.2, 100.5] → CE = 100.35
             expected_ce = 99.65 if direction == "long" else 100.35
             assert abs(result["fvg_ce"] - expected_ce) < 0.001
+
+
+def _set_ndog_gap(df: pd.DataFrame, close_5pm: float, open_6pm: float) -> bool:
+    """Inject NDOG prices into the fixture df.  Returns False if the df doesn't span
+    the prior weekday's 5PM–6PM ET window (e.g. Monday morning run)."""
+    tz_et = ZoneInfo("America/New_York")
+    idx_et = df.index.tz_convert(tz_et)
+    last_et = idx_et[-1]
+
+    for offset in range(1, 8):
+        d = (last_et - pd.Timedelta(days=offset)).normalize()
+        if d.dayofweek >= 5:
+            continue
+        cut5 = d + pd.Timedelta(hours=17)
+        cut6 = d + pd.Timedelta(hours=18)
+        arr5 = idx_et < cut5
+        pre_idxs  = arr5.nonzero()[0] if hasattr(arr5, "nonzero") else arr5.values.nonzero()[0]
+        arr6 = (idx_et >= cut6) & (idx_et < cut6 + pd.Timedelta(hours=1))
+        post_idxs = arr6.nonzero()[0] if hasattr(arr6, "nonzero") else arr6.values.nonzero()[0]
+        if not len(pre_idxs) or not len(post_idxs):
+            continue
+        df.iloc[pre_idxs[-1], df.columns.get_loc("close")] = close_5pm
+        df.iloc[post_idxs[0],  df.columns.get_loc("open")]  = open_6pm
+        return True
+    return False
+
+
+class TestIctSessionSweepNDOG:
+    def test_ndog_tp_used_for_long_on_index_pair(self):
+        """NDOG level nearer than session H/L must be used as TP for index pairs."""
+        df = _make_ict_df(direction="long")
+        found = _set_ndog_gap(df, close_5pm=99.8, open_6pm=100.2)
+        if not found:
+            pytest.skip("NDOG candles not in 80-candle window (Monday/weekend run)")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        assert result is not None
+        # NDOG gap [99.8, 100.2]: only high=100.2 clears min_rr=0.5
+        # (entry≈99.65, risk≈0.99 → RR=(100.2-99.65)/0.99≈0.56 ✓)
+        assert "ndog_tp" in result
+        assert abs(result["suggested_take_profit"] - 100.2) < 0.01
+
+    def test_ndog_tp_not_applied_to_crypto(self):
+        """NDOG logic must be skipped for crypto pairs; TP falls back to session level."""
+        df = _make_ict_df(direction="long")
+        _set_ndog_gap(df, close_5pm=99.8, open_6pm=100.2)
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert "ndog_tp" not in result
+        assert abs(result["suggested_take_profit"] - 101.0) < 0.01
+
+    def test_ndog_tp_used_for_short_on_index_pair(self):
+        """NDOG level nearer than session low must be used as TP for a short."""
+        df = _make_ict_df(direction="short")
+        found = _set_ndog_gap(df, close_5pm=100.8, open_6pm=99.8)
+        if not found:
+            pytest.skip("NDOG candles not in 80-candle window (Monday/weekend run)")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        assert result is not None
+        # NDOG gap [99.8, 100.8]: only low=99.8 clears min_rr=0.5 for a short
+        # (entry≈100.35, risk≈0.99 → RR=(100.35-99.8)/0.99≈0.56 ✓)
+        assert "ndog_tp" in result
+        assert abs(result["suggested_take_profit"] - 99.8) < 0.01
+
+    def test_ndog_falls_back_to_session_when_no_gap_in_range(self):
+        """When no NDOG level passes the RR filter, TP must use session level."""
+        df = _make_ict_df(direction="long")
+        # Default df: close/open at 100.0 → only NDOG level is 100.0
+        # RR=(100.0-99.65)/0.99≈0.35 < min_rr=0.5 → no valid NDOG level
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("DJ30/USD", df, regime, "15m")
+        assert result is not None
+        assert "ndog_tp" not in result
+        assert abs(result["suggested_take_profit"] - 101.0) < 0.01
