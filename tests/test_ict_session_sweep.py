@@ -5,7 +5,7 @@ import pytest
 from zoneinfo import ZoneInfo
 
 from regime.classifier import RegimeResult
-from signals.generator import ict_session_sweep, _ict_find_ndog
+from signals.generator import ict_session_sweep, _ict_find_ndog, _ict_ndog_bias
 
 
 def _make_regime(label="choppy"):
@@ -438,3 +438,148 @@ class TestIctSessionSweepNDOG:
         assert result is not None
         assert "ndog_tp" not in result
         assert abs(result["suggested_take_profit"] - 101.0) < 0.01
+
+
+def _make_multi_day_df(direction: str = "long", days: int = 3) -> pd.DataFrame:
+    """Build a multi-day 15m fixture so NDOG gaps can be injected across multiple sessions.
+
+    Current price aligns with the long/short FVG fixtures:
+      long  → close ≈ 99.65 (FVG inside [99.5, 99.8])
+      short → close ≈ 100.35 (FVG inside [100.2, 100.5])
+
+    The base OHLCV data is flat at 100.0. The FVG + sweep setup is injected
+    into the last 80 candles (same geometry as _make_ict_df).
+    """
+    tz_et = ZoneInfo("America/New_York")
+    today = pd.Timestamp.now(tz=tz_et).normalize()
+    current_time = today + pd.Timedelta(hours=10)  # 10:00 ET, inside 09:00–11:00 killzone
+
+    total_candles = days * 96 + 80   # 96 candles/day padding + 80 candle ICT window
+    times_et = [current_time - pd.Timedelta(minutes=15 * (total_candles - 1 - i))
+                for i in range(total_candles)]
+    times_utc = pd.DatetimeIndex([t.tz_convert("UTC") for t in times_et])
+
+    base = 100.0
+    opens   = np.full(total_candles, base)
+    closes  = np.full(total_candles, base)
+    highs   = np.full(total_candles, base + 0.2)
+    lows    = np.full(total_candles, base - 0.2)
+    volumes = np.full(total_candles, 1000.0)
+
+    # Graft the _make_ict_df setup onto the last 80 candles
+    base_df = _make_ict_df(direction=direction)
+    offset = total_candles - 80
+    for col_name, arr in [("open", opens), ("close", closes),
+                          ("high", highs), ("low", lows), ("volume", volumes)]:
+        arr[offset:] = base_df[col_name].values
+
+    return pd.DataFrame(
+        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes},
+        index=times_utc,
+    )
+
+
+def _inject_ndog_at_day(df: pd.DataFrame, day_offset: int,
+                        close_5pm: float, open_6pm: float) -> bool:
+    """Inject a NDOG gap at a specific day offset (1 = yesterday, 2 = two days ago, ...)."""
+    tz_et = ZoneInfo("America/New_York")
+    idx_et = df.index.tz_convert(tz_et)
+    last_et = idx_et[-1]
+
+    days_found = 0
+    for offset in range(1, 20):
+        d = (last_et - pd.Timedelta(days=offset)).normalize()
+        if d.dayofweek >= 5:
+            continue
+        days_found += 1
+        if days_found < day_offset:
+            continue
+        cut5 = d + pd.Timedelta(hours=17)
+        cut6 = d + pd.Timedelta(hours=18)
+        arr5 = idx_et < cut5
+        pre_idxs  = arr5.nonzero()[0] if hasattr(arr5, "nonzero") else arr5.values.nonzero()[0]
+        arr6 = (idx_et >= cut6) & (idx_et < cut6 + pd.Timedelta(hours=1))
+        post_idxs = arr6.nonzero()[0] if hasattr(arr6, "nonzero") else arr6.values.nonzero()[0]
+        if not len(pre_idxs) or not len(post_idxs):
+            return False
+        df.iloc[pre_idxs[-1], df.columns.get_loc("close")] = close_5pm
+        df.iloc[post_idxs[0],  df.columns.get_loc("open")]  = open_6pm
+        return True
+    return False
+
+
+class TestNdogBias:
+    """Unit tests for the NDOG/NWOG directional bias helper."""
+
+    def test_bias_long_when_gaps_above(self):
+        """Gaps fully above price → bias = 'long'."""
+        df = _make_multi_day_df(direction="long")
+        # Inject two gaps clearly above the long entry price (~99.65)
+        # gap_low > 99.65: use close_5pm=100.5, open_6pm=101.0
+        r1 = _inject_ndog_at_day(df, 1, close_5pm=100.5, open_6pm=101.0)
+        r2 = _inject_ndog_at_day(df, 2, close_5pm=100.8, open_6pm=101.2)
+        if not r1 or not r2:
+            pytest.skip("NDOG candles not in fixture window")
+        bias = _ict_ndog_bias(df)
+        assert bias == "long"
+
+    def test_bias_short_when_gaps_below(self):
+        """Gaps fully below price → bias = 'short'."""
+        df = _make_multi_day_df(direction="short")
+        # gap_high < 100.35 (short entry price): use close_5pm=98.5, open_6pm=99.0
+        r1 = _inject_ndog_at_day(df, 1, close_5pm=98.5, open_6pm=99.0)
+        r2 = _inject_ndog_at_day(df, 2, close_5pm=98.0, open_6pm=98.8)
+        if not r1 or not r2:
+            pytest.skip("NDOG candles not in fixture window")
+        bias = _ict_ndog_bias(df)
+        assert bias == "short"
+
+    def test_bias_none_when_no_gaps_found(self):
+        """Empty df that has no recognisable gap windows → None (fail-open)."""
+        tz_et = ZoneInfo("America/New_York")
+        times_utc = pd.DatetimeIndex([
+            pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=15 * i)
+            for i in range(10)
+        ])
+        df = pd.DataFrame(
+            {"open": [100.0] * 10, "high": [100.2] * 10,
+             "low": [99.8] * 10,  "close": [100.0] * 10, "volume": [1000.0] * 10},
+            index=times_utc,
+        )
+        assert _ict_ndog_bias(df) is None
+
+    def test_bias_blocks_opposing_long_on_index_pair(self):
+        """Bearish bias (gaps below) must block a long ict_session_sweep on an index pair."""
+        df = _make_multi_day_df(direction="long")
+        # Entry ≈ 99.65; inject gaps below: gap_high < 99.65
+        r1 = _inject_ndog_at_day(df, 1, close_5pm=98.5, open_6pm=99.0)
+        r2 = _inject_ndog_at_day(df, 2, close_5pm=98.0, open_6pm=98.8)
+        if not r1 or not r2:
+            pytest.skip("NDOG candles not in fixture window")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
+        assert result is None, "bearish NDOG bias must block a long signal on index pair"
+
+    def test_bias_blocks_opposing_short_on_index_pair(self):
+        """Bullish bias (gaps above) must block a short ict_session_sweep on an index pair."""
+        df = _make_multi_day_df(direction="short")
+        # Entry ≈ 100.35; inject gaps above: gap_low > 100.35
+        r1 = _inject_ndog_at_day(df, 1, close_5pm=100.5, open_6pm=101.0)
+        r2 = _inject_ndog_at_day(df, 2, close_5pm=100.8, open_6pm=101.2)
+        if not r1 or not r2:
+            pytest.skip("NDOG candles not in fixture window")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
+        assert result is None, "bullish NDOG bias must block a short signal on index pair"
+
+    def test_bias_does_not_block_crypto(self):
+        """Bias filter is skipped for crypto pairs — they have no CME gap structure."""
+        df = _make_multi_day_df(direction="long")
+        # Even with gaps below entry, crypto pair must still fire
+        r1 = _inject_ndog_at_day(df, 1, close_5pm=98.5, open_6pm=99.0)
+        r2 = _inject_ndog_at_day(df, 2, close_5pm=98.0, open_6pm=98.8)
+        if not r1 or not r2:
+            pytest.skip("NDOG candles not in fixture window")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None, "bias filter must not apply to crypto pairs"

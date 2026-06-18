@@ -808,6 +808,90 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
     return fvg_found
 
 
+def _ict_ndog_bias(df: pd.DataFrame) -> Optional[str]:
+    """Compute NDOG/NWOG directional bias for index pairs (ICT Lecture #4).
+
+    Count last-5 NDOGs + last-5 NWOGs that sit fully above vs fully below the
+    current close.  A gap "above" means its lowest bound (gap_low) is still
+    higher than current price — price is drawn up to fill it.  A gap "below"
+    means its highest bound (gap_high) is below current price.
+
+    Returns:
+      'long'  — more gaps above than below (bullish draw)
+      'short' — more gaps below than above (bearish draw)
+      None    — equal count (no man's land) or insufficient data
+    """
+    from zoneinfo import ZoneInfo
+    try:
+        tz_et = ZoneInfo("America/New_York")
+        idx_et = (
+            df.index.tz_convert(tz_et)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz_et)
+        )
+        last_et = idx_et[-1]
+        price   = float(df["close"].iloc[-1])
+        gaps: list[tuple[float, float]] = []  # (gap_high, gap_low)
+
+        def _before(cutoff) -> Optional[int]:
+            arr  = idx_et < cutoff
+            idxs = arr.nonzero()[0] if hasattr(arr, "nonzero") else arr.values.nonzero()[0]
+            return int(idxs[-1]) if len(idxs) else None
+
+        def _at_or_after(cutoff, window_h: float = 1.0) -> Optional[int]:
+            arr  = (idx_et >= cutoff) & (idx_et < cutoff + pd.Timedelta(hours=window_h))
+            idxs = arr.nonzero()[0] if hasattr(arr, "nonzero") else arr.values.nonzero()[0]
+            return int(idxs[0]) if len(idxs) else None
+
+        # Last 5 NDOGs
+        trading_days = 0
+        for offset in range(14):
+            d = (last_et - pd.Timedelta(days=offset)).normalize()
+            if d.dayofweek >= 5:
+                continue
+            trading_days += 1
+            if trading_days > 5:
+                break
+            pre  = _before(d + pd.Timedelta(hours=17))
+            post = _at_or_after(d + pd.Timedelta(hours=18))
+            if pre is None or post is None:
+                continue
+            a = float(df["close"].iloc[pre])
+            b = float(df["open"].iloc[post])
+            gaps.append((max(a, b), min(a, b)))
+
+        # Last 5 NWOGs
+        fridays = 0
+        for offset in range(35):
+            d = (last_et - pd.Timedelta(days=offset)).normalize()
+            if d.dayofweek != 4:
+                continue
+            fridays += 1
+            if fridays > 5:
+                break
+            fri_pre  = _before(d + pd.Timedelta(hours=17))
+            sun_post = _at_or_after(d + pd.Timedelta(days=2, hours=18))
+            if fri_pre is None or sun_post is None:
+                continue
+            a = float(df["close"].iloc[fri_pre])
+            b = float(df["open"].iloc[sun_post])
+            gaps.append((max(a, b), min(a, b)))
+
+        if not gaps:
+            return None
+
+        gaps_above = sum(1 for hi, lo in gaps if lo > price)
+        gaps_below = sum(1 for hi, lo in gaps if hi < price)
+
+        if gaps_above > gaps_below:
+            return "long"
+        if gaps_below > gaps_above:
+            return "short"
+        return None  # no man's land
+    except Exception:
+        return None
+
+
 def _ict_find_ndog(df: pd.DataFrame, direction: str, entry: float, risk: float,
                    min_rr: float, max_rr: float) -> Optional[float]:
     """Nearest NDOG or NWOG level in the trade direction within valid RR range.
@@ -956,6 +1040,15 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     risk = abs(entry - stop)
     if risk == 0:
         return None
+
+    # NDOG/NWOG bias filter (index pairs only): block signals that oppose the
+    # dominant gap-cluster direction (ICT Lecture #4 directional bias rule).
+    # Crypto pairs skip this — no CME gap structure.
+    _idx_pairs = cfg().get("indices", {}).get("pairs", [])
+    if pair in _idx_pairs:
+        bias = _ict_ndog_bias(df)
+        if bias is not None and bias != direction:
+            return None
 
     sig = _signal(pair, direction, "ict_session_sweep", regime, df, timeframe)
     if sig is None:
