@@ -203,6 +203,10 @@ signals:
       NAS100/USD:  "09:00-11:00 America/New_York"
       BRENT/USD:   "09:00-11:00 America/New_York"   # NY open most liquid for Brent
       default:     "09:00-11:00 America/New_York"   # crypto pairs
+    killzone_hours_pm:
+      XAU/USD:     "19:00-21:00 America/New_York"   # gold: active in Asian session
+      US500/USD:   "19:00-21:00 America/New_York"   # ES futures: CME 6 PM reopen → Asian session
+      NAS100/USD:  "19:00-21:00 America/New_York"   # NQ futures: primary ICT Asian session pair
     sweep_lookback_candles: 6    # scan this many recent candles for a sweep wick
     sweep_body_atr_mult: 1.0     # sweep candle body must be < N× ATR (wick-dominated candle)
     fvg_lookback_candles: 8      # candles after sweep to search for a Fair Value Gap

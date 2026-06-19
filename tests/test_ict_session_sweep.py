@@ -5,7 +5,7 @@ import pytest
 from zoneinfo import ZoneInfo
 
 from regime.classifier import RegimeResult
-from signals.generator import ict_session_sweep, _ict_find_ndog, _ict_ndog_bias
+from signals.generator import ict_session_sweep, _ict_find_ndog, _ict_ndog_bias, _ict_in_pm_killzone
 
 
 def _make_regime(label="choppy"):
@@ -550,10 +550,15 @@ class TestNdogBias:
 
     def test_bias_blocks_opposing_long_on_index_pair(self):
         """Bearish bias (gaps below) must block a long ict_session_sweep on an index pair."""
-        df = _make_multi_day_df(direction="long")
-        # Entry ≈ 99.65; inject gaps below: gap_high < 99.65
+        # days=5 ensures the fixture spans enough history to cover all NDOG lookback days
+        # regardless of which day of the week the test runs. Inject 4 consecutive below-gaps
+        # so the bearish count outnumbers any uninjected flat-data gaps (which land at 100.0,
+        # above the 99.65 entry, counting as bullish). 4 below vs ≤1 above → bias = "short".
+        df = _make_multi_day_df(direction="long", days=5)
         r1 = _inject_ndog_at_day(df, 1, close_5pm=98.5, open_6pm=99.0)
         r2 = _inject_ndog_at_day(df, 2, close_5pm=98.0, open_6pm=98.8)
+        r3 = _inject_ndog_at_day(df, 3, close_5pm=97.5, open_6pm=98.0)
+        r4 = _inject_ndog_at_day(df, 4, close_5pm=97.0, open_6pm=97.5)
         if not r1 or not r2:
             pytest.skip("NDOG candles not in fixture window")
         regime = _make_regime("choppy")
@@ -562,10 +567,11 @@ class TestNdogBias:
 
     def test_bias_blocks_opposing_short_on_index_pair(self):
         """Bullish bias (gaps above) must block a short ict_session_sweep on an index pair."""
-        df = _make_multi_day_df(direction="short")
-        # Entry ≈ 100.35; inject gaps above: gap_low > 100.35
+        df = _make_multi_day_df(direction="short", days=5)
         r1 = _inject_ndog_at_day(df, 1, close_5pm=100.5, open_6pm=101.0)
         r2 = _inject_ndog_at_day(df, 2, close_5pm=100.8, open_6pm=101.2)
+        r3 = _inject_ndog_at_day(df, 3, close_5pm=100.6, open_6pm=101.1)
+        r4 = _inject_ndog_at_day(df, 4, close_5pm=100.5, open_6pm=101.0)
         if not r1 or not r2:
             pytest.skip("NDOG candles not in fixture window")
         regime = _make_regime("choppy")
@@ -583,3 +589,161 @@ class TestNdogBias:
         regime = _make_regime("choppy")
         result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
         assert result is not None, "bias filter must not apply to crypto pairs"
+
+
+def _make_pm_ict_df(direction: str = "long") -> pd.DataFrame:
+    """Build an 80-candle 15m DataFrame ending inside the Asian killzone (8:00 PM ET).
+
+    Layout (all in ET):
+      - Candle 71:  6:00 PM — PM session-defining candle (high=100.5, low=99.5)
+      - Candle 75:  7:00 PM — sweep candle (wick through PM H/L, first candle of killzone)
+      - Candles 76–78: FVG window (same geometry as AM fixture)
+      - Candle 79:  8:00 PM — current candle (close inside FVG)
+
+    PM bounds: combined_high=100.5, combined_low=99.5
+    Using 100.5/99.5 (not 101/99) so the CHoCH check passes with c1_h=100.6/c1_l=99.4.
+    """
+    tz_et = ZoneInfo("America/New_York")
+    today = pd.Timestamp.now(tz=tz_et).normalize()
+    current_time = today + pd.Timedelta(hours=20)   # 8:00 PM ET — inside 19:00–21:00
+
+    n = 80
+    times_et  = [current_time - pd.Timedelta(minutes=15 * (n - 1 - i)) for i in range(n)]
+    times_utc = pd.DatetimeIndex([t.tz_convert("UTC") for t in times_et])
+
+    base         = 100.0
+    session_high = 100.5
+    session_low  = 99.5
+
+    opens   = np.full(n, base)
+    closes  = np.full(n, base)
+    highs   = np.full(n, base + 0.2)
+    lows    = np.full(n, base - 0.2)
+    volumes = np.full(n, 1000.0)
+
+    # Candle 71 = 6:00 PM ET: defines the PM session H/L bounds
+    highs[71] = session_high
+    lows[71]  = session_low
+
+    if direction == "long":
+        # Sweep of session_low at 7:00 PM (candle 75, first candle inside killzone)
+        lows[75]   = session_low - 0.3   # 99.2 < 99.5
+        closes[75] = base + 0.05
+        opens[75]  = base + 0.05
+        highs[75]  = base + 0.15
+
+        # Bullish FVG [99.5, 99.8]: same geometry as AM fixture
+        highs[76]  = base - 0.5    # 99.5
+        lows[76]   = base - 0.7
+        closes[76] = base - 0.6
+        opens[76]  = base - 0.6
+        opens[77]  = base - 0.6
+        closes[77] = base + 0.5
+        highs[77]  = base + 0.6   # c1_h=100.6 > pre_swing_high=100.5 → CHoCH passes
+        lows[77]   = base - 0.6
+        lows[78]   = base - 0.2   # 99.8
+        closes[78] = base + 0.1
+        opens[78]  = base + 0.1
+        highs[78]  = base + 0.3
+        closes[79] = base - 0.35  # 99.65 — inside [99.5, 99.8]
+        opens[79]  = base - 0.35
+        highs[79]  = base - 0.25
+        lows[79]   = base - 0.45
+    else:  # short
+        # Sweep of session_high at 7:00 PM (candle 75)
+        highs[75]  = session_high + 0.3  # 100.8 > 100.5
+        closes[75] = base - 0.05
+        opens[75]  = base - 0.05
+        lows[75]   = base - 0.15
+
+        # Bearish FVG [100.2, 100.5]: same geometry as AM fixture
+        lows[76]   = base + 0.5    # 100.5
+        highs[76]  = base + 0.7
+        opens[76]  = base + 0.6
+        closes[76] = base + 0.6
+        opens[77]  = base + 0.6
+        closes[77] = base - 0.5
+        highs[77]  = base + 0.6
+        lows[77]   = base - 0.6   # c1_l=99.4 < pre_swing_low=99.5 → CHoCH passes
+        highs[78]  = base + 0.2   # 100.2
+        closes[78] = base - 0.1
+        opens[78]  = base - 0.1
+        lows[78]   = base - 0.3
+        closes[79] = base + 0.35  # 100.35 — inside [100.2, 100.5]
+        opens[79]  = base + 0.35
+        highs[79]  = base + 0.45
+        lows[79]   = base + 0.25
+
+    return pd.DataFrame(
+        {"open": opens, "high": highs, "low": lows, "close": closes, "volume": volumes},
+        index=times_utc,
+    )
+
+
+class TestIctAsianKillzone:
+    """Asian killzone (7–9 PM ET) extension — ICT Lecture #5."""
+
+    def test_pm_in_pm_killzone_true_for_index_pair(self):
+        """_ict_in_pm_killzone must return True at 8 PM ET for US500/USD."""
+        df = _make_pm_ict_df(direction="long")
+        assert _ict_in_pm_killzone(df, "US500/USD") is True
+
+    def test_pm_in_pm_killzone_false_for_crypto(self):
+        """_ict_in_pm_killzone must return False for crypto (no PM config entry)."""
+        df = _make_pm_ict_df(direction="long")
+        assert _ict_in_pm_killzone(df, "BTC/USDT:USDT") is False
+
+    def test_pm_long_fires_for_index_pair(self):
+        """Full PM killzone long signal: US500/USD at 8 PM ET with sweep + FVG."""
+        df = _make_pm_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
+        assert result is not None
+        assert result["direction"] == "long"
+        assert result["strategy"] == "ict_session_sweep"
+
+    def test_pm_short_fires_for_index_pair(self):
+        """Full PM killzone short signal: NAS100/USD at 8 PM ET with sweep + FVG."""
+        df = _make_pm_ict_df(direction="short")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("NAS100/USD", df, regime, "15m")
+        assert result is not None
+        assert result["direction"] == "short"
+        assert result["strategy"] == "ict_session_sweep"
+
+    def test_pm_does_not_fire_for_crypto(self):
+        """Crypto has no killzone_hours_pm config → PM session returns None."""
+        df = _make_pm_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is None
+
+    def test_pm_sl_below_entry_for_long(self):
+        df = _make_pm_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
+        assert result is not None
+        assert result["suggested_stop_loss"] < result["entry_price"]
+
+    def test_pm_sl_above_entry_for_short(self):
+        df = _make_pm_ict_df(direction="short")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("NAS100/USD", df, regime, "15m")
+        assert result is not None
+        assert result["suggested_stop_loss"] > result["entry_price"]
+
+    def test_am_still_fires_after_pm_added(self):
+        """Regression: AM killzone must still fire after PM killzone was wired in."""
+        df = _make_ict_df(direction="long", in_killzone=True)
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("US500/USD", df, regime, "15m")
+        assert result is not None
+        assert result["direction"] == "long"
+
+    def test_pm_xau_fires(self):
+        """XAU/USD also has a PM killzone entry."""
+        df = _make_pm_ict_df(direction="short")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("XAU/USD", df, regime, "15m")
+        assert result is not None
+        assert result["direction"] == "short"

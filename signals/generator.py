@@ -695,6 +695,39 @@ def _ict_get_session_bounds(df: pd.DataFrame) -> Optional[dict]:
         return None
 
 
+def _ict_get_pm_session_bounds(df: pd.DataFrame) -> Optional[dict]:
+    """Compute 6:00–7:00 PM ET H/L (pre-Asian killzone engineering window).
+
+    Per ICT Lecture #5: after CME reopens at 6 PM ET the algorithm engineers
+    buy/sell-side liquidity in the 6–7 PM window.  The Asian killzone (7–9 PM)
+    then sweeps those bounds.
+    """
+    from zoneinfo import ZoneInfo
+    try:
+        tz_et = ZoneInfo("America/New_York")
+        idx_et = (
+            df.index.tz_convert(tz_et)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz_et)
+        )
+        last_et = idx_et[-1]
+        today   = last_et.normalize()
+
+        pm_start = today + pd.Timedelta(hours=18)   # 6:00 PM ET
+        pm_end   = today + pd.Timedelta(hours=19)   # 7:00 PM ET
+
+        pm_df = df[(idx_et >= pm_start) & (idx_et < pm_end)]
+
+        if len(pm_df) == 0:
+            return None
+        return {
+            "combined_high": float(pm_df["high"].max()),
+            "combined_low":  float(pm_df["low"].min()),
+        }
+    except Exception:
+        return None
+
+
 def _ict_in_killzone(df: pd.DataFrame, pair: str) -> bool:
     """Return True if the current candle is inside the ICT NY killzone for this pair."""
     from zoneinfo import ZoneInfo
@@ -706,6 +739,37 @@ def _ict_in_killzone(df: pd.DataFrame, pair: str) -> bool:
         start_str, end_str = hours_part.split("-")
         start_h, start_m = int(start_str[:2]), int(start_str[3:])
         end_h, end_m = int(end_str[:2]), int(end_str[3:])
+        tz = ZoneInfo(tz_str)
+        idx_local = (
+            df.index.tz_convert(tz)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz)
+        )
+        last_local = idx_local[-1]
+        kz_start = last_local.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
+        kz_end   = last_local.replace(hour=end_h,   minute=end_m,   second=0, microsecond=0)
+        return kz_start <= last_local < kz_end
+    except Exception:
+        return False
+
+
+def _ict_in_pm_killzone(df: pd.DataFrame, pair: str) -> bool:
+    """Return True if the current candle is inside the ICT Asian killzone for this pair.
+
+    Fail-closed: only pairs with an explicit killzone_hours_pm entry fire.
+    Crypto pairs have no CME-linked Asian session structure.
+    """
+    from zoneinfo import ZoneInfo
+    ict_cfg  = cfg().get("signals", {}).get("ict_session_sweep", {})
+    pm_hours = ict_cfg.get("killzone_hours_pm", {})
+    spec     = pm_hours.get(pair)
+    if spec is None:
+        return False
+    try:
+        hours_part, tz_str = spec.rsplit(" ", 1)
+        start_str, end_str = hours_part.split("-")
+        start_h, start_m = int(start_str[:2]), int(start_str[3:])
+        end_h, end_m     = int(end_str[:2]),   int(end_str[3:])
         tz = ZoneInfo(tz_str)
         idx_local = (
             df.index.tz_convert(tz)
@@ -983,11 +1047,16 @@ def _ict_find_ndog(df: pd.DataFrame, direction: str, entry: float, risk: float,
 
 def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
                       timeframe: str) -> Optional[dict]:
-    """ICT NY Killzone: Asia/London session liquidity sweep with FVG reversal entry.
+    """ICT session killzone sweep with FVG reversal entry.
 
-    1. TIME GATE  — current candle inside pair-specific NY killzone.
-    2. SESSION H/L — Asia (20:00–03:00 ET) and London (03:00–09:00 ET) combined bounds.
-    3. SWEEP      — last 6 candles show a wick through the combined H/L that closed back inside.
+    Fires during two killzones:
+      AM (NY)   — 09:00–11:00 ET;  session bounds = Asia+London combined H/L.
+      PM (Asia) — 19:00–21:00 ET;  session bounds = CME-reopen 18:00–19:00 ET H/L.
+
+    1. TIME GATE  — current candle inside AM or PM killzone for this pair.
+    2. SESSION H/L — AM: Asia (20:00–03:00 ET) + London (03:00–09:00 ET) combined bounds.
+                     PM: 6:00–7:00 PM ET engineering-hour bounds.
+    3. SWEEP      — last 6 candles show a wick through the session H/L that closed back inside.
     4. FVG        — 3-candle Fair Value Gap after the sweep with current close inside the gap.
     5. STOP       — beyond the sweep wick + ATR buffer.
     6. TARGET     — opposing session liquidity; ATR fallback if outside [min_rr, max_rr].
@@ -1009,10 +1078,15 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if atr is None or pd.isna(atr):
         return None
 
-    if not _ict_in_killzone(df, pair):
+    in_am_kz = _ict_in_killzone(df, pair)
+    in_pm_kz = _ict_in_pm_killzone(df, pair)
+    if not in_am_kz and not in_pm_kz:
         return None
 
-    session_bounds = _ict_get_session_bounds(df)
+    session_bounds = (
+        _ict_get_session_bounds(df) if in_am_kz
+        else _ict_get_pm_session_bounds(df)
+    )
     if session_bounds is None:
         return None
 
