@@ -855,7 +855,9 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
             if c1_close <= c1_open:
                 continue
             fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h,
-                         "fvg_ce": round((c2_l + c0_h) / 2, 8)}
+                         "fvg_ce": round((c2_l + c0_h) / 2, 8),
+                         "ob_open": float(df["open"].iloc[i]),
+                         "ob_close": float(df["close"].iloc[i])}
         elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= (c2_h + c0_l) / 2:
             # CHoCH: impulse must break below the pre-sweep local swing low.
             if pre_swing_low is not None and c1_l >= pre_swing_low:
@@ -867,7 +869,9 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
             if c1_close >= c1_open:
                 continue
             fvg_found = {"fvg_top": c0_l, "fvg_bottom": c2_h,
-                         "fvg_ce": round((c0_l + c2_h) / 2, 8)}
+                         "fvg_ce": round((c0_l + c2_h) / 2, 8),
+                         "ob_open": float(df["open"].iloc[i]),
+                         "ob_close": float(df["close"].iloc[i])}
 
     return fvg_found
 
@@ -1101,11 +1105,15 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     direction = sweep["direction"]
     entry     = float(df["close"].iloc[-1])
 
-    ict_cfg    = cfg().get("signals", {}).get("ict_session_sweep", {})
-    buf        = ict_cfg.get("stop_atr_buffer", 0.1) * atr
-    stop       = round(
-        sweep["sweep_price"] - buf if direction == "long" else sweep["sweep_price"] + buf, 8
-    )
+    ict_cfg  = cfg().get("signals", {}).get("ict_session_sweep", {})
+    buf      = ict_cfg.get("stop_atr_buffer", 0.1) * atr
+    ob_mean  = round((fvg["ob_open"] + fvg["ob_close"]) / 2, 8)
+    if (direction == "long" and ob_mean < entry) or (direction == "short" and ob_mean > entry):
+        stop = ob_mean
+    else:
+        stop = round(
+            sweep["sweep_price"] - buf if direction == "long" else sweep["sweep_price"] + buf, 8
+        )
 
     if (direction == "long"  and stop >= entry) or \
        (direction == "short" and stop <= entry):
@@ -1129,7 +1137,8 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
         return None
 
     sig["suggested_stop_loss"] = stop
-    sig["fvg_ce"] = fvg["fvg_ce"]
+    sig["fvg_ce"]   = fvg["fvg_ce"]
+    sig["ob_entry"] = round(fvg["ob_open"], 8)
 
     min_rr = ict_cfg.get("min_rr", 0.5)
     max_rr = ict_cfg.get("max_rr", 4.0)

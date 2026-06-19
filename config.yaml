@@ -213,7 +213,7 @@ signals:
     choch_lookback_candles: 10   # pre-sweep window for CHoCH: impulse candle must break this local swing
     stop_atr_buffer: 0.1         # ATR buffer beyond the sweep wick for stop placement
     min_rr: 0.5                  # if session-liquidity target gives < 0.5R, fall back to ATR TP
-    max_rr: 4.0                  # if session-liquidity target gives > 4.0R, fall back to ATR TP
+    max_rr: 8.0                  # if session-liquidity target gives > 8.0R, fall back to ATR TP
 
 signal_quality:
   min_quality_score: 40          # lowered 2026-05-26 to allow index pairs to bootstrap — max score at bootstrap_wr is 48 so 60 was unreachable for new combos

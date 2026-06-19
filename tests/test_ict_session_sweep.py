@@ -177,8 +177,8 @@ class TestIctSessionSweepLong:
         regime = _make_regime("choppy")
         result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
         assert result is not None
-        # SL should be below the sweep low (98.7), within ATR buffer distance
-        assert result["suggested_stop_loss"] < 99.0   # below session low
+        # SL = OB mean threshold: c0 opens=closes=99.4 → mean=99.4
+        assert abs(result["suggested_stop_loss"] - 99.4) < 0.01
 
     def test_long_signal_schema(self):
         df = _make_ict_df(direction="long")
@@ -219,8 +219,8 @@ class TestIctSessionSweepShort:
         regime = _make_regime("choppy")
         result = ict_session_sweep("ETH/USDT:USDT", df, regime, "15m")
         assert result is not None
-        # SL should be above the sweep high (101.3)
-        assert result["suggested_stop_loss"] > 101.0  # above session high
+        # SL = OB mean threshold: c0 opens=closes=100.6 → mean=100.6
+        assert abs(result["suggested_stop_loss"] - 100.6) < 0.01
 
 
 class TestIctSessionSweepBlocking:
@@ -287,8 +287,8 @@ class TestIctSessionSweepTP:
         regime = _make_regime("choppy")
         result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
         assert result is not None
-        # session_high = 101.0; entry ≈ 99.65; stop ≈ 98.66
-        # risk ≈ 0.99; reward to target ≈ 1.35; RR ≈ 1.36 → inside [0.5, 4.0] → use target
+        # session_high=101.0; entry=99.65; stop=ob_mean=99.4
+        # risk=0.25; reward=1.35; RR=5.4 → inside [0.5, 8.0] → use target
         assert abs(result["suggested_take_profit"] - 101.0) < 0.01
 
     def test_short_tp_uses_session_liquidity(self):
@@ -296,8 +296,8 @@ class TestIctSessionSweepTP:
         regime = _make_regime("choppy")
         result = ict_session_sweep("ETH/USDT:USDT", df, regime, "15m")
         assert result is not None
-        # session_low = 99.0; entry ≈ 100.35; stop ≈ 101.34
-        # risk ≈ 0.99; reward to target ≈ 1.35; RR ≈ 1.36 → inside [0.5, 4.0] → use target
+        # session_low=99.0; entry=100.35; stop=ob_mean=100.6
+        # risk=0.25; reward=1.35; RR=5.4 → inside [0.5, 8.0] → use target
         assert abs(result["suggested_take_profit"] - 99.0) < 0.01
 
 
@@ -399,10 +399,10 @@ class TestIctSessionSweepNDOG:
         regime = _make_regime("choppy")
         result = ict_session_sweep("US500/USD", df, regime, "15m")
         assert result is not None
-        # NDOG gap [99.8, 100.2]: only high=100.2 clears min_rr=0.5
-        # (entry≈99.65, risk≈0.99 → RR=(100.2-99.65)/0.99≈0.56 ✓)
+        # NDOG gap [99.8, 100.2]: nearest level above entry=99.65 is 99.8
+        # (risk=0.25 → RR=(99.8-99.65)/0.25=0.6 ≥ min_rr=0.5 ✓)
         assert "ndog_tp" in result
-        assert abs(result["suggested_take_profit"] - 100.2) < 0.01
+        assert abs(result["suggested_take_profit"] - 99.8) < 0.01
 
     def test_ndog_tp_not_applied_to_crypto(self):
         """NDOG logic must be skipped for crypto pairs; TP falls back to session level."""
@@ -424,15 +424,18 @@ class TestIctSessionSweepNDOG:
         result = ict_session_sweep("US500/USD", df, regime, "15m")
         assert result is not None
         # NDOG gap [99.8, 100.8]: only low=99.8 clears min_rr=0.5 for a short
-        # (entry≈100.35, risk≈0.99 → RR=(100.35-99.8)/0.99≈0.56 ✓)
+        # (entry=100.35, risk=0.25 → RR=(100.35-99.8)/0.25=2.2 ✓)
         assert "ndog_tp" in result
         assert abs(result["suggested_take_profit"] - 99.8) < 0.01
 
     def test_ndog_falls_back_to_session_when_no_gap_in_range(self):
         """When no NDOG level passes the RR filter, TP must use session level."""
         df = _make_ict_df(direction="long")
-        # Default df: close/open at 100.0 → only NDOG level is 100.0
-        # RR=(100.0-99.65)/0.99≈0.35 < min_rr=0.5 → no valid NDOG level
+        # The 80-candle fixture has exactly one NDOG window (yesterday 4:45 PM close / 6:00 PM open,
+        # at candle indices 10 and 15). Override to 103.0 so the gap is above max_rr=8.0:
+        # risk=0.25, max valid TP = 99.65 + 8.0*0.25 = 101.65; NDOG at 103.0 → RR=13.4 > max_rr.
+        df.iloc[10, df.columns.get_loc("close")] = 103.0
+        df.iloc[15, df.columns.get_loc("open")]  = 103.0
         regime = _make_regime("choppy")
         result = ict_session_sweep("US500/USD", df, regime, "15m")
         assert result is not None
