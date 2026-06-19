@@ -13,6 +13,7 @@ Knowledge base for the MEXC Signal Engine, built from ICT mentorship lectures an
 | [ict-lecture-03.md](ict-lecture-03.md) | Lecture #3 | Aug 7, 2024 | NDOG/NWOG as primary draw targets, engineering liquidity, PM bond-auction short setup |
 | [ict-lecture-04.md](ict-lecture-04.md) | Lecture #4 | Aug 8, 2024 | NDOG/NWOG bias detection, FVG entries, Silver Bullet, live NQ drill |
 | [ict-lecture-05.md](ict-lecture-05.md) | Lecture #5 | Aug 9, 2024 | Asian session protocol (7–9 PM), Turtle Soup reversal, TGIF 20–30% weekly retracement, London OR (12–12:30 AM), measured move −1.0/−1.5 |
+| [ict-lecture-06.md](ict-lecture-06.md) | Lecture #6 | Aug 12, 2024 | OB entry = displacement candle open, OB stop = mean threshold, IFVG as sell-program barrier, pre-CPI/PPI 7 AM protocol |
 
 ---
 
@@ -25,3 +26,4 @@ Knowledge base for the MEXC Signal Engine, built from ICT mentorship lectures an
 | 2026-06-18 | Ingest: ICT Lecture #3 | NDOG/NWOG as primary draws, engineering liquidity, PM bond-auction short setup |
 | 2026-06-18 | Ingest: ICT Lecture #4 | 137-min live NQ session; NDOG/NWOG + FVG + Silver Bullet framework |
 | 2026-06-19 | Ingest: ICT Lecture #5 | Asian session protocol, Turtle Soup, TGIF weekly retracement, London OR, measured move Fib −1.0/−1.5 |
+| 2026-06-19 | Ingest: ICT Lecture #6 | OB open entry, mean-threshold stop, IFVG resistance in sell programs, pre-news 7 AM timing |
