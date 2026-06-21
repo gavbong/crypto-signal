@@ -750,3 +750,167 @@ class TestIctAsianKillzone:
         result = ict_session_sweep("XAU/USD", df, regime, "15m")
         assert result is not None
         assert result["direction"] == "short"
+
+
+class TestIctMacroWindow:
+    """Hourly macro window gate — ICT Lecture #7."""
+
+    def test_signal_fires_inside_macro_window(self):
+        """Baseline: standard fixture at 10:00 ET (minute=0) is inside the macro window."""
+        df = _make_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+
+    def test_no_signal_outside_macro_window(self):
+        """Current candle at 10:30 ET (minute=30) is outside HH:50-(HH+1):10 macro window."""
+        df = _make_ict_df(direction="long")
+        df.index = df.index + pd.Timedelta(minutes=30)
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is None
+
+    def test_signal_fires_at_minute_50(self):
+        """Candle at HH:50 is the first candle inside the macro window."""
+        df = _make_ict_df(direction="long")
+        df.index = df.index + pd.Timedelta(minutes=50)
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+
+    def test_no_signal_at_minute_10(self):
+        """Candle at HH:10 is just past the macro window upper edge (window ends at :10)."""
+        df = _make_ict_df(direction="long")
+        df.index = df.index + pd.Timedelta(minutes=10)
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is None
+
+
+def _make_ict_df_with_breakaway() -> pd.DataFrame:
+    """Standard fixture with c0_h (100.5) above pre_swing_high (100.2) — is_breakaway=True.
+
+    FVG [100.5, 100.8], CE=100.65. Close=100.7 is in the upper half [CE, fvg_top].
+    """
+    df = _make_ict_df(direction="long")
+    # c0 (76): high=100.5 > pre_swing_high=100.2
+    df.iloc[76, df.columns.get_loc("high")]  = 100.5
+    df.iloc[76, df.columns.get_loc("low")]   = 100.0
+    df.iloc[76, df.columns.get_loc("open")]  = 100.3
+    df.iloc[76, df.columns.get_loc("close")] = 100.3
+    # c1 (77): impulse up, c1_h=101.0 > pre_swing_high=100.2 (CHoCH)
+    df.iloc[77, df.columns.get_loc("open")]  = 100.3
+    df.iloc[77, df.columns.get_loc("close")] = 100.9
+    df.iloc[77, df.columns.get_loc("high")]  = 101.0
+    df.iloc[77, df.columns.get_loc("low")]   = 100.2
+    # c2 (78): low=100.8 > c0_h=100.5 → FVG [100.5, 100.8], CE=100.65
+    df.iloc[78, df.columns.get_loc("low")]   = 100.8
+    df.iloc[78, df.columns.get_loc("close")] = 100.9
+    df.iloc[78, df.columns.get_loc("open")]  = 100.9
+    df.iloc[78, df.columns.get_loc("high")]  = 101.0
+    # current (79): close=100.7 in upper half [100.65, 100.8]; open >= c0_h=100.5
+    df.iloc[79, df.columns.get_loc("close")] = 100.7
+    df.iloc[79, df.columns.get_loc("open")]  = 100.7
+    df.iloc[79, df.columns.get_loc("high")]  = 100.8
+    df.iloc[79, df.columns.get_loc("low")]   = 100.6
+    return df
+
+
+class TestIctBreakawayGap:
+    """Breakaway gap flag — ICT Lecture #7."""
+
+    def test_is_breakaway_false_on_standard_fvg(self):
+        """Standard fixture: c0_h=99.5 < pre_swing_high=100.2 → is_breakaway=False."""
+        df = _make_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert result.get("is_breakaway") is False
+
+    def test_is_breakaway_true_when_fvg_bottom_above_swing_high(self):
+        """c0_h=100.5 above pre_swing_high=100.2 → is_breakaway=True."""
+        df = _make_ict_df_with_breakaway()
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert result.get("is_breakaway") is True
+
+
+def _make_iof_df() -> pd.DataFrame:
+    """Fixture for IOF entry drill: breakaway FVG where close is ABOVE fvg_top.
+
+    Sweep at candle 75 (long, same as standard). Candles 76-79 form a breakaway FVG:
+      c0 (76): ob_open=101.0, ob_close=101.2, c0_h=101.2 > pre_swing_high=100.2
+      c1 (77): impulse up; c1_h=101.9 > 100.2 (CHoCH), c1_close > c1_open (BISI)
+      c2 (78): c2_l=101.8 > c0_h=101.2 → FVG [101.2, 101.8], CE=101.5
+      current (79): close=102.0 > c2_l=101.8 → IOF condition (price above gap)
+
+    Standard _ict_find_fvg fails (close not inside FVG). IOF path returns:
+      entry=101.2 (fvg_bottom), stop=ob_mean=101.1, TP=CE=101.5, entry_type='limit'.
+    """
+    df = _make_ict_df(direction="long")
+    # c0 (76)
+    df.iloc[76, df.columns.get_loc("open")]  = 101.0
+    df.iloc[76, df.columns.get_loc("close")] = 101.2
+    df.iloc[76, df.columns.get_loc("high")]  = 101.2
+    df.iloc[76, df.columns.get_loc("low")]   = 100.8
+    # c1 (77): impulse up
+    df.iloc[77, df.columns.get_loc("open")]  = 101.2
+    df.iloc[77, df.columns.get_loc("close")] = 101.8
+    df.iloc[77, df.columns.get_loc("high")]  = 101.9
+    df.iloc[77, df.columns.get_loc("low")]   = 101.0
+    # c2 (78): c2_l=101.8 → FVG [101.2, 101.8]
+    df.iloc[78, df.columns.get_loc("low")]   = 101.8
+    df.iloc[78, df.columns.get_loc("open")]  = 101.9
+    df.iloc[78, df.columns.get_loc("close")] = 101.9
+    df.iloc[78, df.columns.get_loc("high")]  = 102.0
+    # current (79): close=102.0 > fvg_top=101.8
+    df.iloc[79, df.columns.get_loc("close")] = 102.0
+    df.iloc[79, df.columns.get_loc("open")]  = 102.0
+    df.iloc[79, df.columns.get_loc("high")]  = 102.1
+    df.iloc[79, df.columns.get_loc("low")]   = 101.9
+    return df
+
+
+class TestIctIOFEntry:
+    """IOF entry drill — ICT Lecture #7."""
+
+    def test_iof_signal_fires_when_close_above_fvg(self):
+        """IOF path triggers when standard FVG is missed (close above fvg_top)."""
+        df = _make_iof_df()
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert result["direction"] == "long"
+
+    def test_iof_entry_price_is_fvg_bottom(self):
+        """IOF entry_price must equal fvg_bottom (c0_h=101.2), not the current close."""
+        df = _make_iof_df()
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert abs(result["entry_price"] - 101.2) < 0.001
+
+    def test_iof_entry_type_is_limit(self):
+        """IOF signals must carry entry_type='limit'."""
+        df = _make_iof_df()
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert result.get("entry_type") == "limit"
+
+    def test_iof_stop_is_ob_mean(self):
+        """IOF stop = ob_mean = (ob_open + ob_close) / 2 = (101.0+101.2)/2 = 101.1."""
+        df = _make_iof_df()
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert abs(result["suggested_stop_loss"] - 101.1) < 0.001
+
+    def test_standard_signal_has_no_entry_type(self):
+        """Non-IOF signals must not include entry_type."""
+        df = _make_ict_df(direction="long")
+        regime = _make_regime("choppy")
+        result = ict_session_sweep("BTC/USDT:USDT", df, regime, "15m")
+        assert result is not None
+        assert "entry_type" not in result

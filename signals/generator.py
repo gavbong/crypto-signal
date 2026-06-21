@@ -784,6 +784,25 @@ def _ict_in_pm_killzone(df: pd.DataFrame, pair: str) -> bool:
         return False
 
 
+def _ict_in_macro_window(df: pd.DataFrame) -> bool:
+    """Return True if the current candle falls in the HH:50–(HH+1):10 macro window (ET).
+
+    Every hour the algorithm spools for 20 minutes around the top of the hour (ICT Lecture #7).
+    """
+    from zoneinfo import ZoneInfo
+    try:
+        tz_et = ZoneInfo("America/New_York")
+        idx_et = (
+            df.index.tz_convert(tz_et)
+            if df.index.tzinfo is not None
+            else df.index.tz_localize("UTC").tz_convert(tz_et)
+        )
+        minute = idx_et[-1].minute
+        return minute >= 50 or minute < 10
+    except Exception:
+        return False
+
+
 def _ict_find_sweep(df: pd.DataFrame, session_bounds: dict, atr: float) -> Optional[dict]:
     """Scan the last N candles for a wick through the combined session H/L that closes back inside."""
     ict_cfg = cfg().get("signals", {}).get("ict_session_sweep", {})
@@ -857,7 +876,8 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
             fvg_found = {"fvg_top": c2_l, "fvg_bottom": c0_h,
                          "fvg_ce": round((c2_l + c0_h) / 2, 8),
                          "ob_open": float(df["open"].iloc[i]),
-                         "ob_close": float(df["close"].iloc[i])}
+                         "ob_close": float(df["close"].iloc[i]),
+                         "is_breakaway": pre_swing_high is not None and c0_h > pre_swing_high}
         elif direction == "short" and c0_l > c2_h and c2_h <= close_now <= (c2_h + c0_l) / 2:
             # CHoCH: impulse must break below the pre-sweep local swing low.
             if pre_swing_low is not None and c1_l >= pre_swing_low:
@@ -871,7 +891,77 @@ def _ict_find_fvg(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[
             fvg_found = {"fvg_top": c0_l, "fvg_bottom": c2_h,
                          "fvg_ce": round((c0_l + c2_h) / 2, 8),
                          "ob_open": float(df["open"].iloc[i]),
-                         "ob_close": float(df["close"].iloc[i])}
+                         "ob_close": float(df["close"].iloc[i]),
+                         "is_breakaway": pre_swing_low is not None and c0_l < pre_swing_low}
+
+    return fvg_found
+
+
+def _ict_find_iof_entry(df: pd.DataFrame, sweep_idx: int, direction: str) -> Optional[dict]:
+    """IOF entry drill: find a breakaway FVG where price has already cleared the gap.
+
+    Unlike _ict_find_fvg (close must be inside the FVG), this detects FVGs where price
+    has broken above fvg_top (long) or below fvg_bottom (short) — the breakaway departure
+    state. The entry is a limit order at fvg_bottom (long) or fvg_top (short), placed in
+    anticipation of a retrace into the low-resistance zone (ICT Lecture #7 IOF drill).
+
+    Breakaway requirement: fvg_bottom (c0_h) must be above the pre-sweep swing high (long),
+    or fvg_top (c0_l) below the pre-sweep swing low (short).
+    """
+    ict_cfg   = cfg().get("signals", {}).get("ict_session_sweep", {})
+    lookback  = ict_cfg.get("fvg_lookback_candles", 8)
+    choch_lb  = ict_cfg.get("choch_lookback_candles", 10)
+    close_now = float(df["close"].iloc[-1])
+    fvg_found = None
+
+    pre_start  = max(0, sweep_idx - choch_lb)
+    pre_highs  = df["high"].iloc[pre_start:sweep_idx]
+    pre_lows   = df["low"].iloc[pre_start:sweep_idx]
+    pre_swing_high = float(pre_highs.max()) if len(pre_highs) > 0 else None
+    pre_swing_low  = float(pre_lows.min())  if len(pre_lows)  > 0 else None
+
+    for i in range(sweep_idx, min(len(df) - 2, sweep_idx + lookback)):
+        if i + 2 >= len(df):
+            break
+        c0_h     = float(df["high"].iloc[i])
+        c0_l     = float(df["low"].iloc[i])
+        c2_h     = float(df["high"].iloc[i + 2])
+        c2_l     = float(df["low"].iloc[i + 2])
+        c1_h     = float(df["high"].iloc[i + 1])
+        c1_open  = float(df["open"].iloc[i + 1])
+        c1_close = float(df["close"].iloc[i + 1])
+
+        if direction == "long" and c0_h < c2_l and close_now > c2_l:
+            if pre_swing_high is None or c0_h <= pre_swing_high:
+                continue
+            if c1_h <= pre_swing_high:
+                continue
+            if c1_close <= c1_open:
+                continue
+            fvg_found = {
+                "fvg_top": c2_l, "fvg_bottom": c0_h,
+                "fvg_ce": round((c2_l + c0_h) / 2, 8),
+                "ob_open": float(df["open"].iloc[i]),
+                "ob_close": float(df["close"].iloc[i]),
+                "is_breakaway": True,
+                "entry_type": "limit",
+            }
+        elif direction == "short" and c0_l > c2_h and close_now < c2_h:
+            if pre_swing_low is None or c0_l >= pre_swing_low:
+                continue
+            c1_l = float(df["low"].iloc[i + 1])
+            if c1_l >= pre_swing_low:
+                continue
+            if c1_close >= c1_open:
+                continue
+            fvg_found = {
+                "fvg_top": c0_l, "fvg_bottom": c2_h,
+                "fvg_ce": round((c0_l + c2_h) / 2, 8),
+                "ob_open": float(df["open"].iloc[i]),
+                "ob_close": float(df["close"].iloc[i]),
+                "is_breakaway": True,
+                "entry_type": "limit",
+            }
 
     return fvg_found
 
@@ -1087,6 +1177,9 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
     if not in_am_kz and not in_pm_kz:
         return None
 
+    if not _ict_in_macro_window(df):
+        return None
+
     session_bounds = (
         _ict_get_session_bounds(df) if in_am_kz
         else _ict_get_pm_session_bounds(df)
@@ -1100,10 +1193,16 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
 
     fvg = _ict_find_fvg(df, sweep["sweep_idx"], sweep["direction"])
     if fvg is None:
+        fvg = _ict_find_iof_entry(df, sweep["sweep_idx"], sweep["direction"])
+    if fvg is None:
         return None
 
     direction = sweep["direction"]
-    entry     = float(df["close"].iloc[-1])
+    is_iof    = fvg.get("entry_type") == "limit"
+    if is_iof:
+        entry = fvg["fvg_bottom"] if direction == "long" else fvg["fvg_top"]
+    else:
+        entry = float(df["close"].iloc[-1])
 
     ict_cfg  = cfg().get("signals", {}).get("ict_session_sweep", {})
     buf      = ict_cfg.get("stop_atr_buffer", 0.1) * atr
@@ -1137,8 +1236,12 @@ def ict_session_sweep(pair: str, df: pd.DataFrame, regime: RegimeResult,
         return None
 
     sig["suggested_stop_loss"] = stop
-    sig["fvg_ce"]   = fvg["fvg_ce"]
-    sig["ob_entry"] = round(fvg["ob_open"], 8)
+    sig["fvg_ce"]      = fvg["fvg_ce"]
+    sig["ob_entry"]    = round(fvg["ob_open"], 8)
+    sig["is_breakaway"] = fvg.get("is_breakaway", False)
+    if is_iof:
+        sig["entry_price"] = round(entry, 8)
+        sig["entry_type"]  = "limit"
 
     min_rr = ict_cfg.get("min_rr", 0.5)
     max_rr = ict_cfg.get("max_rr", 4.0)
