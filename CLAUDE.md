@@ -21,6 +21,14 @@
 - Deploy trigger: `bash scripts/deploy.sh`
 - Health check: `curl http://localhost:5000/api/health`
 
+### Code change workflow (REQUIRED ORDER)
+After any code or config edit:
+1. `git add <files> && git commit -m "..."` — commit locally
+2. `git push origin main` — push to GitHub FIRST
+3. SSH to server and `git pull --ff-only` + restart affected services
+
+Never deploy (pull on server) before pushing to GitHub. The remote repo must always be the source of truth.
+
 ## Design System
 Always read DESIGN.md before making any visual or UI decisions.
 All font choices, colors, spacing, border radius, and aesthetic direction are defined there.
