@@ -69,12 +69,9 @@ def test_stale_candle_returns_none():
     conn = _make_db()
     _insert(conn, age_seconds=_STALE_SECONDS + 120)
     reader = IndexReader()
-    alerts = []
-    with patch("exchanges.index_reader.get_conn", return_value=_fake_get_conn(conn)), \
-         patch("exchanges.index_reader._send_stale_alert", side_effect=lambda p, a: alerts.append(p)):
+    with patch("exchanges.index_reader.get_conn", return_value=_fake_get_conn(conn)):
         result = reader.fetch_ohlcv("DJ30/USD", "15m", limit=10)
     assert result is None
-    assert "DJ30/USD" in alerts
 
 
 def test_missing_pair_returns_none():
@@ -115,8 +112,7 @@ def test_fetch_ticker_stale_returns_none():
     conn = _make_db()
     _insert(conn, age_seconds=_STALE_SECONDS + 120)
     reader = IndexReader()
-    with patch("exchanges.index_reader.get_conn", return_value=_fake_get_conn(conn)), \
-         patch("exchanges.index_reader._send_stale_alert"):
+    with patch("exchanges.index_reader.get_conn", return_value=_fake_get_conn(conn)):
         result = reader.fetch_ticker("DJ30/USD")
     assert result is None
 

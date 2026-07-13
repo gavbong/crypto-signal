@@ -13,8 +13,6 @@ from db.schema import get_conn
 
 _STALE_SECONDS = 30 * 60  # 30 minutes — if feeder hasn't sent candles, skip
 
-_stale_alert_cache: dict[str, float] = {}  # pair → last_alert_ts
-
 # Only 15m is stored natively; multiply limit when fetching for resampling
 _RESAMPLE_FACTORS: dict[str, int] = {"1h": 4, "4h": 16, "1d": 96}
 
@@ -135,35 +133,7 @@ class IndexReader:
             logger.warning(
                 f"IndexReader: {pair} last candle {age / 60:.0f}min old — feeder offline?"
             )
-            _send_stale_alert(pair, age)
             return False
         return True
 
 
-def _send_stale_alert(pair: str, age_seconds: float) -> None:
-    """Send Telegram alert once per pair per staleness window (throttled).
-
-    Suppressed when the market is legitimately closed (weekends, bank holidays,
-    after-hours) — stale candles are expected in those windows.
-    """
-    try:
-        from utils.market_hours import is_index_market_open
-        if not is_index_market_open(pair):
-            logger.debug(f"IndexReader: {pair} stale but market is closed — suppressing alert")
-            return
-    except Exception:
-        pass  # if import fails, fall through and send
-
-    now = time.time()
-    if now - _stale_alert_cache.get(pair, 0) < _STALE_SECONDS:
-        return
-    _stale_alert_cache[pair] = now
-
-    try:
-        from alerts.telegram import send_telegram
-        send_telegram(
-            f"⚠️ Index feeder stale: {pair} last candle "
-            f"{age_seconds / 60:.0f}min ago. Check mt4_feeder.py on Windows PC."
-        )
-    except Exception as exc:
-        logger.debug(f"Stale alert send failed: {exc}")
