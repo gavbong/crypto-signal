@@ -630,9 +630,13 @@ body{
   <div class="panel" style="margin-bottom:12px">
     <div class="panel-hdr">
       <span class="panel-title">Tracked Traders</span>
-      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">auto-selected by 30d PnL · refreshes weekly</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="copy-traders-pg-info" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">auto-selected by 30d PnL · refreshes weekly</span>
+        <button id="copy-traders-prev" class="pg-btn" onclick="changeCopyTradersPage(-1)" disabled>‹</button>
+        <button id="copy-traders-next" class="pg-btn" onclick="changeCopyTradersPage(1)" disabled>›</button>
+      </div>
     </div>
-    <div class="panel-body" id="copy-traders-body" style="padding:0;max-height:200px;overflow-y:auto">
+    <div class="panel-body" id="copy-traders-body" style="padding:0">
       <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
     </div>
   </div>
@@ -640,9 +644,13 @@ body{
   <div class="panel" style="margin-bottom:12px">
     <div class="panel-hdr">
       <span class="panel-title">Watching</span>
-      <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">candidates · composite score · promotes after 3 cycles</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="copy-cand-pg-info" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">candidates · composite score · promotes after 3 cycles</span>
+        <button id="copy-cand-prev" class="pg-btn" onclick="changeCopyCandPage(-1)" disabled>‹</button>
+        <button id="copy-cand-next" class="pg-btn" onclick="changeCopyCandPage(1)" disabled>›</button>
+      </div>
     </div>
-    <div class="panel-body" id="copy-candidates-body" style="padding:0;max-height:260px;overflow-y:auto">
+    <div class="panel-body" id="copy-candidates-body" style="padding:0">
       <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
     </div>
   </div>
@@ -680,9 +688,14 @@ body{
   <div class="panel" style="margin-bottom:12px">
     <div class="panel-hdr">
       <span class="panel-title">Copy Trade History</span>
-      <span id="copy-hist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="copy-hist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+        <span id="copy-hist-pg-info" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+        <button id="copy-hist-prev" class="pg-btn" onclick="changeCopyHistPage(-1)" disabled>‹</button>
+        <button id="copy-hist-next" class="pg-btn" onclick="changeCopyHistPage(1)" disabled>›</button>
+      </div>
     </div>
-    <div class="tbl-wrap" style="border:none;max-height:380px;overflow-y:auto">
+    <div class="tbl-wrap" style="border:none">
       <table class="copy-tbl">
         <thead>
           <tr>
@@ -1112,6 +1125,14 @@ let _allPositions = [];
 let _tradePage = 0;
 const _TRADES_PER_PAGE = 10;
 let _exchFilter = null; // null = all exchanges
+
+// Copy trader pagination state
+let _copyHistData = [], _copyHistPage = 0;
+let _copyCandData = [], _copyCandPage = 0;
+let _copyTradersAllData = [], _copyTradersPage = 0;
+const _COPY_HIST_PER_PAGE = 20;
+const _COPY_CAND_PER_PAGE = 10;
+const _COPY_TRADERS_PER_PAGE = 10;
 
 // ─── CLOCK + REFRESH AGE ─────────────────────────────────────────────────────
 (function tick() {
@@ -1845,18 +1866,49 @@ function fmtWallet(w, platform) {
 }
 
 function renderCopyTraders(traders) {
+  _copyTradersAllData = traders;
+  _copyTradersPage = 0;
+  _renderCopyTradersPage();
+}
+
+function changeCopyTradersPage(delta) {
+  const totalPages = Math.max(1, Math.ceil(_copyTradersAllData.length / _COPY_TRADERS_PER_PAGE));
+  _copyTradersPage = Math.max(0, Math.min(_copyTradersPage + delta, totalPages - 1));
+  _renderCopyTradersPage();
+}
+
+function _renderCopyTradersPage() {
+  const traders = _copyTradersAllData;
+  const total = traders.length;
+  const totalPages = Math.max(1, Math.ceil(total / _COPY_TRADERS_PER_PAGE));
+  const start = _copyTradersPage * _COPY_TRADERS_PER_PAGE;
+  const end = Math.min(start + _COPY_TRADERS_PER_PAGE, total);
+  const page = traders.slice(start, end);
+
   const body = document.getElementById('copy-traders-body');
-  if (!traders.length) {
-    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">No traders tracked yet — leaderboard refreshes weekly.</span>';
+  const info = document.getElementById('copy-traders-pg-info');
+  const prev = document.getElementById('copy-traders-prev');
+  const next = document.getElementById('copy-traders-next');
+
+  if (!total) {
+    body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No traders tracked yet — leaderboard refreshes weekly.</span>';
+    if (info) info.textContent = 'auto-selected by 30d PnL · refreshes weekly';
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
     return;
   }
+
+  if (info) info.textContent = total > _COPY_TRADERS_PER_PAGE ? `${start + 1}–${end} of ${total}` : 'auto-selected by 30d PnL · refreshes weekly';
+  if (prev) prev.disabled = _copyTradersPage === 0;
+  if (next) next.disabled = _copyTradersPage >= totalPages - 1;
+
   body.innerHTML = `<table class="copy-tbl" style="width:100%">
     <thead><tr>
       <th>Wallet</th><th>Alias</th><th class="r">30d PnL</th>
       <th class="r">Win Rate</th><th class="r">Copy PnL</th>
       <th>Since</th><th>Status</th>
     </tr></thead>
-    <tbody>${traders.map(t => {
+    <tbody>${page.map(t => {
       const wr = t.trade_count > 0 ? (t.win_rate * 100).toFixed(0) + '%' : '—';
       const cpnl = t.total_copy_pnl || 0;
       const cpnlColor = cpnl > 0 ? 'var(--long)' : cpnl < 0 ? 'var(--short)' : 'var(--muted)';
@@ -1916,12 +1968,42 @@ function renderCopyPositions(positions) {
 }
 
 function renderCopyCandidates(data) {
+  _copyCandData = data.candidates || [];
+  _copyCandPage = 0;
+  _renderCopyCandPage();
+}
+
+function changeCopyCandPage(delta) {
+  const totalPages = Math.max(1, Math.ceil(_copyCandData.length / _COPY_CAND_PER_PAGE));
+  _copyCandPage = Math.max(0, Math.min(_copyCandPage + delta, totalPages - 1));
+  _renderCopyCandPage();
+}
+
+function _renderCopyCandPage() {
+  const candidates = _copyCandData;
+  const total = candidates.length;
+  const totalPages = Math.max(1, Math.ceil(total / _COPY_CAND_PER_PAGE));
+  const start = _copyCandPage * _COPY_CAND_PER_PAGE;
+  const end = Math.min(start + _COPY_CAND_PER_PAGE, total);
+  const page = candidates.slice(start, end);
+
   const body = document.getElementById('copy-candidates-body');
-  const candidates = data.candidates || [];
-  if (!candidates.length) {
+  const info = document.getElementById('copy-cand-pg-info');
+  const prev = document.getElementById('copy-cand-prev');
+  const next = document.getElementById('copy-cand-next');
+
+  if (!total) {
     body.innerHTML = '<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">No candidates watching — leaderboard scores weekly.</span>';
+    if (info) info.textContent = 'candidates · composite score · promotes after 3 cycles';
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
     return;
   }
+
+  if (info) info.textContent = total > _COPY_CAND_PER_PAGE ? `${start + 1}–${end} of ${total}` : 'candidates · composite score · promotes after 3 cycles';
+  if (prev) prev.disabled = _copyCandPage === 0;
+  if (next) next.disabled = _copyCandPage >= totalPages - 1;
+
   body.innerHTML = `<table class="copy-tbl" style="width:100%">
     <thead><tr>
       <th>Wallet</th>
@@ -1931,7 +2013,7 @@ function renderCopyCandidates(data) {
       <th class="r">Cycles left</th>
       <th>Since</th>
     </tr></thead>
-    <tbody>${candidates.map(c => {
+    <tbody>${page.map(c => {
       const rotBadge = c.is_rotation
         ? `<span class="badge" style="background:rgba(240,165,0,0.15);color:var(--accent);border:1px solid var(--accent);margin-left:4px" title="Shares funder with a promoted wallet">↺ rotation</span>`
         : '';
@@ -1955,14 +2037,42 @@ function renderCopyCandidates(data) {
 }
 
 function renderCopyHistory(trades) {
+  _copyHistData = trades;
+  _copyHistPage = 0;
+  _renderCopyHistPage();
+}
+
+function changeCopyHistPage(delta) {
+  const totalPages = Math.max(1, Math.ceil(_copyHistData.length / _COPY_HIST_PER_PAGE));
+  _copyHistPage = Math.max(0, Math.min(_copyHistPage + delta, totalPages - 1));
+  _renderCopyHistPage();
+}
+
+function _renderCopyHistPage() {
+  const trades = _copyHistData;
+  const total = trades.length;
+  const totalPages = Math.max(1, Math.ceil(total / _COPY_HIST_PER_PAGE));
+  const start = _copyHistPage * _COPY_HIST_PER_PAGE;
+  const end = Math.min(start + _COPY_HIST_PER_PAGE, total);
+  const page = trades.slice(start, end);
+
   const tbody = document.getElementById('copy-history-tbody');
   const count = document.getElementById('copy-hist-count');
-  count.textContent = trades.length ? `${trades.length} trade${trades.length !== 1 ? 's' : ''}` : '';
-  if (!trades.length) {
+  const pgInfo = document.getElementById('copy-hist-pg-info');
+  const prev = document.getElementById('copy-hist-prev');
+  const next = document.getElementById('copy-hist-next');
+
+  if (count) count.textContent = total ? `${total} trade${total !== 1 ? 's' : ''}` : '';
+  if (pgInfo) pgInfo.textContent = total > _COPY_HIST_PER_PAGE ? `${start + 1}–${end} of ${total}` : '';
+  if (prev) prev.disabled = _copyHistPage === 0;
+  if (next) next.disabled = _copyHistPage >= totalPages - 1 || total === 0;
+
+  if (!total) {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>';
     return;
   }
-  tbody.innerHTML = trades.slice(0, 100).map(t => {
+
+  tbody.innerHTML = page.map(t => {
     const dc = t.direction === 'long' ? 'b-long' : 'b-short';
     const won = t.pnl_usdt > 0;
     const reasonLabel = {trader_closed:'Closed',trader_reversed:'Reversed'}[t.exit_reason] || t.exit_reason || '—';
