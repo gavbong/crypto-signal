@@ -632,8 +632,8 @@ body{
       <span class="panel-title">Tracked Traders</span>
       <span style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">auto-selected by 30d PnL · refreshes weekly</span>
     </div>
-    <div class="panel-body" id="copy-traders-body">
-      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">Loading…</span>
+    <div class="panel-body" id="copy-traders-body" style="padding:0;max-height:200px;overflow-y:auto">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);padding:14px 16px;display:block">Loading…</span>
     </div>
   </div>
 
@@ -682,17 +682,17 @@ body{
       <span class="panel-title">Copy Trade History</span>
       <span id="copy-hist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
     </div>
-    <div class="tbl-wrap" style="border:none">
+    <div class="tbl-wrap" style="border:none;max-height:380px;overflow-y:auto">
       <table class="copy-tbl">
         <thead>
           <tr>
             <th>Trader</th><th>Pair</th><th>Dir</th>
             <th class="r">Entry</th><th class="r">Exit</th>
-            <th>Reason</th><th class="r">PnL</th><th>Opened</th>
+            <th>Reason</th><th class="r">PnL</th><th class="r">Fee</th><th>Opened</th>
           </tr>
         </thead>
         <tbody id="copy-history-tbody">
-          <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>
+          <tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>
         </tbody>
       </table>
     </div>
@@ -1959,7 +1959,7 @@ function renderCopyHistory(trades) {
   const count = document.getElementById('copy-hist-count');
   count.textContent = trades.length ? `${trades.length} trade${trades.length !== 1 ? 's' : ''}` : '';
   if (!trades.length) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">No closed copy trades yet.</td></tr>';
     return;
   }
   tbody.innerHTML = trades.slice(0, 100).map(t => {
@@ -1970,6 +1970,9 @@ function renderCopyHistory(trades) {
     const pnl = t.pnl_usdt != null
       ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}${t.pnl_usdt.toFixed(2)}</span>`
       : '<span style="color:var(--muted)">—</span>';
+    const fee = t.total_fee > 0
+      ? `<span style="color:var(--muted)">-$${t.total_fee.toFixed(4)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
     return `<tr>
       <td><span class="copy-wallet">${fmtWallet(t.trader_wallet, 'hl')}</span></td>
       <td class="td-pair">${fmtPair(t.pair)}</td>
@@ -1978,6 +1981,7 @@ function renderCopyHistory(trades) {
       <td class="r td-mono">${fmt(t.exit_price)}</td>
       <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
       <td class="r">${pnl}</td>
+      <td class="r td-mono">${fee}</td>
       <td class="td-date">${fmtDT(t.opened_at)}</td>
     </tr>`;
   }).join('');
@@ -2045,7 +2049,8 @@ function renderCopyAccount(acc) {
     const r = acc.realized_pnl ?? 0;
     realEl.textContent = (r === 0 ? '' : sign(r)) + fmt(r);
     realEl.style.color = color(r);
-    if (realSub) realSub.textContent = `${acc.wins + acc.losses} trades closed`;
+    const feeStr = acc.total_fees > 0 ? ` · -$${acc.total_fees.toFixed(2)} fees` : '';
+    if (realSub) realSub.textContent = `${acc.wins + acc.losses} trades closed${feeStr}`;
   }
 
   const wrEl = document.getElementById('copy-stat-winrate');

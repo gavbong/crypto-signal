@@ -641,6 +641,10 @@ def create_app() -> Flask:
             open_pos = conn.execute(
                 "SELECT direction, entry_price, contracts, last_price FROM copy_positions WHERE closed_at IS NULL"
             ).fetchall()
+            total_fees = conn.execute(
+                """SELECT COALESCE(SUM(COALESCE(open_fee_usdt,0) + COALESCE(close_fee_usdt,0)), 0)
+                   FROM copy_positions WHERE closed_at IS NOT NULL"""
+            ).fetchone()[0]
 
         balance = acc["balance"] if acc else initial
         unrealized = 0.0
@@ -661,6 +665,7 @@ def create_app() -> Flask:
             "losses": losses,
             "open_count": open_count,
             "win_rate": round(wins / total_closed, 4) if total_closed > 0 else 0.0,
+            "total_fees": round(total_fees, 2),
         })
 
     @app.route("/api/copy/traders")
@@ -801,7 +806,9 @@ def create_app() -> Flask:
         with get_conn() as conn:
             rows = conn.execute(
                 """SELECT id, trader_wallet, pair, direction, entry_price, exit_price,
-                          contracts, margin_usdt, pnl_usdt, opened_at, closed_at, exit_reason
+                          contracts, margin_usdt, pnl_usdt,
+                          COALESCE(open_fee_usdt,0) + COALESCE(close_fee_usdt,0) AS total_fee,
+                          opened_at, closed_at, exit_reason
                    FROM copy_positions WHERE closed_at IS NOT NULL
                    ORDER BY closed_at DESC LIMIT 200"""
             ).fetchall()
@@ -817,6 +824,7 @@ def create_app() -> Flask:
                     "contracts": r["contracts"],
                     "margin_usdt": r["margin_usdt"],
                     "pnl_usdt": r["pnl_usdt"],
+                    "total_fee": r["total_fee"],
                     "opened_at": _normalize_ts(r["opened_at"]),
                     "closed_at": _normalize_ts(r["closed_at"]),
                     "exit_reason": r["exit_reason"],
