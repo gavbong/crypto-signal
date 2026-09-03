@@ -344,6 +344,7 @@ copy_trader:
   max_candidates: 50            # hard cap on hl_candidates rows in 'watching' status; evict lowest scorer
   min_leaderboard_rows: 10000   # outage guard — skip refresh if raw HL response has fewer rows than this
   arbiscan_api_key: ""          # optional; free tier (5 req/s, 100K/day) works without key. Set via ARBISCAN_API_KEY env var.
+  taker_fee_pct: 0.0005         # HyperLiquid taker fee per side (0.05%); charged on open and close notional
 
 paper_trader:
   reset_account: false            # set true + restart to wipe positions and restart from $1,000 USDT

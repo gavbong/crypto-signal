@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS copy_positions (
     last_price      REAL,
     contracts       REAL,
     margin_usdt     REAL,
+    open_fee_usdt   REAL DEFAULT 0,
+    close_fee_usdt  REAL DEFAULT 0,
     pnl_usdt        REAL,
     opened_at       TIMESTAMP NOT NULL,
     closed_at       TIMESTAMP,
@@ -120,6 +122,8 @@ def init_copy_db(conn) -> None:
     # Migrations for columns added after initial production schema
     for migration in [
         "ALTER TABLE copy_traders ADD COLUMN silence_cycles INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE copy_positions ADD COLUMN open_fee_usdt REAL DEFAULT 0",
+        "ALTER TABLE copy_positions ADD COLUMN close_fee_usdt REAL DEFAULT 0",
     ]:
         try:
             conn.execute(migration)
@@ -343,22 +347,24 @@ def _copy_open(
         logger.warning(f"Position size ${margin_usdt:.2f} below minimum ${min_position_usdt:.0f} — skipping {coin}")
         return
 
+    fee_pct = float(cfg().get("copy_trader", {}).get("taker_fee_pct", 0.0005))
     entry = pos["entryPx"]
     contracts = (margin_usdt / entry) if entry > 0 else 0.0
+    open_fee = round(margin_usdt * fee_pct, 4)
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """INSERT INTO copy_positions
-           (trader_wallet, pair, direction, entry_price, last_price, contracts, margin_usdt, opened_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           (trader_wallet, pair, direction, entry_price, last_price, contracts, margin_usdt, open_fee_usdt, opened_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (wallet, _coin_to_pair(coin), pos["side"], entry, entry,
-         round(contracts, 8), margin_usdt, now),
+         round(contracts, 8), margin_usdt, open_fee, now),
     )
-    _adjust_copy_balance(conn, -margin_usdt)
+    _adjust_copy_balance(conn, -(margin_usdt + open_fee))
     conn.commit()
     balance_after = get_copy_balance(conn)
     logger.info(
         f"Copy OPEN  {wallet[:10]}… {coin} {pos['side'].upper()} "
-        f"@ {entry} margin=${margin_usdt:.0f} contracts={contracts:.6f}"
+        f"@ {entry} margin=${margin_usdt:.0f} fee=${open_fee:.4f} contracts={contracts:.6f}"
     )
     send_copy_open_alert(wallet, coin, pos["side"], margin_usdt, entry, balance_after)
 
@@ -390,16 +396,19 @@ def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) ->
     if row is None:
         return
 
+    fee_pct = float(cfg().get("copy_trader", {}).get("taker_fee_pct", 0.0005))
     direction_sign = 1 if row["direction"] == "long" else -1
-    pnl = (exit_price - row["entry_price"]) * (row["contracts"] or 0.0) * direction_sign
+    gross_pnl = (exit_price - row["entry_price"]) * (row["contracts"] or 0.0) * direction_sign
+    close_fee = round((row["contracts"] or 0.0) * exit_price * fee_pct, 4)
+    pnl = gross_pnl - close_fee
     margin = row["margin_usdt"] or 0.0
     now = datetime.now(timezone.utc).isoformat()
 
     conn.execute(
         """UPDATE copy_positions
-           SET exit_price=?, last_price=?, pnl_usdt=?, closed_at=?, exit_reason=?
+           SET exit_price=?, last_price=?, pnl_usdt=?, close_fee_usdt=?, closed_at=?, exit_reason=?
            WHERE id=?""",
-        (exit_price, exit_price, round(pnl, 4), now, reason, row["id"]),
+        (exit_price, exit_price, round(pnl, 4), close_fee, now, reason, row["id"]),
     )
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn.execute(
@@ -413,7 +422,7 @@ def _copy_close(conn, wallet: str, coin: str, exit_price: float, reason: str) ->
     outcome = "WIN" if pnl >= 0 else "LOSS"
     logger.info(
         f"Copy CLOSE {wallet[:10]}… {coin} {row['direction'].upper()} "
-        f"exit={exit_price} reason={reason} pnl={pnl:+.2f} [{outcome}]"
+        f"exit={exit_price} reason={reason} pnl={pnl:+.2f} fee=${close_fee:.4f} [{outcome}]"
     )
     send_copy_close_alert(
         wallet, coin, row["direction"],
