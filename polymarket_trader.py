@@ -120,20 +120,23 @@ def _adjust_poly_balance(conn, delta: float) -> None:
 # ── API helpers ────────────────────────────────────────────────────────────────
 
 _PM_LEADERBOARD_PAGE = "https://polymarket.com/leaderboard"
-_NEXT_DATA_RE = re.compile(r'<script id="__NEXT_DATA__"[^>]*>(.+?)</script>', re.DOTALL)
+# Polymarket migrated from Next.js pages (__NEXT_DATA__) to RSC (self.__next_f.push)
+_RSC_PUSH_RE = re.compile(r'self\.__next_f\.push\(\[1,(.+?)\]\)</script>', re.DOTALL)
+_PROXY_WALLET_OBJ_RE = re.compile(r'\{[^{}]*"proxyWallet"[^{}]*\}')
 
 
 def fetch_poly_leaderboard(top_n: int, min_pnl: float, volume_floor: float) -> list[dict]:
     """
-    Scrapes __NEXT_DATA__ from polymarket.com/leaderboard — no auth needed.
-    Polymarket embeds the first-page leaderboard rows in the page HTML as JSON.
+    Scrapes leaderboard from polymarket.com/leaderboard RSC payload.
+    Polymarket embeds trader rows as JSON objects in self.__next_f.push() script tags.
     """
     try:
         resp = requests.get(
             _PM_LEADERBOARD_PAGE,
             headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "en-US,en;q=0.9",
             },
             timeout=25,
         )
@@ -142,34 +145,34 @@ def fetch_poly_leaderboard(top_n: int, min_pnl: float, volume_floor: float) -> l
         logger.error(f"PM leaderboard page fetch failed: {e}")
         return []
 
-    m = _NEXT_DATA_RE.search(resp.text)
-    if not m:
-        logger.error("PM leaderboard: __NEXT_DATA__ not found in page HTML")
-        return []
-
-    try:
-        page_data = json.loads(m.group(1))
-    except Exception as e:
-        logger.error(f"PM leaderboard: __NEXT_DATA__ JSON parse failed: {e}")
-        return []
-
-    # Navigate: props.pageProps.dehydratedState.queries[n].state.data
+    html = resp.text
     rows = []
-    queries = (
-        page_data.get("props", {})
-                 .get("pageProps", {})
-                 .get("dehydratedState", {})
-                 .get("queries", [])
-    )
-    for q in queries:
-        candidates = q.get("state", {}).get("data", [])
-        if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict) \
-                and "proxyWallet" in candidates[0]:
-            rows = candidates
+
+    # Try RSC push format (Next.js 14+ App Router / Turbopack)
+    for push_match in _RSC_PUSH_RE.finditer(html):
+        if "proxyWallet" not in push_match.group(1):
+            continue
+        try:
+            inner = json.loads(push_match.group(1))
+        except Exception:
+            continue
+        parsed = []
+        seen_wallets: set[str] = set()
+        for obj_match in _PROXY_WALLET_OBJ_RE.finditer(inner):
+            try:
+                obj = json.loads(obj_match.group(0))
+                w = obj.get("proxyWallet", "")
+                if w and w not in seen_wallets:
+                    seen_wallets.add(w)
+                    parsed.append(obj)
+            except Exception:
+                pass
+        if parsed:
+            rows = parsed
             break
 
     if not rows:
-        logger.error("PM leaderboard: leaderboard rows not found in __NEXT_DATA__")
+        logger.error("PM leaderboard: trader rows not found in page HTML (RSC format may have changed)")
         return []
 
     result = []
@@ -182,7 +185,6 @@ def fetch_poly_leaderboard(top_n: int, min_pnl: float, volume_floor: float) -> l
         if pnl < min_pnl or vol < volume_floor:
             continue
         alias = row.get("name") or row.get("pseudonym")
-        # Discard any alias that looks like a raw checksummed address (starts 0x + 40 hex chars)
         if alias and len(alias) >= 42 and alias[:2].lower() == "0x" and alias[2:42].isalnum():
             alias = None
         result.append({"wallet": wallet, "pnl_30d": pnl, "volume_30d": vol, "alias": alias})
