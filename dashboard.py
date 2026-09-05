@@ -1058,6 +1058,38 @@ def create_app() -> Flask:
                     })
         return jsonify({"convergence": convergent})
 
+    @app.route("/api/poly/history")
+    def api_poly_history():
+        _auth()
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT id, trader_wallet, market_title, category, outcome,
+                          entry_price, exit_price, cost_basis, pnl_usdt,
+                          shares, opened_at, closed_at, exit_reason
+                   FROM poly_positions WHERE closed_at IS NOT NULL
+                   ORDER BY closed_at DESC LIMIT 200"""
+            ).fetchall()
+        return jsonify({
+            "trades": [
+                {
+                    "id": r["id"],
+                    "trader_wallet": r["trader_wallet"],
+                    "market_title": r["market_title"],
+                    "category": r["category"],
+                    "outcome": r["outcome"],
+                    "entry_price": r["entry_price"],
+                    "exit_price": r["exit_price"],
+                    "cost_basis": r["cost_basis"],
+                    "pnl_usdt": r["pnl_usdt"],
+                    "shares": r["shares"],
+                    "opened_at": _normalize_ts(r["opened_at"]),
+                    "closed_at": _normalize_ts(r["closed_at"]),
+                    "exit_reason": r["exit_reason"],
+                }
+                for r in rows
+            ]
+        })
+
     # ── BACKTEST ROUTES ──────────────────────────────────────────────────────
 
     _active_backtest: dict = {"proc": None, "run_id": None, "stderr_path": None}

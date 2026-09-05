@@ -791,6 +791,34 @@ body{
     </div>
   </div>
 
+  <!-- Trade history -->
+  <div class="panel" style="margin-top:12px">
+    <div class="panel-hdr">
+      <span class="panel-title">Bet History</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="poly-hist-count" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+        <span id="poly-hist-pg-info" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)"></span>
+        <button id="poly-hist-prev" class="pg-btn" onclick="changePolyHistPage(-1)" disabled>‹</button>
+        <button id="poly-hist-next" class="pg-btn" onclick="changePolyHistPage(1)" disabled>›</button>
+      </div>
+    </div>
+    <div class="tbl-wrap" style="border:none">
+      <table class="copy-tbl">
+        <thead>
+          <tr>
+            <th>Trader</th><th>Market</th><th>Side</th><th>Cat</th>
+            <th class="r">Entry</th><th class="r">Exit</th>
+            <th class="r">Cost</th><th class="r">PnL</th>
+            <th>Reason</th><th>Opened</th><th>Closed</th>
+          </tr>
+        </thead>
+        <tbody id="poly-history-tbody">
+          <tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">No closed bets yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
 </div><!-- /view-polymarket -->
 
 <!-- ── BACKTEST VIEW ────────────────────────────────────────────────── -->
@@ -1133,6 +1161,10 @@ let _copyTradersAllData = [], _copyTradersPage = 0;
 const _COPY_HIST_PER_PAGE = 20;
 const _COPY_CAND_PER_PAGE = 10;
 const _COPY_TRADERS_PER_PAGE = 10;
+
+// Polymarket pagination state
+let _polyHistData = [], _polyHistPage = 0;
+const _POLY_HIST_PER_PAGE = 20;
 
 // ─── CLOCK + REFRESH AGE ─────────────────────────────────────────────────────
 (function tick() {
@@ -2322,23 +2354,103 @@ function renderPolyTraders(traders) {
   </table>`;
 }
 
+function renderPolyHistory(trades) {
+  _polyHistData = trades;
+  _polyHistPage = 0;
+  _renderPolyHistPage();
+}
+
+function changePolyHistPage(delta) {
+  const totalPages = Math.max(1, Math.ceil(_polyHistData.length / _POLY_HIST_PER_PAGE));
+  _polyHistPage = Math.max(0, Math.min(_polyHistPage + delta, totalPages - 1));
+  _renderPolyHistPage();
+}
+
+function _renderPolyHistPage() {
+  const trades = _polyHistData;
+  const total = trades.length;
+  const totalPages = Math.max(1, Math.ceil(total / _POLY_HIST_PER_PAGE));
+  const start = _polyHistPage * _POLY_HIST_PER_PAGE;
+  const end = Math.min(start + _POLY_HIST_PER_PAGE, total);
+  const page = trades.slice(start, end);
+
+  const tbody  = document.getElementById('poly-history-tbody');
+  const count  = document.getElementById('poly-hist-count');
+  const pgInfo = document.getElementById('poly-hist-pg-info');
+  const prev   = document.getElementById('poly-hist-prev');
+  const next   = document.getElementById('poly-hist-next');
+
+  if (count)  count.textContent  = total ? `${total} trade${total !== 1 ? 's' : ''}` : '';
+  if (pgInfo) pgInfo.textContent = total > _POLY_HIST_PER_PAGE ? `${start + 1}–${end} of ${total}` : '';
+  if (prev)   prev.disabled      = _polyHistPage === 0;
+  if (next)   next.disabled      = _polyHistPage >= totalPages - 1 || total === 0;
+
+  if (!total) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px">No closed bets yet.</td></tr>';
+    return;
+  }
+
+  const reasonLabels = {
+    trader_closed: 'Closed',
+    resolved_win:  'Win',
+    resolved_loss: 'Loss',
+    voided:        'Voided',
+  };
+
+  tbody.innerHTML = page.map(t => {
+    const oc = t.outcome === 'YES' ? 'yes' : 'no';
+    const won = t.pnl_usdt > 0;
+    const pnl = t.pnl_usdt != null
+      ? `<span class="${won ? 'pnl-pos' : 'pnl-neg'}">${t.pnl_usdt >= 0 ? '+' : ''}$${Math.abs(t.pnl_usdt).toFixed(2)}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const entryPct = t.entry_price != null ? Math.round(t.entry_price * 100) + '%' : '—';
+    const exitPct  = t.exit_price  != null ? Math.round(t.exit_price  * 100) + '%' : '—';
+    const cost = t.cost_basis != null ? '$' + t.cost_basis.toFixed(2) : '—';
+    const catBadge = t.category
+      ? `<span class="badge b-regime" style="font-size:9px">${t.category}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const reasonLabel = reasonLabels[t.exit_reason] || t.exit_reason || '—';
+    const reasonCls = t.exit_reason === 'resolved_win' ? 'b-tp'
+                    : t.exit_reason === 'resolved_loss' ? 'b-loss'
+                    : 'b-regime';
+    const title = t.market_title
+      ? (t.market_title.length > 55 ? t.market_title.slice(0, 52) + '…' : t.market_title)
+      : '—';
+    return `<tr>
+      <td><span class="copy-wallet">${fmtWallet(t.trader_wallet, 'poly')}</span></td>
+      <td style="font-size:11px;max-width:200px;white-space:normal;line-height:1.3">${title}</td>
+      <td><span class="poly-outcome ${oc}">${t.outcome}</span></td>
+      <td>${catBadge}</td>
+      <td class="r td-mono">${entryPct}</td>
+      <td class="r td-mono">${exitPct}</td>
+      <td class="r td-mono">${cost}</td>
+      <td class="r">${pnl}</td>
+      <td><span class="outcome-badge ${reasonCls}">${reasonLabel}</span></td>
+      <td class="td-date">${fmtDT(t.opened_at)}</td>
+      <td class="td-date">${fmtDT(t.closed_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
 async function refreshPoly() {
   try {
-    const [accRes, tradersRes, posRes, consRes, convRes] = await Promise.all([
+    const [accRes, tradersRes, posRes, consRes, convRes, histRes] = await Promise.all([
       fetch('/api/poly/account'),
       fetch('/api/poly/traders'),
       fetch('/api/poly/positions'),
       fetch('/api/poly/consensus'),
       fetch('/api/poly/convergence'),
+      fetch('/api/poly/history'),
     ]);
-    const [acc, traders, pos, cons, conv] = await Promise.all([
-      accRes.json(), tradersRes.json(), posRes.json(), consRes.json(), convRes.json(),
+    const [acc, traders, pos, cons, conv, hist] = await Promise.all([
+      accRes.json(), tradersRes.json(), posRes.json(), consRes.json(), convRes.json(), histRes.json(),
     ]);
     renderPolyAccount(acc);
     renderPolyFeed(pos.positions || []);
     renderPolyConsensus(cons.consensus || []);
     renderPolyConvergence(conv.convergence || []);
     renderPolyTraders(traders.traders || []);
+    renderPolyHistory(hist.trades || []);
   } catch (err) {
     console.error('Poly refresh error:', err);
   }
