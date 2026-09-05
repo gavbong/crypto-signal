@@ -869,12 +869,18 @@ def create_app() -> Flask:
             open_count = conn.execute(
                 "SELECT COUNT(*) FROM poly_positions WHERE closed_at IS NULL"
             ).fetchone()[0]
+            wins = conn.execute(
+                "SELECT COUNT(*) FROM poly_positions WHERE closed_at IS NOT NULL AND pnl_usdt > 0"
+            ).fetchone()[0]
+            losses = conn.execute(
+                "SELECT COUNT(*) FROM poly_positions WHERE closed_at IS NOT NULL AND pnl_usdt <= 0"
+            ).fetchone()[0]
             cat_rows = conn.execute(
                 """SELECT category,
-                          SUM(CASE WHEN exit_reason='resolved_win' THEN 1 ELSE 0 END) as wins,
-                          SUM(CASE WHEN exit_reason='resolved_loss' THEN 1 ELSE 0 END) as losses
+                          SUM(CASE WHEN pnl_usdt > 0 THEN 1 ELSE 0 END) as wins,
+                          SUM(CASE WHEN pnl_usdt <= 0 THEN 1 ELSE 0 END) as losses
                    FROM poly_positions
-                   WHERE exit_reason IN ('resolved_win','resolved_loss')
+                   WHERE closed_at IS NOT NULL
                    GROUP BY category"""
             ).fetchall()
             unrealized = conn.execute(
@@ -888,7 +894,7 @@ def create_app() -> Flask:
                             "unrealized_pnl": 0, "wins": 0, "losses": 0, "win_rate": 0,
                             "open_count": 0, "by_category": {}})
 
-        total_closed = (acc["wins"] or 0) + (acc["losses"] or 0)
+        total_closed = wins + losses
         by_cat = {}
         for r in cat_rows:
             w, l = r["wins"] or 0, r["losses"] or 0
@@ -901,10 +907,10 @@ def create_app() -> Flask:
             "initial_balance": round(acc["initial_balance"], 2),
             "realized_pnl": round(acc["realized_pnl"] or 0, 2),
             "unrealized_pnl": round(unrealized or 0, 2),
-            "wins": acc["wins"] or 0,
-            "losses": acc["losses"] or 0,
+            "wins": wins,
+            "losses": losses,
             "open_count": open_count,
-            "win_rate": round((acc["wins"] or 0) / total_closed, 4) if total_closed > 0 else 0.0,
+            "win_rate": round(wins / total_closed, 4) if total_closed > 0 else 0.0,
             "by_category": by_cat,
         })
 
@@ -915,8 +921,8 @@ def create_app() -> Flask:
             rows = conn.execute(
                 """SELECT t.wallet, t.alias, t.pnl_30d, t.volume_30d, t.tracked_since, t.active,
                           COUNT(p.id) as trade_count,
-                          COALESCE(SUM(CASE WHEN p.exit_reason='resolved_win' THEN 1 ELSE 0 END),0) as wins,
-                          COALESCE(SUM(CASE WHEN p.exit_reason='resolved_loss' THEN 1 ELSE 0 END),0) as losses,
+                          COALESCE(SUM(CASE WHEN p.pnl_usdt > 0 THEN 1 ELSE 0 END),0) as wins,
+                          COALESCE(SUM(CASE WHEN p.pnl_usdt <= 0 THEN 1 ELSE 0 END),0) as losses,
                           COALESCE(SUM(p.pnl_usdt),0) as copy_pnl
                    FROM poly_traders t
                    LEFT JOIN poly_positions p ON p.trader_wallet=t.wallet AND p.closed_at IS NOT NULL
