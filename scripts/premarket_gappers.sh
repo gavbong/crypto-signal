@@ -21,14 +21,14 @@ export GAPPER_OUTPUT="./data/premarket_gappers/premarket_gappers_${GAPPER_DATE}.
 
 # ── Guards ─────────────────────────────────────────────────────────────────────
 # 1. Skip if already ran today (timer restart or manual duplicate)
-if [ -f "$GAPPER_OUTPUT" ]; then
+if [ -f "$GAPPER_OUTPUT" ] && [ "${FORCE_RUN:-0}" != "1" ]; then
     echo "Already ran today (${GAPPER_DATE} ET) — ${GAPPER_OUTPUT} exists. Skipping." >&2
     exit 0
 fi
 
 # 2. Skip if premarket window has closed (market opens 09:30 ET)
 _HHMM=$(TZ=America/New_York date +%H%M)
-if [ "$((10#$_HHMM))" -ge 930 ]; then
+if [ "$((10#$_HHMM))" -ge 930 ] && [ "${FORCE_RUN:-0}" != "1" ]; then
     echo "Premarket closed ($(TZ=America/New_York date +%H:%M) ET ≥ 09:30). Data stale — skipping." >&2
     exit 0
 fi
@@ -36,6 +36,13 @@ export GAPPER_MIN_GAP=5
 export GAPPER_MIN_PRICE=3
 export GAPPER_MIN_VOL=50000
 export GAPPER_MAX_TICKERS=10
+
+# ── Telegram credentials (read from .env — values not echoed) ─────────────
+if [ -f .env ]; then
+    TELEGRAM_BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' .env | cut -d= -f2-)
+    TELEGRAM_CHAT_ID=$(grep -E '^TELEGRAM_CHAT_ID=' .env | cut -d= -f2-)
+    export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
+fi
 
 # ── Detect Python (Windows stub returns exit 49 even when found by PATH) ──────
 PYTHON=""
@@ -53,7 +60,7 @@ fi
 # Use quoted heredoc so bash does NOT expand \s \d etc. inside the Python code.
 # All runtime values are passed via the GAPPER_* env vars set above.
 $PYTHON - <<'PYEOF'
-import os, sys, json, re, time, urllib.request, urllib.error
+import os, sys, json, re, time, urllib.request, urllib.error, urllib.parse
 
 DATE        = os.environ["GAPPER_DATE"]
 SCAN_TIME   = os.environ["GAPPER_SCAN_TIME"]
@@ -92,6 +99,46 @@ def parse_volume(s):
     num = float(m.group(1))
     mult = {"M": 1_000_000, "K": 1_000, "B": 1_000_000_000, "T": 1_000_000_000_000}
     return int(num * mult.get(m.group(2), 1))
+
+
+# ── Telegram ─────────────────────────────────────────────────────────────────
+def _tg_escape(s):
+    for ch in ('_', '*', '`', '['):
+        s = s.replace(ch, '\\' + ch)
+    return s
+
+def _tg_format(gappers):
+    header = f"\U0001f4ca *Premarket Gappers* — {DATE}"
+    if not gappers:
+        return header + "\nNo qualifying gappers today."
+    lines = []
+    for g in gappers:
+        line = f"• {g['symbol']} ${g['price']:.2f} +{g['gap_pct']:.1f}%"
+        if g.get('catalyst'):
+            line += f" — {_tg_escape(g['catalyst'])}"
+        lines.append(line)
+    return header + "\n" + "\n".join(lines)
+
+def _tg_send(text):
+    token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id or token.startswith("your_"):
+        print("Telegram: no credentials configured — skipping.", file=sys.stderr)
+        return
+    try:
+        body = urllib.parse.urlencode({
+            "chat_id": chat_id, "text": text, "parse_mode": "Markdown",
+        }).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body, method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+        print("Telegram: sent.", file=sys.stderr)
+    except Exception as e:
+        print(f"Telegram send failed (non-fatal): {e}", file=sys.stderr)
 
 
 # ── 1. Fetch gainers ──────────────────────────────────────────────────────────
@@ -146,6 +193,7 @@ if not top:
     with open(OUTPUT, "w") as f:
         json.dump({"scanned_at": SCAN_TIME, "gappers": []}, f, indent=2)
     print(f"No qualifying gappers. Written to {OUTPUT}", file=sys.stderr)
+    _tg_send(_tg_format([]))
     print(f"Premarket Gappers: 0 names. Top: (none)")
     sys.exit(0)
 
@@ -239,6 +287,7 @@ _os.makedirs(_os.path.dirname(OUTPUT), exist_ok=True)
 with open(OUTPUT, "w") as f:
     json.dump({"scanned_at": SCAN_TIME, "gappers": result_gappers}, f, indent=2)
 print(f"\nSaved {len(result_gappers)} gappers → {OUTPUT}", file=sys.stderr)
+_tg_send(_tg_format(result_gappers))
 
 # ── 5. Summary line (stdout) ──────────────────────────────────────────────────
 n = len(result_gappers)
