@@ -107,6 +107,16 @@ function scanTimestamp() {
   return { date, time, label, iso: new Date().toISOString() };
 }
 
+function loadGappersUniverse(date) {
+  const f = join(ROOT, 'data', 'premarket_gappers', `premarket_gappers_${date}.json`);
+  if (!existsSync(f)) return null;
+  try {
+    const symbols = JSON.parse(readFileSync(f, 'utf8')).gappers
+      ?.map(g => g.symbol).filter(Boolean) ?? [];
+    return symbols.length > 0 ? symbols : null;
+  } catch { return null; }
+}
+
 function extractIntradayLevels(bars) {
   const todayET = etNow();
   const todayStr = `${todayET.getFullYear()}-${padTwo(todayET.getMonth()+1)}-${padTwo(todayET.getDate())}`;
@@ -221,9 +231,6 @@ function buildMessage(ts, passes, newPasses, isFirstRun) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
-const universe = process.argv[2]
-  ? process.argv[2].split(',').map(s => s.trim().toUpperCase())
-  : DEFAULT_UNIVERSE;
 
 // Health check
 let hc;
@@ -244,8 +251,25 @@ const state   = loadState(ts.date);
 const isFirstRun = state.run_count === 0;
 state.run_count++;
 
+// Universe: CLI arg > today's premarket gappers > hardcoded default
+let universe, universeSource;
+if (process.argv[2]) {
+  universe = process.argv[2].split(',').map(s => s.trim().toUpperCase());
+  universeSource = 'cli';
+} else {
+  const gappers = loadGappersUniverse(ts.date);
+  if (gappers) {
+    universe = gappers;
+    universeSource = `premarket gappers (${gappers.length})`;
+  } else {
+    universe = DEFAULT_UNIVERSE;
+    universeSource = 'default (no gappers file for today)';
+    console.warn(`  ⚠ No premarket_gappers_${ts.date}.json found — using default universe`);
+  }
+}
+
 console.log(`\nTJL Scanner — ${ts.date} ${ts.label} (run #${state.run_count})`);
-console.log(`Universe: ${universe.join(', ')} | ${isWithinTimeGate() ? 'Market OPEN' : 'Outside hours'}`);
+console.log(`Universe [${universeSource}]: ${universe.join(', ')} | ${isWithinTimeGate() ? 'Market OPEN' : 'Outside hours'}`);
 console.log('─'.repeat(60));
 
 const tickerResults = [];
