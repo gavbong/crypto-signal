@@ -1,0 +1,13 @@
+[Unit]
+Description=Premarket gappers scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/mexc-signal-engine
+ExecStart=/bin/bash /opt/mexc-signal-engine/scripts/premarket_gappers.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=premarket-gappers

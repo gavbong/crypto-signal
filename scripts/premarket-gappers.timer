@@ -1,0 +1,11 @@
+[Unit]
+Description=Run premarket gappers scan Mon–Fri at 08:30 New York time
+
+[Timer]
+# Fires at 08:30 ET (DST-aware via America/New_York timezone suffix)
+OnCalendar=Mon..Fri *-*-* 08:30:00 America/New_York
+# If the server was down at fire time, run once it comes back up
+Persistent=true
+
+[Install]
+WantedBy=timers.target
