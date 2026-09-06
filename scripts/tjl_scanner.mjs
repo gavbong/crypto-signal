@@ -268,7 +268,7 @@ const shouldNotify = isFirstRun || newPasses.length > 0 || errors.length > 0;
 if (shouldNotify) {
   const msg = buildMessage(ts, passes, newPasses, isFirstRun);
   console.log('\nSending Telegram...');
-  await sendTelegram(env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHAT_ID, msg);
+  await sendTelegram(env.TELEGRAM_BOT_TOKEN_2, env.TELEGRAM_CHAT_ID_2, msg);
 } else {
   console.log('No new hits — staying quiet.');
 }

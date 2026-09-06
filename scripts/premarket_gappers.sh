@@ -39,8 +39,8 @@ export GAPPER_MAX_TICKERS=10
 
 # ── Telegram credentials (read from .env — values not echoed) ─────────────
 if [ -f .env ]; then
-    TELEGRAM_BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN=' .env | cut -d= -f2-)
-    TELEGRAM_CHAT_ID=$(grep -E '^TELEGRAM_CHAT_ID=' .env | cut -d= -f2-)
+    TELEGRAM_BOT_TOKEN=$(grep -E '^TELEGRAM_BOT_TOKEN_2=' .env | cut -d= -f2-)
+    TELEGRAM_CHAT_ID=$(grep -E '^TELEGRAM_CHAT_ID_2=' .env | cut -d= -f2-)
     export TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID
 fi
 
