@@ -523,6 +523,25 @@ def create_app() -> Flask:
             ]
         })
 
+    @app.route("/api/gappers/today")
+    def api_gappers_today():
+        _auth()
+        date = request.args.get("date")
+        if not date:
+            try:
+                from zoneinfo import ZoneInfo
+                date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+            except ImportError:
+                date = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y-%m-%d")
+        gappers_path = (
+            Path(__file__).parent / "data" / "premarket_gappers"
+            / f"premarket_gappers_{date}.json"
+        )
+        if not gappers_path.exists():
+            return jsonify({"error": f"No gappers file for {date}"}), 404
+        with open(gappers_path) as f:
+            return jsonify(json.load(f))
+
     @app.route("/api/config/pairs")
     def api_config_pairs():
         _auth()

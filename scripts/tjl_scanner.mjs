@@ -18,6 +18,7 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import http  from 'http';
 import https from 'https';
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
@@ -114,6 +115,29 @@ function loadGappersUniverse(date) {
       ?.map(g => g.symbol).filter(Boolean) ?? [];
     return symbols.length > 0 ? symbols : null;
   } catch { return null; }
+}
+
+function fetchGappersFromDashboard(env, date) {
+  const base  = (env.DASHBOARD_URL || 'http://localhost:5000').replace(/\/$/, '');
+  const token = env.DASHBOARD_TOKEN || '';
+  const url   = `${base}/api/gappers/today?date=${date}`;
+  const isHttps = url.startsWith('https');
+  return new Promise(resolve => {
+    const req = (isHttps ? https : http).get(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }, res => {
+      if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        try {
+          const symbols = JSON.parse(body).gappers?.map(g => g.symbol).filter(Boolean) ?? [];
+          resolve(symbols.length > 0 ? symbols : null);
+        } catch { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+  });
 }
 
 function extractIntradayLevels(bars) {
@@ -250,19 +274,26 @@ const state   = loadState(ts.date);
 const isFirstRun = state.run_count === 0;
 state.run_count++;
 
-// Universe: CLI arg > today's premarket gappers file (no fallback)
+// Universe: CLI arg > local gappers file > dashboard API > error
 let universe, universeSource;
 if (process.argv[2]) {
   universe = process.argv[2].split(',').map(s => s.trim().toUpperCase());
   universeSource = 'cli';
 } else {
-  const gappers = loadGappersUniverse(ts.date);
-  if (!gappers) {
-    console.error(`ERROR: No premarket_gappers_${ts.date}.json found. Run Scanner A first or pass tickers as CLI arg.`);
-    process.exit(1);
+  let gappers = loadGappersUniverse(ts.date);
+  if (gappers) {
+    universeSource = `local gappers file (${gappers.length})`;
+  } else {
+    console.log('  No local gappers file — fetching from dashboard API...');
+    gappers = await fetchGappersFromDashboard(env, ts.date);
+    if (gappers) {
+      universeSource = `dashboard API (${gappers.length})`;
+    } else {
+      console.error(`ERROR: Could not load gappers for ${ts.date} — local file missing and dashboard unreachable.\nEnsure Scanner A has run today, or open an SSH tunnel (ssh -L 5000:localhost:5000 root@<YOUR_SERVER_IP>), or pass tickers as a CLI arg.`);
+      process.exit(1);
+    }
   }
   universe = gappers;
-  universeSource = `premarket gappers (${gappers.length})`;
 }
 
 console.log(`\nTJL Scanner — ${ts.date} ${ts.label} (run #${state.run_count})`);
