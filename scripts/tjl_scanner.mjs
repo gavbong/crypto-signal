@@ -34,8 +34,7 @@ const dataCore  = await import(TV_MCP + 'data.js');
 const healthMod = await import(TV_MCP + 'health.js');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const DEFAULT_UNIVERSE = ['AMD', 'NVDA', 'MU'];
-const SMA_PERIOD       = 200;
+const SMA_PERIOD = 200;
 const SETTLE_MS        = 2500;
 
 // ── .env reader ───────────────────────────────────────────────────────────────
@@ -251,21 +250,19 @@ const state   = loadState(ts.date);
 const isFirstRun = state.run_count === 0;
 state.run_count++;
 
-// Universe: CLI arg > today's premarket gappers > hardcoded default
+// Universe: CLI arg > today's premarket gappers file (no fallback)
 let universe, universeSource;
 if (process.argv[2]) {
   universe = process.argv[2].split(',').map(s => s.trim().toUpperCase());
   universeSource = 'cli';
 } else {
   const gappers = loadGappersUniverse(ts.date);
-  if (gappers) {
-    universe = gappers;
-    universeSource = `premarket gappers (${gappers.length})`;
-  } else {
-    universe = DEFAULT_UNIVERSE;
-    universeSource = 'default (no gappers file for today)';
-    console.warn(`  ⚠ No premarket_gappers_${ts.date}.json found — using default universe`);
+  if (!gappers) {
+    console.error(`ERROR: No premarket_gappers_${ts.date}.json found. Run Scanner A first or pass tickers as CLI arg.`);
+    process.exit(1);
   }
+  universe = gappers;
+  universeSource = `premarket gappers (${gappers.length})`;
 }
 
 console.log(`\nTJL Scanner — ${ts.date} ${ts.label} (run #${state.run_count})`);
