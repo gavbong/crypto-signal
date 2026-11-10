@@ -1,35 +1,45 @@
-﻿# mexc-signal-engine
+# signal-engine
 
-Multi-exchange perpetual futures and index CFD signal engine. Classifies market regime on 1h candles, fires long/short entry signals on 15m candles across MEXC, Binance, OKX (crypto) and Trade Nation (DJ30/FTSE100/DAX indices), and manages a simulated paper-trading account with realistic fees, slippage, and funding costs. A Flask dashboard ties it all together.
+Multi-market signal engine. Classifies market regime on 1h candles, fires long/short entry signals on 15m candles across crypto perpetuals (MEXC, Binance, OKX) and index CFDs (DJ30, FTSE100, DAX). Manages a simulated paper-trading account with realistic fees, slippage, and funding costs. Mirrors Hyperliquid leaderboard traders and Polymarket wallets. Scans US equities premarket for news-driven gappers at 08:30 ET and filters them down to TJL (Trend Join Long) setups on a 30-minute cadence during market hours. Flask dashboard ties it all together.
 
 ---
 
 ## Architecture
 
 ```
-signal_engine.py      â€” APScheduler loop, runs every 15 min
-â”œâ”€â”€ regime/classifier.py   â€” trending-up / trending-down / choppy / high-volatility
-â”œâ”€â”€ signals/selector.py    â€” regime â†’ active strategies + direction blocks
-â”œâ”€â”€ signals/generator.py   â€” per-strategy signal logic, ATR stops, take-profit calc
-â”œâ”€â”€ signals/quality.py     â€” composite quality score, strategy health auto-disable
-â””â”€â”€ alerts/telegram.py     â€” Telegram signal cards with LLM commentary
+signal_engine.py      — APScheduler loop, runs every 15 min
+├── regime/classifier.py   — trending-up / trending-down / choppy / high-volatility
+├── signals/selector.py    — regime → active strategies + direction blocks
+├── signals/generator.py   — per-strategy signal logic, ATR stops, take-profit calc
+├── signals/quality.py     — composite quality score, strategy health auto-disable
+└── alerts/telegram.py     — Telegram signal cards with LLM commentary
 
-paper_trader.py       â€” APScheduler loop, simulates fills with fees + slippage
-copy_trader.py        â€” APScheduler loop, mirrors Hyperliquid leaderboard traders
-polymarket_trader.py  â€” APScheduler loop, tracks Polymarket wallet positions
-dashboard.py          â€” Flask API + single-page dashboard
-backtest.py           â€” Offline backtest runner
-strategy_advisor.py   â€” Daily strategy health review (net_r + win-rate gates)
-eval/outcomes.py      â€” Outcome evaluator (TP / SL / timeout labelling)
+paper_trader.py       — APScheduler loop, simulates fills with fees + slippage
+copy_trader.py        — APScheduler loop, mirrors Hyperliquid leaderboard traders
+polymarket_trader.py  — APScheduler loop, tracks Polymarket wallet positions
+dashboard.py          — Flask API + single-page dashboard
+backtest.py           — Offline backtest runner
+strategy_advisor.py   — Daily strategy health review (net_r + win-rate gates)
+eval/outcomes.py      — Outcome evaluator (TP / SL / timeout labelling)
+
+scripts/premarket_gappers.sh   — Scanner A: 08:30 ET, premarket gappers + catalysts
+scripts/tjl_scanner.mjs        — Scanner B: TradingView CDP, filters gappers to setups
 ```
 
-**Processes (systemd, all auto-restart):**
+**Server-side processes (systemd, all auto-restart):**
 
 | Service | File | Description |
 |---|---|---|
-| `mexc-signal-engine` | `signal_engine.py` | Signal generation loop |
+| `mexc-signal-engine` | `signal_engine.py` | Crypto + index signal loop |
 | `mexc-paper-trader` | `paper_trader.py` | Paper trading loop |
 | `mexc-dashboard` | `dashboard.py` | Flask dashboard |
+| `premarket-gappers.timer` | `scripts/premarket_gappers.sh` | Daily 08:30 ET gapper scan |
+
+**Windows-side processes:**
+
+| Task | File | Description |
+|---|---|---|
+| `TJL Strategy Scanner` | `scripts/run_tjl_scanner.bat` | Every 30 min, 10:00–14:00 ET, Mon–Fri |
 
 ---
 
@@ -49,11 +59,11 @@ python dashboard.py         # dashboard at http://127.0.0.1:5000
 
 | Exchange | Pairs | Status |
 |---|---|---|
-| MEXC | BTC/USDT:USDT Â· ETH/USDT:USDT Â· SOL/USDT:USDT Â· XAUT/USDT:USDT | Active |
-| Binance | BTC/USDT:USDT Â· ETH/USDT:USDT Â· SOL/USDT:USDT | Active |
-| OKX | BTC/USDT:USDT Â· ETH/USDT:USDT Â· SOL/USDT:USDT | Active |
-| Trade Nation | DJ30/USD Â· FTSE100/USD Â· DAX/USD | Active (index CFDs) |
-| Hyperliquid | â€” | Disabled (high slippage + USDC funding costs) |
+| MEXC | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT · XAUT/USDT:USDT | Active |
+| Binance | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT | Active |
+| OKX | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT | Active |
+| Trade Nation | DJ30/USD · FTSE100/USD · DAX/USD | Active (index CFDs) |
+| Hyperliquid | — | Disabled (high slippage + USDC funding costs) |
 
 Toggle exchanges in `config.yaml` under `exchanges.<name>.enabled`.
 
@@ -67,10 +77,10 @@ Runs on 1h candles before each signal cycle. Output: one of four labels + a conf
 |---|---|
 | `trending-up` | ADX > 25, EMA slope positive, price above fast EMA |
 | `trending-down` | ADX > 25, EMA slope negative, price below fast EMA |
-| `choppy` | ADX â‰¤ 25, price oscillating within Bollinger Bands |
-| `high-volatility` | BB width > 1.5Ã— rolling average |
+| `choppy` | ADX ≤ 25, price oscillating within Bollinger Bands |
+| `high-volatility` | BB width > 1.5× rolling average |
 
-**Stability gate:** the label must appear in â‰¥ 3 of the last 5 candles before it is used. Regime must also be at least N candles old (`regime_gates.min_regime_age_candles`) before signals fire.
+**Stability gate:** the label must appear in ≥ 3 of the last 5 candles before it is used. Regime must also be at least N candles old (`regime_gates.min_regime_age_candles`) before signals fire.
 
 ---
 
@@ -86,12 +96,76 @@ Each strategy is enabled or disabled per regime in `signals/selector.py`. Direct
 | `vol_breakout` | high-volatility (long only) | Momentum breakout; short direction blocked by live data |
 | `supply_demand` | trending-up, trending-down | Zone rejection with trend direction; no edge in choppy (SKIP) |
 | `liquidity_grab` | choppy, high-volatility | Stop sweep + reversal; both directions active |
-| `session_open_breakout` | trending-up, trending-down, high-volatility | ORB: indices only (DJ30/FTSE100/DAX); first 30 min defines range, fires 30-90 min after open with volume confirmation |
+| `session_open_breakout` | trending-up, trending-down, high-volatility | ORB: indices only (DJ30/FTSE100/DAX); first 30 min defines range, fires 30–90 min after open with volume confirmation |
 
-Per-pair skips (configured in `config.yaml â†’ skip_strategies_for_pairs`):
-- DAX: `supply_demand`, `liquidity_grab` â€” 0-20% WR in backtest
-- DJ30: `supply_demand` â€” 38% WR, âˆ’7.36R in choppy
-- BTC/SOL: `rsi_extreme` in choppy only â€” ETH A-grade (WR 59.5%, p=0.005); BTC/SOL D-grade
+Per-pair skips (configured in `config.yaml → skip_strategies_for_pairs`):
+- DAX: `supply_demand`, `liquidity_grab` — 0–20% WR in backtest
+- DJ30: `supply_demand` — 38% WR, −7.36R in choppy
+- BTC/SOL: `rsi_extreme` in choppy only — ETH A-grade (WR 59.5%, p=0.005); BTC/SOL D-grade
+
+---
+
+## Stocks pipeline (Scanner A → Scanner B)
+
+A two-stage pipeline for US equity day trading. Scanner A finds candidates; Scanner B filters them to setups that meet the Trend Join Long criteria.
+
+### Scanner A — Premarket Gappers (server-side)
+
+`scripts/premarket_gappers.sh` — runs via systemd timer **Mon–Fri at 08:30 ET**.
+
+1. Scrapes stockanalysis.com for premarket gainers (full list, typically 20–50 names)
+2. Filters to: gap > 5%, price > $3, premarket volume > 50,000
+3. Takes the top 10 by gap percentage
+4. Fetches a news catalyst for each from Benzinga
+5. Writes `data/premarket_gappers/premarket_gappers_YYYY-MM-DD.json`
+6. Posts to Telegram (channel `TELEGRAM_CHAT_ID_2`):
+
+```
+📊 Premarket Gappers — 2026-09-07
+• AOUT $14.48 +44.7% — American Outdoor Brands Shares Jump After Q1 Results
+• XTND $3.85 +39.4% — PROJones Initiates Coverage with Buy Rating...
+```
+
+Guards: skips if a file already exists for today, or if run after 09:30 ET (data would be stale). Override with `FORCE_RUN=1`.
+
+Thresholds live at the top of the script: `GAPPER_MIN_GAP`, `GAPPER_MIN_PRICE`, `GAPPER_MIN_VOL`, `GAPPER_MAX_TICKERS`.
+
+### Scanner B — TJL (Trend Join Long) Scanner (Windows-side)
+
+`scripts/tjl_scanner.mjs` — runs via Windows Task Scheduler **every 30 min, 10:00–14:00 ET, Mon–Fri**. Requires TradingView Desktop open with CDP on port 9222.
+
+**Universe resolution (priority order):**
+1. CLI arg: `node scripts/tjl_scanner.mjs AAPL,MSFT`
+2. Local gappers file: `data/premarket_gappers/premarket_gappers_YYYY-MM-DD.json`
+3. Dashboard API: `GET /api/gappers/today` (via SSH tunnel to the server) — fetches Scanner A's output
+4. Exits with error if none of the above resolves
+
+**For each ticker, in sequence:**
+1. Pull 210 daily bars via TradingView → compute `prev_daily_high`, `prev_daily_close`, `sma200`
+2. Get real-time quote → `curr_px`
+3. Pull 400 1-minute bars → compute `pmh` (04:00–09:30 ET) and `today_hod` (09:30–now)
+4. Evaluate:
+   - **Daily breakout:** `curr_px > prev_daily_high` AND `prev_daily_close > sma200`
+   - **Intraday breakout:** `curr_px > pmh` AND `curr_px > today_hod`
+   - Both true → `PASS`; otherwise `fail_daily` or `fail_intraday`
+
+**Output:** `data/tjl_watchlists/tjl_watchlist_YYYY-MM-DD_HHMMet.json`
+
+**Telegram notification gating** (to avoid 9 pings per day):
+- Send on: first run of the day, a new PASS ticker that wasn't passing before, or any scan error
+- Otherwise: stay quiet
+
+```
+🎯 TJL Watchlist — 10:30 ET
+• AOUT @ $14.72 (PMH $14.20, prev_high $13.10, SMA200 $11.40)
+```
+
+**Guards in `run_tjl_scanner.bat`:**
+- Skips if `TradingView.exe` is not running
+- Skips if current ET time is outside 10:00–14:00 (DST-safe via PowerShell timezone conversion)
+- Logs skip reasons to `logs\tjl_scanner.log`
+
+**Task Scheduler setup:** `scripts/tjl_scanner_task.xml` — import with `Register-ScheduledTask -Xml (Get-Content scripts/tjl_scanner_task.xml -Raw) -TaskName "TJL Strategy Scanner" -Force`.
 
 ---
 
@@ -126,7 +200,7 @@ Asset class profiles (`asset_class_profiles`) apply separate stop floor/ceiling 
 
 ## Signal quality
 
-Every signal gets a composite quality score (0â€“100) before it fires:
+Every signal gets a composite quality score (0–100) before it fires:
 
 | Component | Weight | Source |
 |---|---|---|
@@ -135,15 +209,15 @@ Every signal gets a composite quality score (0â€“100) before it fires:
 
 Signals below `signal_quality.min_quality_score: 40` are suppressed. A bootstrap win rate of **0.40** is assumed when fewer than 20 live signals exist for a combo.
 
-> **Quality ceiling math:** `score = (0.20 Ã— conf + 0.80 Ã— wr) Ã— 100`. At bootstrap WR 0.40, max score = 52. Do not raise `min_quality_score` above 52 without also raising `bootstrap_wr`, or all new strategy/regime combos will be silently blocked.
+> **Quality ceiling math:** `score = (0.20 × conf + 0.80 × wr) × 100`. At bootstrap WR 0.40, max score = 52. Do not raise `min_quality_score` above 52 without also raising `bootstrap_wr`, or all new strategy/regime combos will be silently blocked.
 
 **Strategy health auto-disable** (`signals/quality.py`, updated per resolved outcome):
 
 | Status | Condition |
 |---|---|
-| HEALTHY | WR â‰¥ 38% and net_r/trade â‰¥ âˆ’0.10 |
-| CAUTION | WR < 38%, or WR â‰¥ 38% but net_r/trade < âˆ’0.10 |
-| DISABLED | WR < 30%, or net_r/trade < âˆ’0.20 (regardless of WR) |
+| HEALTHY | WR ≥ 38% and net_r/trade ≥ −0.10 |
+| CAUTION | WR < 38%, or WR ≥ 38% but net_r/trade < −0.10 |
+| DISABLED | WR < 30%, or net_r/trade < −0.20 (regardless of WR) |
 | Re-enabled | WR > 40% sustained for 14+ days |
 
 The net_r/trade gate catches combos that pass the WR breakeven check but still lose money due to bad R:R (e.g. wins too small relative to losses). Thresholds: `net_r_per_trade_caution: -0.10`, `net_r_per_trade_disable: -0.20` in `config.yaml`.
@@ -213,10 +287,10 @@ Single-page app at `http://localhost:5000`. Six tabs:
 | Tab | Description |
 |---|---|
 | Dashboard | Live paper P&L, equity curve, strategy health cards, regime timeline |
-| Signals | Full signals feed â€” pair, direction, regime, entry/stop/target, outcome, P&L R |
+| Signals | Full signals feed — pair, direction, regime, entry/stop/target, outcome, P&L R |
 | Copy Trader | HL trader account, tracked wallets, open/closed positions, comparison chart |
 | Polymarket | PM wallet positions, consensus view, convergence tracker |
-| Backtest | Run chips, equity curve, breakdown by strategy Ã— regime, A/B compare mode |
+| Backtest | Run chips, equity curve, breakdown by strategy × regime, A/B compare mode |
 | Settings | Active exchange pairs |
 
 **API endpoints:**
@@ -236,6 +310,7 @@ Single-page app at `http://localhost:5000`. Six tabs:
 | `GET /api/regime` | Regime timeline segments |
 | `GET /api/health` | Engine heartbeat |
 | `GET /api/config/pairs` | Active exchange/pair list |
+| `GET /api/gappers/today` | Today's premarket gappers (consumed by Scanner B) |
 | `GET /api/analysis/latest` | Latest strategy health analysis |
 | `GET /api/copy/account` | Copy trader account summary |
 | `GET /api/copy/traders` | Active HL traders |
@@ -250,9 +325,9 @@ Single-page app at `http://localhost:5000`. Six tabs:
 | `GET /api/poly/convergence` | Convergence tracker |
 | `GET /api/backtest/runs` | Backtest run list |
 | `GET /api/backtest/equity` | Equity curve for a run |
-| `GET /api/backtest/breakdown` | Strategy Ã— regime breakdown |
+| `GET /api/backtest/breakdown` | Strategy × regime breakdown |
 
-**Auth:** Set `DASHBOARD_TOKEN` in `.env`. Token is enforced only when `dashboard.host` is not `127.0.0.1`.
+**Auth:** Set `DASHBOARD_TOKEN` in `.env`. Token is enforced only when `dashboard.host` is not `127.0.0.1`. Pass via `Authorization: Bearer <token>` header or session cookie.
 
 ---
 
@@ -289,7 +364,7 @@ All LLM output fields are HTML-escaped before injection into Telegram `parse_mod
 shadow_mode: true   # log signals to DB without firing Telegram alerts
 ```
 
-Walk-forward promotion gates: â‰¥ 38 total shadow signals, â‰¥ 15 per regime, â‰¥ 55% directional accuracy over the evaluation window.
+Walk-forward promotion gates: ≥ 38 total shadow signals, ≥ 15 per regime, ≥ 55% directional accuracy over the evaluation window.
 
 ---
 
@@ -311,7 +386,7 @@ Run these on the production server where `signals.db` is available.
 
 ## Production
 
-**Server:** Hetzner CX22 â€” `root@<YOUR_SERVER_IP>`
+**Server:** Hetzner CX22 — `root@<YOUR_SERVER_IP>`
 
 ```bash
 # SSH access
@@ -327,6 +402,7 @@ bash scripts/deploy.sh   # git pull + pip install + systemctl restart all
 journalctl -fu mexc-signal-engine
 journalctl -fu mexc-paper-trader
 journalctl -fu mexc-dashboard
+journalctl -fu premarket-gappers.service   # one-shot, triggered by timer
 
 # Health
 curl http://localhost:5000/api/health
@@ -353,8 +429,11 @@ Key test files cover regime classifier, all signal strategies, dedup logic, pape
 |---|---|---|
 | `MEXC_API_KEY` | Yes | MEXC API key |
 | `MEXC_SECRET` | Yes | MEXC API secret |
-| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token |
-| `TELEGRAM_CHAT_ID` | Yes | Telegram chat/channel ID |
-| `ANTHROPIC_API_KEY` | Yes | Claude API key (LLM commentary) |
+| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token (primary channel — signals) |
+| `TELEGRAM_CHAT_ID` | Yes | Telegram chat/channel ID (primary) |
+| `TELEGRAM_BOT_TOKEN_2` | No | Secondary bot token (used by premarket gappers + TJL scanner) |
+| `TELEGRAM_CHAT_ID_2` | No | Secondary channel ID (Daily Strategy Testing) |
+| `ANTHROPIC_API_KEY` | No | Claude API key (LLM commentary — disable commentary to skip) |
 | `DASHBOARD_TOKEN` | No | Bearer token for remote dashboard access |
+| `DASHBOARD_URL` | No | Override for Scanner B's dashboard fetch (default `http://localhost:5000`) |
 | `ARBISCAN_API_KEY` | No | Arbiscan key for on-chain copy trader data |
