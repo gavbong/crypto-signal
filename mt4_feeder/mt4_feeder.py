@@ -1,5 +1,5 @@
-"""
-mt4_feeder.py — Windows-side feeder for mexc-signal-engine index data.
+﻿"""
+mt4_feeder.py â€” Windows-side feeder for mexc-signal-engine index data.
 
 Reads OHLCV JSON files written by candle_export.mq4 from the MT4 Common Files
 folder and POSTs new candles to the Hetzner server's /api/index/feed endpoint.
@@ -8,14 +8,14 @@ Setup:
     1. Install Python on Windows: winget install Python.Python.3.12
     2. pip install requests
     3. Set environment variables (or edit CONFIG below):
-         MT4_FILES_DIR   — path to MT4 Common Files (auto-detected if unset)
-         INDEX_FEED_URL  — e.g. http://<YOUR_SERVER_IP>:5000 (or via SSH tunnel)
-         INDEX_FEED_API_KEY — shared secret (must match server env var)
+         MT4_FILES_DIR   â€” path to MT4 Common Files (auto-detected if unset)
+         INDEX_FEED_URL  â€” e.g. http://<YOUR_SERVER_IP>:5000 (or via SSH tunnel)
+         INDEX_FEED_API_KEY â€” shared secret (must match server env var)
     4. Run manually: python mt4_feeder.py
        Or loop continuously: python mt4_feeder.py --loop
        Or schedule via Windows Task Scheduler every 15 minutes (single-run mode).
 
-Symbol → canonical pair mapping:
+Symbol â†’ canonical pair mapping:
     Edit SYMBOL_MAP below to match your broker's symbol names.
     Common Trade Nation names: US30, UK100, GER40 or GER30, XAUUSD
 """
@@ -30,10 +30,10 @@ from pathlib import Path
 
 import requests
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# â”€â”€ Configuration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-# MT4 symbol name → canonical pair name sent to the server
-# Trade Nation common names — check your MT4 Market Watch for exact names
+# MT4 symbol name â†’ canonical pair name sent to the server
+# Trade Nation common names â€” check your MT4 Market Watch for exact names
 SYMBOL_MAP: dict[str, str] = {
     # Trade Nation (dot-wrapped format)
     ".US30.":   "DJ30/USD",
@@ -53,13 +53,13 @@ SYMBOL_MAP: dict[str, str] = {
     "XAUUSD":   "XAU/USD",
     "GOLD":     "XAU/USD",
     "XAU":      "XAU/USD",
-    # S&P 500 — check your MT4 Market Watch for the exact name
+    # S&P 500 â€” check your MT4 Market Watch for the exact name
     ".US500.":  "US500/USD",
     "US500":    "US500/USD",
     "US500.":   "US500/USD",
     "SPX500":   "US500/USD",
     "SP500":    "US500/USD",
-    # NASDAQ 100 — Trade Nation often calls this USTEC or NAS100
+    # NASDAQ 100 â€” Trade Nation often calls this USTEC or NAS100
     ".USTEC.":  "NAS100/USD",
     ".NAS100.": "NAS100/USD",
     "USTEC":    "NAS100/USD",
@@ -85,7 +85,7 @@ SYMBOL_MAP: dict[str, str] = {
     "XBRUSD":    "BRENT/USD",
 }
 
-# ── Paths & defaults ──────────────────────────────────────────────────────────
+# â”€â”€ Paths & defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 LOG_FILE = Path(__file__).parent / "mt4_feeder.log"
 STATE_FILE = Path(__file__).parent / "mt4_feeder_state.json"
@@ -95,7 +95,7 @@ RETRY_ATTEMPTS = 3
 RETRY_BACKOFF_S = 5
 LOOP_INTERVAL_S = 15 * 60  # 15 minutes
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 logging.basicConfig(
     level=logging.INFO,
@@ -109,7 +109,7 @@ logging.basicConfig(
 log = logging.getLogger("mt4_feeder")
 
 
-# ── State (last posted timestamp per pair) ────────────────────────────────────
+# â”€â”€ State (last posted timestamp per pair) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _load_state() -> dict[str, int]:
     """Load last-posted timestamp per pair from disk."""
@@ -125,7 +125,7 @@ def _save_state(state: dict[str, int]) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-# ── MT4 files discovery ───────────────────────────────────────────────────────
+# â”€â”€ MT4 files discovery â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _find_mt4_files_dir() -> Path | None:
     """Auto-discover MT4 Common Files folder on Windows."""
@@ -151,7 +151,7 @@ def _get_files_dir() -> Path:
         p = Path(env_path)
         if p.exists():
             return p
-        log.warning(f"MT4_FILES_DIR={env_path} does not exist — trying auto-detect")
+        log.warning(f"MT4_FILES_DIR={env_path} does not exist â€” trying auto-detect")
 
     discovered = _find_mt4_files_dir()
     if discovered:
@@ -164,7 +164,7 @@ def _get_files_dir() -> Path:
     )
 
 
-# ── Candle reading ────────────────────────────────────────────────────────────
+# â”€â”€ Candle reading â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _read_candles(json_path: Path) -> list[dict] | None:
     """Read candles from a JSON file. Returns None on parse error (MT4 mid-write)."""
@@ -174,22 +174,22 @@ def _read_candles(json_path: Path) -> list[dict] | None:
             return None
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        log.debug(f"{json_path.name}: JSON parse error (mid-write?) — {e}")
+        log.debug(f"{json_path.name}: JSON parse error (mid-write?) â€” {e}")
         return None
     except OSError as e:
-        log.warning(f"{json_path.name}: read error — {e}")
+        log.warning(f"{json_path.name}: read error â€” {e}")
         return None
 
 
 def _symbol_from_filename(filename: str) -> str | None:
-    """Extract symbol from candles_<SYMBOL>.json → SYMBOL."""
-    stem = Path(filename).stem  # candles_US30 → candles_US30
+    """Extract symbol from candles_<SYMBOL>.json â†’ SYMBOL."""
+    stem = Path(filename).stem  # candles_US30 â†’ candles_US30
     if stem.startswith("candles_"):
         return stem[len("candles_"):]
     return None
 
 
-# ── HTTP POST ─────────────────────────────────────────────────────────────────
+# â”€â”€ HTTP POST â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _post_candles(url: str, api_key: str, candles: list[dict]) -> bool:
     """POST candle batch to server. Returns True on success."""
@@ -207,10 +207,10 @@ def _post_candles(url: str, api_key: str, candles: list[dict]) -> bool:
             )
             if resp.status_code == 200:
                 result = resp.json()
-                log.debug(f"  → {result['inserted']} inserted, {result['skipped']} skipped")
+                log.debug(f"  â†’ {result['inserted']} inserted, {result['skipped']} skipped")
                 return True
             elif resp.status_code == 401:
-                log.error("Authentication failed — check INDEX_FEED_API_KEY on both ends")
+                log.error("Authentication failed â€” check INDEX_FEED_API_KEY on both ends")
                 return False
             else:
                 log.warning(f"  HTTP {resp.status_code}: {resp.text[:200]} (attempt {attempt})")
@@ -228,7 +228,7 @@ def _post_candles(url: str, api_key: str, candles: list[dict]) -> bool:
     return False
 
 
-# ── Main feed cycle ───────────────────────────────────────────────────────────
+# â”€â”€ Main feed cycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def run_once(files_dir: Path, server_url: str, api_key: str) -> int:
     """Read all candle files and POST new candles. Returns total candles sent."""
@@ -279,7 +279,7 @@ def run_once(files_dir: Path, server_url: str, api_key: str) -> int:
             _save_state(state)
             total_sent += len(new_candles)
         else:
-            log.error(f"{pair}: POST failed — will retry next cycle")
+            log.error(f"{pair}: POST failed â€” will retry next cycle")
 
     return total_sent
 
@@ -289,9 +289,9 @@ def _acquire_lock() -> bool:
     if LOCK_FILE.exists():
         age = time.time() - LOCK_FILE.stat().st_mtime
         if age < 300:  # stale if >5 min old (crashed run)
-            log.warning(f"Another instance is running (lock age {age:.0f}s) — exiting")
+            log.warning(f"Another instance is running (lock age {age:.0f}s) â€” exiting")
             return False
-        log.warning(f"Stale lock file ({age:.0f}s old) — removing and continuing")
+        log.warning(f"Stale lock file ({age:.0f}s old) â€” removing and continuing")
     LOCK_FILE.write_text(str(os.getpid()))
     return True
 
@@ -312,7 +312,7 @@ def main():
     args = parser.parse_args()
 
     if not args.loop and not _acquire_lock():
-        return 0  # silently skip — another single-run instance is in flight
+        return 0  # silently skip â€” another single-run instance is in flight
 
     server_url = os.environ.get("INDEX_FEED_URL", "").rstrip("/")
     api_key    = os.environ.get("INDEX_FEED_API_KEY", "")

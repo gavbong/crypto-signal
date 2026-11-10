@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # Install (or reinstall) the premarket-gappers systemd timer on Hetzner.
 # Run this once after deploying. Safe to re-run.
 #

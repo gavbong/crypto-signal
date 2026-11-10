@@ -1,4 +1,4 @@
-# mexc-signal-engine
+﻿# mexc-signal-engine
 
 Multi-exchange perpetual futures and index CFD signal engine. Classifies market regime on 1h candles, fires long/short entry signals on 15m candles across MEXC, Binance, OKX (crypto) and Trade Nation (DJ30/FTSE100/DAX indices), and manages a simulated paper-trading account with realistic fees, slippage, and funding costs. A Flask dashboard ties it all together.
 
@@ -7,20 +7,20 @@ Multi-exchange perpetual futures and index CFD signal engine. Classifies market 
 ## Architecture
 
 ```
-signal_engine.py      — APScheduler loop, runs every 15 min
-├── regime/classifier.py   — trending-up / trending-down / choppy / high-volatility
-├── signals/selector.py    — regime → active strategies + direction blocks
-├── signals/generator.py   — per-strategy signal logic, ATR stops, take-profit calc
-├── signals/quality.py     — composite quality score, strategy health auto-disable
-└── alerts/telegram.py     — Telegram signal cards with LLM commentary
+signal_engine.py      â€” APScheduler loop, runs every 15 min
+â”œâ”€â”€ regime/classifier.py   â€” trending-up / trending-down / choppy / high-volatility
+â”œâ”€â”€ signals/selector.py    â€” regime â†’ active strategies + direction blocks
+â”œâ”€â”€ signals/generator.py   â€” per-strategy signal logic, ATR stops, take-profit calc
+â”œâ”€â”€ signals/quality.py     â€” composite quality score, strategy health auto-disable
+â””â”€â”€ alerts/telegram.py     â€” Telegram signal cards with LLM commentary
 
-paper_trader.py       — APScheduler loop, simulates fills with fees + slippage
-copy_trader.py        — APScheduler loop, mirrors Hyperliquid leaderboard traders
-polymarket_trader.py  — APScheduler loop, tracks Polymarket wallet positions
-dashboard.py          — Flask API + single-page dashboard
-backtest.py           — Offline backtest runner
-strategy_advisor.py   — Daily strategy health review (net_r + win-rate gates)
-eval/outcomes.py      — Outcome evaluator (TP / SL / timeout labelling)
+paper_trader.py       â€” APScheduler loop, simulates fills with fees + slippage
+copy_trader.py        â€” APScheduler loop, mirrors Hyperliquid leaderboard traders
+polymarket_trader.py  â€” APScheduler loop, tracks Polymarket wallet positions
+dashboard.py          â€” Flask API + single-page dashboard
+backtest.py           â€” Offline backtest runner
+strategy_advisor.py   â€” Daily strategy health review (net_r + win-rate gates)
+eval/outcomes.py      â€” Outcome evaluator (TP / SL / timeout labelling)
 ```
 
 **Processes (systemd, all auto-restart):**
@@ -49,11 +49,11 @@ python dashboard.py         # dashboard at http://127.0.0.1:5000
 
 | Exchange | Pairs | Status |
 |---|---|---|
-| MEXC | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT · XAUT/USDT:USDT | Active |
-| Binance | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT | Active |
-| OKX | BTC/USDT:USDT · ETH/USDT:USDT · SOL/USDT:USDT | Active |
-| Trade Nation | DJ30/USD · FTSE100/USD · DAX/USD | Active (index CFDs) |
-| Hyperliquid | — | Disabled (high slippage + USDC funding costs) |
+| MEXC | BTC/USDT:USDT Â· ETH/USDT:USDT Â· SOL/USDT:USDT Â· XAUT/USDT:USDT | Active |
+| Binance | BTC/USDT:USDT Â· ETH/USDT:USDT Â· SOL/USDT:USDT | Active |
+| OKX | BTC/USDT:USDT Â· ETH/USDT:USDT Â· SOL/USDT:USDT | Active |
+| Trade Nation | DJ30/USD Â· FTSE100/USD Â· DAX/USD | Active (index CFDs) |
+| Hyperliquid | â€” | Disabled (high slippage + USDC funding costs) |
 
 Toggle exchanges in `config.yaml` under `exchanges.<name>.enabled`.
 
@@ -67,10 +67,10 @@ Runs on 1h candles before each signal cycle. Output: one of four labels + a conf
 |---|---|
 | `trending-up` | ADX > 25, EMA slope positive, price above fast EMA |
 | `trending-down` | ADX > 25, EMA slope negative, price below fast EMA |
-| `choppy` | ADX ≤ 25, price oscillating within Bollinger Bands |
-| `high-volatility` | BB width > 1.5× rolling average |
+| `choppy` | ADX â‰¤ 25, price oscillating within Bollinger Bands |
+| `high-volatility` | BB width > 1.5Ã— rolling average |
 
-**Stability gate:** the label must appear in ≥ 3 of the last 5 candles before it is used. Regime must also be at least N candles old (`regime_gates.min_regime_age_candles`) before signals fire.
+**Stability gate:** the label must appear in â‰¥ 3 of the last 5 candles before it is used. Regime must also be at least N candles old (`regime_gates.min_regime_age_candles`) before signals fire.
 
 ---
 
@@ -88,10 +88,10 @@ Each strategy is enabled or disabled per regime in `signals/selector.py`. Direct
 | `liquidity_grab` | choppy, high-volatility | Stop sweep + reversal; both directions active |
 | `session_open_breakout` | trending-up, trending-down, high-volatility | ORB: indices only (DJ30/FTSE100/DAX); first 30 min defines range, fires 30-90 min after open with volume confirmation |
 
-Per-pair skips (configured in `config.yaml → skip_strategies_for_pairs`):
-- DAX: `supply_demand`, `liquidity_grab` — 0-20% WR in backtest
-- DJ30: `supply_demand` — 38% WR, −7.36R in choppy
-- BTC/SOL: `rsi_extreme` in choppy only — ETH A-grade (WR 59.5%, p=0.005); BTC/SOL D-grade
+Per-pair skips (configured in `config.yaml â†’ skip_strategies_for_pairs`):
+- DAX: `supply_demand`, `liquidity_grab` â€” 0-20% WR in backtest
+- DJ30: `supply_demand` â€” 38% WR, âˆ’7.36R in choppy
+- BTC/SOL: `rsi_extreme` in choppy only â€” ETH A-grade (WR 59.5%, p=0.005); BTC/SOL D-grade
 
 ---
 
@@ -126,7 +126,7 @@ Asset class profiles (`asset_class_profiles`) apply separate stop floor/ceiling 
 
 ## Signal quality
 
-Every signal gets a composite quality score (0–100) before it fires:
+Every signal gets a composite quality score (0â€“100) before it fires:
 
 | Component | Weight | Source |
 |---|---|---|
@@ -135,15 +135,15 @@ Every signal gets a composite quality score (0–100) before it fires:
 
 Signals below `signal_quality.min_quality_score: 40` are suppressed. A bootstrap win rate of **0.40** is assumed when fewer than 20 live signals exist for a combo.
 
-> **Quality ceiling math:** `score = (0.20 × conf + 0.80 × wr) × 100`. At bootstrap WR 0.40, max score = 52. Do not raise `min_quality_score` above 52 without also raising `bootstrap_wr`, or all new strategy/regime combos will be silently blocked.
+> **Quality ceiling math:** `score = (0.20 Ã— conf + 0.80 Ã— wr) Ã— 100`. At bootstrap WR 0.40, max score = 52. Do not raise `min_quality_score` above 52 without also raising `bootstrap_wr`, or all new strategy/regime combos will be silently blocked.
 
 **Strategy health auto-disable** (`signals/quality.py`, updated per resolved outcome):
 
 | Status | Condition |
 |---|---|
-| HEALTHY | WR ≥ 38% and net_r/trade ≥ −0.10 |
-| CAUTION | WR < 38%, or WR ≥ 38% but net_r/trade < −0.10 |
-| DISABLED | WR < 30%, or net_r/trade < −0.20 (regardless of WR) |
+| HEALTHY | WR â‰¥ 38% and net_r/trade â‰¥ âˆ’0.10 |
+| CAUTION | WR < 38%, or WR â‰¥ 38% but net_r/trade < âˆ’0.10 |
+| DISABLED | WR < 30%, or net_r/trade < âˆ’0.20 (regardless of WR) |
 | Re-enabled | WR > 40% sustained for 14+ days |
 
 The net_r/trade gate catches combos that pass the WR breakeven check but still lose money due to bad R:R (e.g. wins too small relative to losses). Thresholds: `net_r_per_trade_caution: -0.10`, `net_r_per_trade_disable: -0.20` in `config.yaml`.
@@ -213,10 +213,10 @@ Single-page app at `http://localhost:5000`. Six tabs:
 | Tab | Description |
 |---|---|
 | Dashboard | Live paper P&L, equity curve, strategy health cards, regime timeline |
-| Signals | Full signals feed — pair, direction, regime, entry/stop/target, outcome, P&L R |
+| Signals | Full signals feed â€” pair, direction, regime, entry/stop/target, outcome, P&L R |
 | Copy Trader | HL trader account, tracked wallets, open/closed positions, comparison chart |
 | Polymarket | PM wallet positions, consensus view, convergence tracker |
-| Backtest | Run chips, equity curve, breakdown by strategy × regime, A/B compare mode |
+| Backtest | Run chips, equity curve, breakdown by strategy Ã— regime, A/B compare mode |
 | Settings | Active exchange pairs |
 
 **API endpoints:**
@@ -250,7 +250,7 @@ Single-page app at `http://localhost:5000`. Six tabs:
 | `GET /api/poly/convergence` | Convergence tracker |
 | `GET /api/backtest/runs` | Backtest run list |
 | `GET /api/backtest/equity` | Equity curve for a run |
-| `GET /api/backtest/breakdown` | Strategy × regime breakdown |
+| `GET /api/backtest/breakdown` | Strategy Ã— regime breakdown |
 
 **Auth:** Set `DASHBOARD_TOKEN` in `.env`. Token is enforced only when `dashboard.host` is not `127.0.0.1`.
 
@@ -289,7 +289,7 @@ All LLM output fields are HTML-escaped before injection into Telegram `parse_mod
 shadow_mode: true   # log signals to DB without firing Telegram alerts
 ```
 
-Walk-forward promotion gates: ≥ 38 total shadow signals, ≥ 15 per regime, ≥ 55% directional accuracy over the evaluation window.
+Walk-forward promotion gates: â‰¥ 38 total shadow signals, â‰¥ 15 per regime, â‰¥ 55% directional accuracy over the evaluation window.
 
 ---
 
@@ -311,7 +311,7 @@ Run these on the production server where `signals.db` is available.
 
 ## Production
 
-**Server:** Hetzner CX22 — `root@<YOUR_SERVER_IP>`
+**Server:** Hetzner CX22 â€” `root@<YOUR_SERVER_IP>`
 
 ```bash
 # SSH access

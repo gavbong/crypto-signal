@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-# deploy.sh — push latest code to server and restart services
+﻿#!/usr/bin/env bash
+# deploy.sh â€” push latest code to server and restart services
 # Usage: ./scripts/deploy.sh root@<server-ip>
 set -euo pipefail
 
@@ -44,7 +44,7 @@ systemctl is-active mexc-signal-engine mexc-dashboard mexc-paper-trader mexc-cop
 if curl -sf http://localhost:5000/api/health > /dev/null 2>&1; then
     echo "  Health: OK"
 else
-    echo "  Health: FAIL — check journalctl -fu mexc-dashboard"
+    echo "  Health: FAIL â€” check journalctl -fu mexc-dashboard"
     exit 1
 fi
 REMOTE

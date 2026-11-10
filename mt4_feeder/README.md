@@ -1,22 +1,22 @@
-# MT4 Feeder — Setup Guide
+﻿# MT4 Feeder â€” Setup Guide
 
 Two files. Five steps. The EA runs inside MT4 on your Windows PC; the feeder script POSTs candle data to the Hetzner server.
 
 ---
 
-## Step 1 — Install the Expert Advisor
+## Step 1 â€” Install the Expert Advisor
 
-1. Open MT4 → File → Open Data Folder → `MQL4/Experts/`
+1. Open MT4 â†’ File â†’ Open Data Folder â†’ `MQL4/Experts/`
 2. Copy `candle_export.mq4` into that folder
-3. In MT4: Navigator → Expert Advisors → right-click → Refresh
+3. In MT4: Navigator â†’ Expert Advisors â†’ right-click â†’ Refresh
 4. Open a chart for each instrument (DJ30, FTSE100, DAX, XAUUSD)
 5. Drag `candle_export` onto each chart
 6. In the EA settings, set `PairName` for each chart:
-   - DJ30 chart   → `DJ30/USD`
-   - FTSE100 chart → `FTSE100/USD`
-   - DAX chart    → `DAX/USD`
-   - XAUUSD chart → `XAU/USD`
-7. In MT4 → Tools → Options → Expert Advisors: make sure **"Allow automated trading"** is checked
+   - DJ30 chart   â†’ `DJ30/USD`
+   - FTSE100 chart â†’ `FTSE100/USD`
+   - DAX chart    â†’ `DAX/USD`
+   - XAUUSD chart â†’ `XAU/USD`
+7. In MT4 â†’ Tools â†’ Options â†’ Expert Advisors: make sure **"Allow automated trading"** is checked
 
 The EA writes files to:
 ```
@@ -27,15 +27,15 @@ Confirm the files appear and update every 15 minutes before moving to Step 2.
 
 ---
 
-## Step 2 — Find your broker's symbol names
+## Step 2 â€” Find your broker's symbol names
 
-Open MT4 → View → Market Watch. The exact symbol names displayed there (e.g. `US30`, `UK100`, `GER40`, `XAUUSD`) must match the keys in `SYMBOL_MAP` in `mt4_feeder.py`.
+Open MT4 â†’ View â†’ Market Watch. The exact symbol names displayed there (e.g. `US30`, `UK100`, `GER40`, `XAUUSD`) must match the keys in `SYMBOL_MAP` in `mt4_feeder.py`.
 
-Edit `mt4_feeder.py` → `SYMBOL_MAP` to match your broker if different from the defaults.
+Edit `mt4_feeder.py` â†’ `SYMBOL_MAP` to match your broker if different from the defaults.
 
 ---
 
-## Step 3 — Install Python and dependencies
+## Step 3 â€” Install Python and dependencies
 
 ```powershell
 winget install Python.Python.3.12
@@ -44,7 +44,7 @@ pip install requests
 
 ---
 
-## Step 4 — Set environment variables
+## Step 4 â€” Set environment variables
 
 In PowerShell (or Windows environment variables):
 
@@ -67,7 +67,7 @@ $env:INDEX_FEED_URL = "http://127.0.0.1:5000"
 
 ---
 
-## Step 5 — Run the feeder
+## Step 5 â€” Run the feeder
 
 **Single run (test first):**
 ```powershell

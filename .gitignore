@@ -20,3 +20,18 @@ analysis/
 mt4_feeder/setup_autostart.ps1
 mt4_feeder/*.log
 mt4_feeder/*.json
+
+# Local tooling / IDE state
+.claude/
+.vscode/
+.idea/
+
+# Scanner output (contains tickers and intraday state — personal to each run)
+data/premarket_gappers/
+data/tjl_watchlists/
+data/indices/
+
+# Ad-hoc handoffs, QA artifacts, backup copies
+handoffs/
+qa-screenshots/
+*.bak
